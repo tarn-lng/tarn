@@ -16,7 +16,11 @@ cargo test --locked --release --workspace
 ```
 
 All tests must pass before a pull request is merged; CI runs the same commands
-plus a `tarn check` smoke over every `examples/*.tarn`.
+plus a `tarn check` smoke over every `examples/*.tarn` and
+`tools/ci/run-examples.sh`, which runs each example and diffs its stdout against
+`tests/examples/<name>.out`. A new example needs either that file or a line
+with a reason in `tests/examples/skip.txt` (servers, host-dependent or
+nondeterministic output, examples that need input).
 
 ## Where things live
 
