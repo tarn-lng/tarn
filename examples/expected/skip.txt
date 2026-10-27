@@ -1,0 +1,14 @@
+# Examples that `tools/ci/run-examples.sh` does not execute, one per line:
+# <name> <reason>. Every other example must have examples/expected/<name>.out.
+25_concurrency server: waits for a connection on 127.0.0.1:8080
+http_crud server: waits for HTTP connections
+http_server server: waits for HTTP connections
+tcp_echo server: waits for a connection
+23_filesystem host-dependent: lists /opt/xlinux/sdk
+24_process host-dependent: runs swiftc --version
+26_unsafe_ffi nondeterministic: prints the process id
+status_metrics nondeterministic: prints live timestamps and interface counters
+csv_report needs input: reads CSV from stdin
+sqlite needs libsqlite3 and --link flags
+textstats needs input: reads text from stdin
+ticket_classifier needs arguments and an HTTPS service

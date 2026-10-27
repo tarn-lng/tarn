@@ -48,6 +48,8 @@ jobs:
             target/release/tarn check "$example"
             echo "::endgroup::"
           done
+      - name: Examples output (tarn run)
+        run: tools/ci/run-examples.sh target/release/tarn
       - name: Native application smoke
         run: |
           target/release/tarn build examples/csv_report/main.tarn -o /tmp/tarn-csv-report
