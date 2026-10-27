@@ -1,5 +1,5 @@
 # Examples that `tools/ci/run-examples.sh` does not execute, one per line:
-# <name> <reason>. Every other example must have examples/expected/<name>.out.
+# <name> <reason>. Every other example must have tests/examples/<name>.out.
 25_concurrency server: waits for a connection on 127.0.0.1:8080
 http_crud server: waits for HTTP connections
 http_server server: waits for HTTP connections
