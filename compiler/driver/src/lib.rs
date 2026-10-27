@@ -93,6 +93,16 @@ impl CheckResult {
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(|d| d.severity == Severity::Error)
     }
+
+    /// E3078 for `tarn build`/`run` when the entry module declares no `fn main`.
+    /// `tarn check` accepts libraries, so this is not part of checking.
+    pub fn missing_main(&self) -> Option<Diagnostic> {
+        let (p, t) = (self.drops.as_ref()?, self.typed.as_ref()?);
+        let found = p.functions.iter().any(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0));
+        (!found).then(|| Diagnostic::error("E3078", "missing_main", "no `fn main` found in the entry module")
+            .note("`tarn build` and `tarn run` need an entry point")
+            .help("add `fn main() { ... }`, or use `tarn check` for a library"))
+    }
 }
 
 /// Dependency sources already verified by the host package tool (ADR 0051).
