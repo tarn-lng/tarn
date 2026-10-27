@@ -1,0 +1,24 @@
+error[E4001]: use of moved value `p.first.data`
+  --> tests/moves/fail/E4001_field_of_moved_value.tarn:16:10
+   |
+15 |     x := p.first
+   |          ------- value moved here
+16 |     y := p.first.data
+   |          ^^^^^^^^^^^^ value used here after move
+   |
+   = note: `p.first.data` is part of `p.first`, which was moved
+   = note: `Buffer` is not a copy type, so assigning or passing it moves it
+   = help: to keep using `p.first`, borrow it where it is moved (`&p.first`) instead of moving it
+
+error[E4001]: use of moved value `q.first.data`
+  --> tests/moves/fail/E4001_field_of_moved_value.tarn:19:10
+   |
+18 |     consume(q)
+   |             - value moved here
+19 |     z := q.first.data
+   |          ^^^^^^^^^^^^ value used here after move
+   |
+   = note: `q.first.data` is part of `q`, which was moved
+   = note: `Pair` is not a copy type, so assigning or passing it moves it
+   = help: to keep using `q`, borrow it where it is moved (`&q`) instead of moving it
+
