@@ -41,6 +41,12 @@ plus a `tarn check` smoke over every `examples/*.tarn`.
 Small, focused, one topic. Describe the behavior change and link the issue.
 Issues labeled `good first issue` are a good place to start.
 
+Before you start on an issue, comment on it to say you're taking it, and a
+maintainer will assign it to you. If an issue is already assigned, pick another
+one or ask in the issue. If an assigned issue has had no activity for two weeks,
+it's fair to ask whether it's still in progress. This keeps two people from
+solving the same thing at once.
+
 ## Code of conduct
 
 This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
