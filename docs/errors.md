@@ -208,5 +208,9 @@ Async bodies now lower onto verified frames (ADR 0037); the code is retired.
 
 ## Phase 31 reference places
 
-- E3074 `deref_move`: a non-Copy value cannot be moved out of a reference; borrow or clone it instead.
-- E3075 `deref_non_reference`: `*` requires a reference; raw pointers use unsafe FFI helpers.
+- E3079 `deref_move`: a non-Copy value cannot be moved out of a reference; borrow or clone it instead.
+- E3080 `deref_non_reference`: `*` requires a reference; raw pointers use unsafe FFI helpers.
+
+These two were briefly emitted as E3074 and E3075, which already meant
+`expanding_instantiation` and `value_too_large`; they were renumbered so each
+code has one meaning.

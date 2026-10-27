@@ -75,9 +75,9 @@ deques/trees, a general iterator framework or a generic mutable-slice swap API.
 
 ## Reference places and modular arithmetic
 
-`*reference` reads a Copy referent; reading a non-Copy referent is E3074.
+`*reference` reads a Copy referent; reading a non-Copy referent is E3079.
 `&*reference` borrows and `*mutable_reference = value` assigns a place.
-Dereferencing nonreferences is E3075; raw pointers remain accessible only through
+Dereferencing nonreferences is E3080; raw pointers remain accessible only through
 unsafe FFI helpers. Pattern projection keeps ADR 0018's existing semantics.
 
 Integer `wrapping_add`, `wrapping_sub` and `wrapping_mul` explicitly compute

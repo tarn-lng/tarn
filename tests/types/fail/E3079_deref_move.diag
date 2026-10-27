@@ -1,5 +1,5 @@
-error[E3074]: cannot move `string` out of a reference
- --> tests/types/fail/E3074_deref_move.tarn:2:12
+error[E3079]: cannot move `string` out of a reference
+ --> tests/types/fail/E3079_deref_move.tarn:2:12
   |
 2 |     return *value
   |            ^^^^^^
