@@ -9,9 +9,9 @@ fn collection_loans_and_primitive_coherence_remain_checked() {
         ("aliases", "fn bad(m &mut collections.Map<string, string>) { a := m.get_mut(&\"a\")\n b := m.get_mut(&\"b\")\n print(a)\n print(b) }", Some("E4101")),
         ("temporary_key", "fn good(m &collections.Map<string, string>) &string { return m.get(&\"k\") }", None),
         ("foreign_primitive", "interface Extra { fn value(&self) i32 }\nimpl Extra for i32 { fn value(&self) i32 { return 0 } }", Some("E2024")),
-        ("noncopy_deref", "fn bad(value &string) string { return *value }", Some("E3074")),
+        ("noncopy_deref", "fn bad(value &string) string { return *value }", Some("E3079")),
         ("immutable_deref", "fn bad(value &i32) { *value = 1 }", Some("E3015")),
-        ("nonreference_deref", "fn bad(value i32) { print(*value) }", Some("E3075")),
+        ("nonreference_deref", "fn bad(value i32) { print(*value) }", Some("E3080")),
     ];
     let dir = std::env::temp_dir().join(format!("tarn-collections-loans-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

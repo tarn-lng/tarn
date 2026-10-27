@@ -1392,7 +1392,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
                         if !place && !self.is_copy(&inner) {
                             let shown = self.show(&inner);
                             self.err(
-                                Diagnostic::error("E3074", "deref_move", format!("cannot move `{shown}` out of a reference"))
+                                Diagnostic::error("E3079", "deref_move", format!("cannot move `{shown}` out of a reference"))
                                     .primary(e.span, "")
                                     .note("`*r` reads a copy; only copy types can be read this way")
                                     .help("borrow it (`&*r`, or use `r` directly), clone it, or assign a new value with `*r = value`"),
@@ -1404,7 +1404,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     other => {
                         let shown = self.show(&other);
                         let help = if matches!(other, Ty::Ptr(..)) { "raw pointers are read and written through `ffi` helpers inside `unsafe`" } else { "`*` applies to references (`&T` or `&mut T`)" };
-                        self.err(Diagnostic::error("E3075", "deref_non_reference", format!("cannot dereference `{shown}`")).primary(e.span, "").help(help));
+                        self.err(Diagnostic::error("E3080", "deref_non_reference", format!("cannot dereference `{shown}`")).primary(e.span, "").help(help));
                         Ty::Error
                     }
                 }
