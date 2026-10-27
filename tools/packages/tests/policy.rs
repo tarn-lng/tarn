@@ -120,3 +120,22 @@ fn origin_normalization_does_not_need_an_online_registry() {
         assert!(tarn_packages::source(origin, Path::new("/tmp")).is_err());
     }
 }
+
+#[test]
+fn unfetched_package_names_cache_path_and_suggests_fetch() {
+    let home = std::env::temp_dir().join(format!("tarn-unfetched-{}", std::process::id()));
+    let release = store::Release {
+        name: "helper".into(),
+        version: semver::Version::parse("0.1.0").unwrap(),
+        registry: "https://example.test/registry/".into(),
+        hash: "0".repeat(64),
+        entry: "lib.tarn".into(),
+        published: 0,
+        dependencies: Default::default(),
+        files: Default::default(),
+    };
+    let error = store::verified_files(&home, &release).unwrap_err();
+    assert!(error.contains("helper 0.1.0"), "{error}");
+    assert!(error.contains(&store::cache_root(&home, &release).display().to_string()), "{error}");
+    assert!(error.contains("tarn fetch"), "{error}");
+}
