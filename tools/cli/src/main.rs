@@ -309,6 +309,10 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
     }
     if res.has_errors() { return ExitCode::from(1); }
     let (Some(p), Some(t)) = (&res.drops, &res.typed) else { native_error(json, "internal", "compiler bug: missing post-drop IR"); return ExitCode::from(1); };
+    if let Some(d) = res.missing_main() {
+        if json { println!("{}", d.to_json(&res.program.sources)); } else { eprint!("{}", d.render(&res.program.sources)); }
+        return ExitCode::from(1);
+    }
     let output = if run { std::env::temp_dir().join(format!("tarn-run-{}", std::process::id())) }
         else { explicit.unwrap_or_else(|| std::path::Path::new(path).with_extension("")) };
     if std::path::Path::new(path).canonicalize().ok() == output.canonicalize().ok() && output.exists() {
@@ -360,6 +364,7 @@ fn cmd_profile(args: &[String]) -> ExitCode {
     for d in &res.diagnostics { eprint!("{}", d.render(&res.program.sources)); }
     if res.has_errors() { return ExitCode::from(1); }
     let (Some(p), Some(t)) = (&res.drops, &res.typed) else { eprintln!("error: compiler bug: missing post-drop IR"); return ExitCode::from(1); };
+    if let Some(d) = res.missing_main() { eprint!("{}", d.render(&res.program.sources)); return ExitCode::from(1); }
     let scratch = match process::Scratch::new() {
         Ok(s) => s,
         Err(e) => { eprintln!("error: {e}"); return ExitCode::from(1); }

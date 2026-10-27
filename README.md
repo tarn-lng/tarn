@@ -92,7 +92,12 @@ slices and Result errors. See [the API](docs/networking.md),
 [the Phase 12B report](docs/readiness-report.md) and
 [the echo example](examples/tcp_echo.tarn). Phase 12C adds
 [manual suspended operations and a single-thread executor](docs/suspended-execution-report.md).
-Async function syntax and await remain deferred.
+`async fn` and `await` lower onto that model (Phase 13,
+[ADR 0037](docs/adr/0037-source-async-lowering.md)), with cooperative
+`spawn_async` tasks, timeouts and buffered async I/O on a single-thread
+executor; see [the async example](examples/28_async.tarn). Async support is
+early: there are no async closures or blocks, `select`, cancellation or
+multi-thread executors yet.
 
 ## Contributing
 

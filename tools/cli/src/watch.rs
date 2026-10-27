@@ -242,7 +242,15 @@ pub fn run(args: &[String]) -> ExitCode {
                         eprint!("{}", diagnostic.render(&result.program.sources));
                     }
                 }
-                if !result.has_errors() {
+                let missing_main = result.missing_main();
+                if let Some(diagnostic) = &missing_main {
+                    if json {
+                        println!("{}", diagnostic.to_json(&result.program.sources));
+                    } else {
+                        eprint!("{}", diagnostic.render(&result.program.sources));
+                    }
+                }
+                if !result.has_errors() && missing_main.is_none() {
                     generation += 1;
                     let output = scratch.0.join(format!("run-{generation}"));
                     match tarn_backend::build_linked(

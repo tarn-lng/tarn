@@ -192,6 +192,7 @@ Golden tests in `tests/**/fail/*.tarn` pin the rendered text of each code.
 | E3051 | `unmodeled_replacement_loans` | a native guard replacement cannot accept new payload loans without a stored-loan effect contract |
 | E3076 | `not_displayable` | an interpolated value's type does not implement `Display` (ADR 0077) |
 | E3077 | `impl_bound_not_satisfied` | a bounded impl applies only when its type arguments satisfy its bounds; reports the root cause and chain (ADR 0078) |
+| E3078 | `missing_main` | `tarn build`/`tarn run` found no `fn main` in the entry module; `tarn check` still accepts libraries |
 | E3073 | `self_through_dynamic_interface` | a method using `Self` beyond its receiver cannot be called through `any I`; use `<T: I>` |
 | E3074 | `expanding_instantiation` | recursive generic calls grow a type argument without bound, so specialization would never finish |
 | E3075 | `value_too_large` | a concrete value exceeds the v0 native limits (64 KiB, 4096 array elements, 64 nesting levels) |

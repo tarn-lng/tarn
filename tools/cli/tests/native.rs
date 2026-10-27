@@ -202,3 +202,23 @@ fn profile_names_tarn_functions() {
     assert!(stderr.contains("total ") && stderr.contains("instructions"));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn missing_main_is_a_diagnostic_for_native_commands_only() {
+    let dir = std::env::temp_dir().join(format!("tarn-cli-no-main-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("library.tarn");
+    std::fs::write(&source, "fn helper() i32 {\n    return 1\n}\n").unwrap();
+    let cli = env!("CARGO_BIN_EXE_tarn");
+    for command in ["build", "run"] {
+        let output = Command::new(cli).arg(command).arg(&source).output().unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("E3078") && stderr.contains("no `fn main`") && stderr.contains("tarn check"), "{stderr}");
+        assert!(!stderr.contains("backend not implemented"), "{stderr}");
+    }
+    let output = Command::new(cli).args(["build", "--json"]).arg(&source).output().unwrap();
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\"E3078\""));
+    assert!(Command::new(cli).arg("check").arg(&source).status().unwrap().success());
+    let _ = std::fs::remove_dir_all(&dir);
+}
