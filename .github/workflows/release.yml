@@ -97,20 +97,3 @@ jobs:
     uses: ./.github/workflows/container.yml
     with:
       tag: ${{ needs.build.outputs.tag }}
-  website:
-    # Ask tarn-lng/website to redeploy with this release. The website also
-    # polls every six hours, so a missing token only delays the update.
-    needs: [build, publish]
-    runs-on: ubuntu-22.04
-    permissions: {}
-    steps:
-      - name: Dispatch website deployment
-        env:
-          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
-          TAG: ${{ needs.build.outputs.tag }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo '::notice::WEBSITE_DISPATCH_TOKEN is not set; the website picks up the release on its next scheduled deploy'
-            exit 0
-          fi
-          gh api repos/tarn-lng/website/dispatches -f event_type=tarn-release -f "client_payload[tag]=$TAG"
