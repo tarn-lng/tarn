@@ -7,8 +7,8 @@ must match Cargo.toml. Release assets are never replaced by the workflow.
 Formatting currently reports existing debt without blocking releases.
 
 Supported binary platforms are little-endian Linux x86_64 and ARM64 (aarch64),
-with glibc 2.35 or newer. ARM64 artifacts begin with the next release after
-0.0.7; older published releases stay x86_64-only.
+with glibc 2.35 or newer. ARM64 artifacts begin with
+0.0.8; older published releases stay x86_64-only.
 Native application compilation additionally requires `cc` and libc development
 headers. Particular APIs may require native libraries, e.g. OpenSSL or libdbus.
 The standard library and runtime are embedded in the compiler.
@@ -17,7 +17,7 @@ Download the installer, inspect it, then run it:
 
 ```sh
 curl --fail --proto '=https' https://tarn-lng.github.io/website/install.sh -o install-tarn.sh
-sh install-tarn.sh --version 0.0.1
+sh install-tarn.sh --version 0.0.8
 ```
 
 The default directory is `$HOME/.local/bin`. Use `--prefix /absolute/directory`
