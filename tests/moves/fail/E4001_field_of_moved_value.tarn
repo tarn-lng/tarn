@@ -1,0 +1,20 @@
+struct Buffer {
+    data string
+}
+
+struct Pair {
+    first Buffer
+    second Buffer
+}
+
+fn consume(p Pair) {
+}
+
+fn main() {
+    p := Pair{first: Buffer{data: ""}, second: Buffer{data: ""}}
+    x := p.first
+    y := p.first.data
+    q := Pair{first: Buffer{data: ""}, second: Buffer{data: ""}}
+    consume(q)
+    z := q.first.data
+}

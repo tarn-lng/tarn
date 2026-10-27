@@ -425,6 +425,21 @@ impl Cx<'_> {
         d
     }
 
+    /// The outermost path whose recorded moves cover every move of `path`:
+    /// the value the move sites actually moved.
+    fn moved_ancestor(&self, path: MovePathId, st: &State) -> MovePathId {
+        let sites = st.moves(path.0 as usize);
+        let mut moved = path;
+        let mut cur = self.mp.path(path).parent;
+        while let Some(p) = cur {
+            let theirs = st.moves(p.0 as usize);
+            if sites.is_empty() || !sites.iter().all(|m| theirs.contains(m)) { break }
+            moved = p;
+            cur = self.mp.path(p).parent;
+        }
+        moved
+    }
+
     fn err_use(&mut self, path: MovePathId, st: &State, span: Span) {
         let (name, ty) = self.name_ty(path);
         let i = path.0 as usize;
@@ -435,12 +450,19 @@ impl Cx<'_> {
             let label = if possibly { "used here, but it may have been moved" } else { "value used here after move" };
             let mut d = Diagnostic::error("E4001", "use_after_move", msg).primary(span, label);
             d = self.move_labels(d, path, st, span, "value moved");
-            let tn = self.ty_name(&ty);
+            // Explain and fix the value that was actually moved: using `a.data`
+            // after `consume(a)` is fixed by borrowing `a`, not `a.data`.
+            let moved_path = self.moved_ancestor(path, st);
+            let (mname, mty) = if moved_path == path { (name.clone(), ty) } else { self.name_ty(moved_path) };
+            if mname != name {
+                d = d.note(format!("`{name}` is part of `{mname}`, which was moved"));
+            }
+            let tn = self.ty_name(&mty);
             d = d.note(format!("`{tn}` is not a copy type, so assigning or passing it moves it"));
             if possibly {
                 d.help("move it on every path or on none, or reassign it before this use")
             } else {
-                d.help(format!("to keep using `{name}`, borrow it where it is moved (`&{name}`) instead of moving it"))
+                d.help(format!("to keep using `{mname}`, borrow it where it is moved (`&{mname}`) instead of moving it"))
             }
         } else {
             let msg = if possibly { format!("use of possibly uninitialized `{name}`") } else { format!("use of uninitialized `{name}`") };
