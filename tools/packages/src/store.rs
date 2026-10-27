@@ -358,6 +358,14 @@ pub fn verified_files(
     release: &Release,
 ) -> Result<(PathBuf, BTreeMap<String, Vec<u8>>)> {
     let root = cache_root(home, release);
+    if !root.exists() {
+        return Err(format!(
+            "package {} {} is locked but not in the local cache (expected at `{}`); run `tarn fetch`",
+            release.name,
+            release.version,
+            root.display()
+        ));
+    }
     let mut files = BTreeMap::new();
     inventory(&root, &root, &mut files, true)?;
     let hashes: BTreeMap<_, _> = files.iter().map(|(n, b)| (n.clone(), hash(b))).collect();
