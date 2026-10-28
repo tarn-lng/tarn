@@ -19,15 +19,15 @@ Source → Lexer → Parser → AST → Resolve → Types → Typed IR
 | `compiler/driver` | `tarn_driver` | load modules from disk, run phases, sort diagnostics | done (v0) |
 | `compiler/ir` | `tarn_ir` | typed CFG IR, lowering, verifier, printer (ADR 0023) | done (v0) |
 | `compiler/ownership` | `tarn_ownership` | 6A move/init + drop decisions (ADR 0024), 6B borrows + provenance (ADR 0025), 6C executable drop elaboration (ADR 0026) | done (v0) |
-| `compiler/backend` | `tarn_backend` | post-drop IR → Cranelift → ELF object/link | initial Linux x86_64 subset (ADR 0027) |
-| `stdlib/net` | — | blocking/nonblocking TCP/UDP, owned sockets, level-triggered epoll and explicit errors (ADRs 0034/0035) | done (12A/12B Linux v0) |
+| `compiler/backend` | `tarn_backend` | post-drop IR → Cranelift → ELF object/link | Linux x86_64/ARM64, documented native subset (ADRs 0027/0079) |
+| `stdlib/net` | — | owned TCP/UDP/Unix sockets, readiness/async I/O, and blocking TLS streams | implemented scoped APIs; see networking guide |
 | `stdlib/fs` | — | owned blocking regular files, directories and explicit io.Error (ADR 0043) | done (15B Linux v0) |
-| `stdlib/process` | — | owned blocking children, dual-pipe capture and io.Error (ADR 0045) | done (15D Linux v0) |
-| `stdlib/ffi` | — | trusted layer without dependencies: raw pointer intrinsics, CString, unsafe readers (ADR 0047) | 18B |
+| `stdlib/process` | — | owned children, piped/async I/O, bounded waits and one-shot handoffs | implemented scoped APIs (ADRs 0045/0070–0073) |
+| `stdlib/ffi` | — | trusted raw pointers, CString, scalar access and static C callbacks (ADRs 0047/0080) | implemented subset |
 | `stdlib/json` | — | ordinary bundled JSON writer/Encode and strict parser (ADR 0048) | done (17 v0) |
-| `stdlib/core` | — | `core.tarn`: prelude declarations, embedded in the compiler (ADR 0020) | started |
-| `runtime` | — | embedded C runtime: primitive print, strings, panic/abort; libc startup | initial (ADR 0027) |
-| `tools/cli` | `tarn` | the single CLI | started |
+| `stdlib/core` | — | embedded prelude, ADTs, collections primitives and capability/interface declarations | implemented subset |
+| `runtime` | — | embedded C primitives for storage, I/O, tasks, synchronization and abort-only faults | implemented native subset |
+| `tools/cli` | `tarn` | compiler commands, tests, formatting, package commands, profiling and stdlib catalog | implemented; clean/cache commands deferred |
 | `tools/packages` | `tarn_packages` | deterministic pure-source resolution, immutable local registry, HTTPS fetch, lock/cache verification; hands the driver a plain verified `PackageSet` (compiler crates never depend on it) | initial subset (ADR 0051) |
 | `tools/fmt` | `tarn_fmt` | canonical whitespace over real lexer/parser with token/AST preservation checks (ADR 0050) | done (basic) |
 | `tools/lsp` | `tarn-lsp` | stdio LSP: diagnostics, hover, definition, shared formatting, unsaved buffers | done within documented editor subset |
@@ -39,8 +39,8 @@ Rules:
 - The parser produces syntax only (grammar: `docs/grammar.md`). Name binding, types and ownership state live
   in side tables keyed by node ids, never inside the AST.
 - Every token, node and IR instruction carries a `Span`.
-- Platform-specific code (Linux syscalls, linker invocation) lives in `runtime`
-  and in a `platform` module of the driver, not in the frontend.
+- Platform-specific syscalls live in `runtime`; native ISA selection, object
+  emission and linker invocation live in `backend`, outside the frontend.
 
 ## Dependency policy
 
@@ -77,20 +77,28 @@ package install hooks or imply current sandbox enforcement.
 ## Linking
 
 Cranelift ELF object + embedded `runtime/native.c`, compiled/linked through system
-`cc -std=c11 -O0 -fno-strict-aliasing -no-pie ... [-l<granted>] -lm`, run with
-`LC_ALL=C`; `--link` libraries are validated build-time grants (ADR 0047). Linux x86_64 only;
+`cc -std=c11 -O2 -fno-strict-aliasing -no-pie -pthread ... [-l<granted>] -lm`, run with
+`LC_ALL=C`; `--link` libraries are validated build-time grants (ADR 0047). Linux x86_64 and ARM64;
 requires a C toolchain with libc/libm headers. No installed runtime archive needed.
 ABI, canonical layout, output paths and limits: [ADR 0027](adr/0027-native-backend.md).
 
-## Caching (planned)
+## Caching
+
+The native runtime object is already cached in `~/.tarn/artifacts/runtime/`,
+keyed by runtime source, C flags, host architecture/OS and C compiler identity.
+Cache failures fall back to a per-build runtime compile; setting
+`TARN_NO_RUNTIME_CACHE` disables this cache. This does not cache application
+compilation or inferred interfaces.
 
 Use a content-addressed global store, conceptually `~/.tarn/registry/`,
-`~/.tarn/sources/` and `~/.tarn/artifacts/`; `sources/<sha256>/` is implemented; registry metadata/artifact caching remains open.
+`~/.tarn/sources/` and `~/.tarn/artifacts/`; `sources/<sha256>/` is implemented;
+registry metadata/application-artifact caching remains open.
 Deduplicate verified sources by content. Artifact keys include source hash,
 compiler/toolchain identity, target, options and resolved dependency graph identity.
 Interface hashes, names or mutable tags alone cannot establish cache identity.
 Reuse must respect content verification and security policy, including authorized
-build inputs. This is a future design constraint; no cache optimization starts here.
+build inputs. These are constraints for future application-artifact caching,
+separate from the existing runtime object cache.
 See [dependency security](dependency-security.md).
 
 ## Executable destruction boundary
@@ -105,7 +113,11 @@ Native feature completion after phase 7 adds reachable generic specialization,
 concrete generic ADTs, borrowed fat slices, nonescaping borrowed closures and
 checked shifts/float-to-int casts. Unknown bootstrap stdlib APIs now fail with
 E3040. See [ADR 0028](adr/0028-native-feature-completeness.md) and
-[ADR 0029](adr/0029-checked-shifts-and-float-casts.md). Optimization remains deferred. Shared/mutable invocation borrows callable storage; consuming invocation moves it. Owned closure destruction uses ordinary post-drop functions (ADR 0032).
+[ADR 0029](adr/0029-checked-shifts-and-float-casts.md). Native optimization is
+enabled by default (ADR 0056), with bounded inlining and proven arithmetic
+(ADR 0057). Shared/mutable invocation borrows callable storage; consuming
+invocation moves it. Owned closure destruction uses ordinary post-drop functions
+(ADR 0032).
 Borrowed dynamic references use private `(data, vtable)` pairs and resolved
 frontend implementation IDs (ADR 0030). Declaration-derived passing/result
 contracts and `borrows(...)` clauses expose invisible implementation promises
@@ -238,13 +250,16 @@ without providing an ownership registry. See [HTTP](http.md) and
 
 ## Application ergonomics (Phase 17)
 
-`stdlib/json` and the `string.Builder`/`http.serve` additions are ordinary Tarn
+`stdlib/json` and the `Builder`/`http.serve` additions are ordinary Tarn
 with no runtime or intrinsic changes. Two backend changes support them: `[0]T`
 markers no longer inspect `T` for layout, and vector element destruction calls
 on-demand per-type functions, so owned types may recurse through `Vec`. The
 type checker lets a non-consuming closure literal adopt an expected `mut fn`.
 The native bind bridge sets SO_REUSEADDR for TCP. See
 [ADR 0048](adr/0048-application-ergonomics.md).
+
+Builder originally lived in `string`; ADR 0077 moved it into `core`, so current
+programs use `Builder.new()` (or `core.Builder.new()`), not `string.Builder`.
 
 ## General-purpose foundations (Phase 31)
 
@@ -254,8 +269,19 @@ impls are confined to core; resolved implementation targets are reused by static
 and dynamic backend dispatch. Explicit reference places use normal IR Deref
 projections and ownership/drop checking. A small console C adapter only converts
 SIGPIPE to a reported errno using a thread-local signal mask. Clocks use the
-existing FFI layer and Linux x86_64 timespec; no scheduler or ownership catalog
+existing FFI layer and the supported LP64 Linux timespec layout; no scheduler or ownership catalog
 is added. See [ADR 0060](adr/0060-general-purpose-foundations.md).
+
+## C interoperability
+
+Static C callbacks (ADR 0080) use explicit function identities in typed IR.
+Post-drop verification validates the target; specialization keeps its ordinary
+Tarn body reachable. The backend emits a static adapter using the same scalar
+C ABI classifier as external calls, without generated C source or a hidden
+closure environment. Unsafe scalar pointer reads/writes have a separately
+verified trusted declaration contract and never manufacture Tarn references.
+The compiler still uses the embedded C runtime and system linker. Neither
+unsafe FFI nor native linking verifies or isolates foreign implementations.
 
 ## Native platforms
 

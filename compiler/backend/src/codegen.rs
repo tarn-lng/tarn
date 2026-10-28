@@ -408,6 +408,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
             }
         }
     }
+    let c_callbacks = ffi::emit_callbacks(&mut module, p, &ids)?;
     let mut thunks = HashMap::new();
     for id in &ordered {
         let f = &p.functions[id.0 as usize].decl;
@@ -590,6 +591,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
                 f,
                 ids: &ids,
                 thunks: &thunks,
+                c_callbacks: &c_callbacks,
                 frame_drops: &frame_drops,
                 env: None,
                 environments: HashMap::new(),
@@ -690,6 +692,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
                 f: main,
                 ids: &ids,
                 thunks: &thunks,
+                c_callbacks: &c_callbacks,
                 frame_drops: &frame_drops,
                 env: None,
                 environments: HashMap::new(),
@@ -863,6 +866,7 @@ struct Cx<'a, 'b> {
     f: &'b post::Function,
     ids: &'b HashMap<FunctionId, FuncId>,
     thunks: &'b HashMap<FunctionId, FuncId>,
+    c_callbacks: &'b HashMap<FunctionId, FuncId>,
     frame_drops: &'b HashMap<FunctionId, FuncId>,
     /// Frame pointer of an async body.
     env: Option<cl::Value>,
@@ -1803,6 +1807,17 @@ impl Cx<'_, '_> {
             Terminator::Call { callee, args, dest, next, spawn, .. } => {
                 if *spawn && !matches!(callee, Callee::TaskSpawn { .. }) {
                     return Err(Error::unsupported("spawn"));
+                }
+                if matches!(callee, Callee::Intrinsic(name) if name == "ffi.callback") {
+                    let [Operand::Const(Const::Fn(id, _))] = args.as_slice() else { return Err(Error::bug("C callback target missing")); };
+                    let adapter = *self.c_callbacks.get(id).ok_or_else(|| Error::bug("C callback adapter missing"))?;
+                    let adapter = self.module.declare_func_in_func(adapter, self.b.func);
+                    let address = self.b.ins().func_addr(types::I64, adapter);
+                    let ty = self.place_ty(dest)?;
+                    self.write(dest, Val { value: Some(address), ty })?;
+                    let next = next.ok_or_else(|| Error::bug("C callback missing return edge"))?;
+                    self.b.ins().jump(self.blocks[next.0 as usize], &[]);
+                    return Ok(());
                 }
                 let args = args.iter().map(|o| self.operand(o)).collect::<Result<Vec<_>>>()?;
                 let dest_ty = self.place_ty(dest)?;

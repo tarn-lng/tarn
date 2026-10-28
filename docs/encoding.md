@@ -22,9 +22,18 @@ Two ordinary stdlib modules (plain Tarn, no intrinsic authority; ADR 0076).
   text length before any allocation.
 
 ```tarn
-png := try_decode(encoding.base64_decode(&payload.data_base64, 1048576))
-digest := crypto.sha256(png.as_slice())
-if encoding.hex(&digest) != payload.sha256 { ... }
+import "encoding"
+import "crypto"
+
+fn main() {
+    match encoding.base64_decode(&"YWJj", 3) {
+        Ok(data) => {
+            digest := crypto.sha256(data.as_slice())
+            print(encoding.hex(&digest))
+        }
+        Err(_) => { panic("invalid base64") }
+    }
+}
 ```
 
 ## `crypto`

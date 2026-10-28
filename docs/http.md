@@ -76,6 +76,9 @@ For small applications, `http.serve(address, handler)` runs the accept/read/
 reject/write loop. The handler is `mut fn(&Request) Result<Response, Error>`, so
 it may mutably capture application state:
 
+The following fragment assumes application-defined `Store` and `route` and
+imports of `http` and `io`; it is not a standalone program.
+
 ```tarn
 fn main() Result<void, io.Error> {
     var store = Store.load(&"items.json")

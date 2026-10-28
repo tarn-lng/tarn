@@ -5,12 +5,19 @@ on:
       tag:
         type: string
         required: true
+      skip_tests:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       tag:
         description: Published release tag (vX.Y.Z)
         type: string
         required: true
+      skip_tests:
+        description: Skip container smoke tests for an explicitly requested build-only publication
+        type: boolean
+        default: false
   release:
     types: [published]
 permissions:
@@ -126,12 +133,14 @@ jobs:
       - name: Pull existing immutable version
         if: env.BUILD != 'true'
         run: docker pull --platform "linux/$PLATFORM" "$REFERENCE"
-      - name: Verify architecture, identity and application builds
+      - name: Verify architecture and identity
         run: |
           test "$(docker inspect --format '{{.Architecture}}' "$REFERENCE")" = "$PLATFORM"
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$REFERENCE")" = "$VERSION"
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$REFERENCE")" = "$REVISION"
-          python3 tools/release/test-container.py "$REFERENCE" "$VERSION"
+      - name: Verify application builds
+        if: ${{ inputs.skip_tests != true }}
+        run: python3 tools/release/test-container.py "$REFERENCE" "$VERSION"
       - name: Publish architecture by digest
         if: env.EXISTS != 'true'
         run: |

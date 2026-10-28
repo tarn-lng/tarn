@@ -80,7 +80,10 @@ Native feature completion after phase 7 adds reachable generic specialization,
 concrete generic ADTs, borrowed fat slices, nonescaping borrowed closures and
 checked shifts/float-to-int casts. Unknown bootstrap stdlib APIs now fail with
 E3040. See [ADR 0028](docs/adr/0028-native-feature-completeness.md) and
-[ADR 0029](docs/adr/0029-checked-shifts-and-float-casts.md). Callable locals retain current consuming semantics; optimization remains deferred.
+[ADR 0029](docs/adr/0029-checked-shifts-and-float-casts.md). Reusable callable
+invocations borrow their environments; consuming callables move them. Native
+optimization is enabled by default (Cranelift `speed`, runtime `-O2`), with
+bounded inlining and proven-arithmetic optimization; see ADRs 0056–0057.
 Borrowed dynamic interfaces and declaration-derived semantic contracts are covered
 by [ADR 0030](docs/adr/0030-borrowed-dynamic-interfaces.md),
 [ADR 0031](docs/adr/0031-declaration-semantic-contracts.md) and the
@@ -98,6 +101,13 @@ slices and Result errors. See [the API](docs/networking.md),
 executor; see [the async example](examples/28_async.tarn). Async support is
 early: there are no async closures or blocks, `select`, cancellation or
 multi-thread executors yet.
+
+Scalar C FFI, raw pointers and static C callbacks are documented in the
+[FFI guide](docs/ffi.md). Native linking does not verify or isolate foreign C.
+For current public stdlib signatures, use `tarn stdlib --json`; the catalog
+reflects the installed binary, not later source edits. Phase plans/reports
+record historical scope and measurements; later guides and ADR extensions may
+supersede their limitations.
 
 ## Contributing
 

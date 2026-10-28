@@ -16,7 +16,8 @@ claim inferred provenance or thread capabilities.
 
 ## Common corrections
 
-- Declare with `x := value` or `var x: Type := value`. Parameters use `x Type`.
+- Declare with `x := value` (immutable) or `var x: Type = value` (mutable).
+  `var x := value` is invalid. Parameters use `x Type`.
 - `if` and `match` are statements. Return explicitly from each branch.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
   `Result.map_err(callback)` converts errors explicitly. `unwrap_or`, `map`,
@@ -34,6 +35,9 @@ claim inferred provenance or thread capabilities.
 - `sleep_blocking` needs no executor; `sleep` is async. Use Instant for elapsed
   time, now_utc for Unix timestamps.
 - Buffered stdout/stderr require explicit flush or finish. No destructor writes.
+- Numeric casts such as `u64(x)` are checked; `u64.wrap(x)` is not implemented.
+  `wrapping_add`, `wrapping_sub` and `wrapping_mul` are explicit integer
+  arithmetic methods, not wrapping conversions.
 
 ## Executable references
 

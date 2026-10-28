@@ -17,17 +17,19 @@ tarn — the Tarn language toolchain
 usage:
     tarn lex [entry] [--json]    print the token stream (debugging)
     tarn ast [entry]             parse and print the syntax tree
-    tarn check [entry] [--json] [--watch]  lex, parse and resolve names; report diagnostics
-    tarn resolve [entry]         print what every name resolves to
+    tarn check [entry] [--json] [--watch]  check syntax, types, ownership and borrows
+    tarn resolve [entry] [--json] print what every name resolves to
     tarn types [entry]           print the type of every local and parameter
-    tarn ir [entry]              print typed IR; --drops prints executable drops
+    tarn ir [entry] [--drops]    print typed IR or executable drops
     tarn build [entry] [-o path] [--link lib]... [--json]
                                      emit a native Linux x86_64/ARM64 executable; each
                                      --link grants a system C library
-    tarn run [entry] [--link lib]... [--json] [--watch]
+    tarn run [entry] [--link lib]... [--json] [--watch] [-- args...]
                                      build temporarily and execute
     tarn test [entry] [--filter text] [--timeout milliseconds] [--json] [--watch]
                                      run isolated tests (also accepts --link)
+    tarn test [entry] --bench [--runs n] [--filter text] [--json]
+                                     measure isolated bench_* functions
     tarn fmt [file.tarn | directory] [--check]
                                      format sources recursively (default: .)
     tarn fmt --stdin                 format stdin to stdout

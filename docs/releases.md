@@ -18,7 +18,7 @@ Download the installer, inspect it, then run it:
 ```sh
 curl --fail --proto '=https' https://tarn-lng.github.io/website/install.sh -o install-tarn.sh
 sh install-tarn.sh                    # newest release
-sh install-tarn.sh --version 0.0.8    # or a specific one
+sh install-tarn.sh --version 0.0.9    # or a specific one
 ```
 
 The default directory is `$HOME/.local/bin`. Use `--prefix /absolute/directory`
@@ -35,6 +35,18 @@ atomic; replacing the two binaries together is not a transactional operation.
 To publish, update the workspace version and lock, run checks, commit, and push
 the matching tag. Manual workflow dispatch can retry an existing tag before a
 release exists. Published tags and release assets must remain immutable.
+
+## Explicit build-only publication
+
+The release workflow accepts `skip_tests: true` on manual dispatch only. The
+normal tag-triggered flow still runs all suites. For an explicitly authorized
+build-only release, push its commit/tag with `[skip ci]` in the commit message
+and dispatch `release.yml` with its tag and `skip_tests=true`. This prevents the
+automatic push/PR runs while the manual workflow still builds native binaries
+for both architectures, verifies artifact checksums and publishes the release.
+The flag also skips the reusable container workflow's application smoke tests;
+image architecture/version/revision checks remain enabled. Release notes and
+workflow summaries record the omitted suites. Defaults remain unchanged.
 
 ## Official application-builder image
 

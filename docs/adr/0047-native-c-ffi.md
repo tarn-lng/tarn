@@ -4,6 +4,10 @@ Status: accepted. Phase 18 implements all stages within documented v0 limits;
 [report](../phase-18-report.md). Detailed stages, gates and tests:
 [Phase 18 plan](../phase-18-plan.md).
 
+Extension: [ADR 0080](0080-static-c-callbacks.md) adds static native callbacks
+and unsafe scalar pointer access. Its callback support supersedes the original
+callback exclusion below; aggregate ABI and variadic limits remain.
+
 ## Context
 
 `extern "C"` declarations parse, type check, require `unsafe` (E3031) and carry

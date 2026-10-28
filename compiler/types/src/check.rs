@@ -1186,7 +1186,18 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     Ty::Adt(parent, generics.iter().map(|p| map[p].clone()).collect())
                 }
                 SymbolKind::Function | SymbolKind::Method { .. } | SymbolKind::ImplMethod { .. } => {
+                    if Some(s) == self.env.decls.ffi_callback {
+                        self.err(Diagnostic::error("E3081", "invalid_c_callback", "the C callback constructor must be called directly")
+                            .primary(e.span, "use `ffi.callback(handler)` instead of storing the constructor"));
+                        return Ty::Error;
+                    }
                     let Some(sig) = self.env.decls.fns.get(&s).cloned() else { return Ty::Error };
+                    if sig.is_unsafe || sig.abi.as_deref().is_some_and(|abi| abi != "intrinsic") {
+                        self.err(Diagnostic::error("E3082", "unsafe_function_value", "an unsafe or foreign function cannot become an ordinary callable value")
+                            .primary(e.span, "the `fn` type does not preserve its unsafe call requirement")
+                            .help("call the function directly inside `unsafe`, or write a Tarn wrapper that checks its safety requirements"));
+                        return Ty::Error;
+                    }
                     let map = self.instantiate(&sig.generics);
                     if !sig.generics.is_empty() {
                         self.tables.type_args.insert(e.id, sig.generics.iter().map(|p| map[p].clone()).collect());
@@ -1894,6 +1905,21 @@ impl<'e, 'a> FnCx<'e, 'a> {
         }
         let what = if has_recv { format!("method `{name}`") } else { format!("`{name}`") };
         self.args(e, &what, &ps, args);
+        if Some(s) == self.env.decls.ffi_callback && let [argument] = args {
+            let mut argument = argument;
+            while let ExprKind::Paren(inner) = &argument.kind { argument = inner; }
+            let valid = match self.res(argument.id) {
+                Some(Res::Symbol(id)) => self.env.decls.fns.get(&id).is_some_and(|f| {
+                    f.abi.is_none() && !f.is_async && !f.is_unsafe && f.generics.is_empty() && f.receiver.is_none()
+                }),
+                _ => false,
+            };
+            if !valid {
+                self.err(Diagnostic::error("E3081", "invalid_c_callback", "C callback must directly name an ordinary non-generic Tarn function")
+                    .primary(argument.span, "closures, callable locals, async, unsafe and foreign functions are not supported")
+                    .help("use a named function with scalar/pointer parameters and pass context explicitly through a raw pointer"));
+            }
+        }
         let obligation_start = self.obligations.len();
         self.obligations_for(&sig.generics, &map, e.span);
         let mut evidence_updates = Vec::new();

@@ -214,3 +214,12 @@ Async bodies now lower onto verified frames (ADR 0037); the code is retired.
 These two were briefly emitted as E3074 and E3075, which already meant
 `expanding_instantiation` and `value_too_large`; they were renumbered so each
 code has one meaning.
+
+## Static C callbacks
+
+- E3081 `invalid_c_callback`: `ffi.callback` must be called directly with a
+  named ordinary non-generic, non-async, safe Tarn function. Closures and
+  callable locals cannot supply a static C entry point.
+- E3082 `unsafe_function_value`: an ordinary `fn` value cannot preserve the
+  unsafe requirement of an `unsafe fn` or foreign function. Call directly
+  inside `unsafe`, or implement a wrapper that checks its preconditions.

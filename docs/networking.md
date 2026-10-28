@@ -3,7 +3,7 @@
 `import "net"` loads the embedded `stdlib/net/net.tarn`. Errors are `io.Error`;
 execution (Execution, Operation, AsyncTask) lives in `runtime` and timers in
 `time` (module layers: [ADR 0041](adr/0041-stdlib-module-layers.md)). The current target is
-Linux x86_64. Blocking operations, including DNS, may block the calling native task.
+Linux x86_64 and ARM64. Blocking operations, including DNS, may block the calling native task.
 The API uses ordinary Tarn ownership, `Result`, `try` and borrowed byte slices.
 
 ```tarn

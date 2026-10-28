@@ -1,0 +1,4 @@
+unsafe fn foreign_read(value i32) i32 { return value }
+fn main() {
+ callable := foreign_read
+}

@@ -1,7 +1,7 @@
 # Console streams (Phase 31)
 
 `import "console"` provides blocking non-owning views of stdin, stdout and
-stderr on Linux x86_64. They never close standard descriptors. Their fields are
+stderr on Linux x86_64 and ARM64. They never close standard descriptors. Their fields are
 private; they do not represent exclusive ownership of process-global streams.
 
 | API | Result |
@@ -27,8 +27,9 @@ makes no ownership decisions. Multiple views do not serialize logical records;
 concurrent writers may interleave.
 
 Buffers are bytes. UTF-8 validation is explicit through string.from_utf8.
-There is no line-reader, bounded read-to-end helper, terminal control or async
-console API in this phase. Calling console I/O in an async computation blocks
+The LineReader and explicit output buffering are described below. There is no
+bounded read-to-end helper, terminal control or async console API. Calling
+console I/O in an async computation blocks
 its executor thread. See [ADR 0060](adr/0060-general-purpose-foundations.md).
 
 ## Explicit buffering

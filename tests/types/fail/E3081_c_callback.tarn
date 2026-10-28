@@ -1,0 +1,5 @@
+import "ffi"
+fn main() {
+ captured: i32 := 1
+ address := ffi.callback(fn(value i32) i32 { return value + captured })
+}
