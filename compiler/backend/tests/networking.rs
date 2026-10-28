@@ -794,3 +794,33 @@ fn main() Result<void, io.Error> {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n0\n");
     assert_eq!(balanced(&out), 2);
 }
+#[test]
+fn unix_raw_fd_is_the_borrowed_live_descriptor() {
+    let src = r#"import "io"
+import "net"
+fn main() Result<void, io.Error> {
+    pair := try net.UnixStream.pair()
+    var left = pair.first
+    var right = pair.second
+    print(left.raw_fd())
+    print(right.raw_fd())
+    // Borrowing the number does not transfer ownership: the streams still work.
+    try left.write_all(&[1]u8{42})
+    var byte = [1]u8{0}
+    print(try right.read(&mut byte))
+    print(byte[0])
+    return Ok(())
+}
+"#;
+    let exe = compile(src, "unix-raw-fd");
+    let out = run(&exe);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let printed: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(str::to_owned).collect();
+    assert_eq!(&printed[2..], ["1", "42"]);
+    let opened: Vec<String> = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.strip_prefix("net:open:").map(str::to_owned))
+        .collect();
+    assert_eq!(opened, printed[..2], "raw_fd must report the owned descriptors");
+    assert_eq!(balanced(&out), 2);
+}

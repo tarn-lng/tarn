@@ -2,9 +2,11 @@
 
 Tarn is a systems language with compile-time memory safety (ownership and
 borrowing, no mandatory GC), inferred lifetimes, a small regular syntax and
-official tooling. This document is the normative description of the syntax and
-semantics *as currently designed*. Sections marked **(provisional)** are not
-implemented yet and may change; every change must update `examples/`.
+official tooling. This document describes the implemented language and its
+current limits. Examples containing `...` or application-specific names are
+schematic fragments. Phase reports describe historical checkpoints; use the
+current guides and the installed compiler's `tarn stdlib --json` catalog for
+available APIs. Rebuild the compiler after changing embedded stdlib source.
 
 Guiding rule for every feature: **one obvious way to write it**. If two forms
 express the same thing, one of them is removed.
@@ -12,7 +14,8 @@ express the same thing, one of them is removed.
 ## 1. Lexical structure
 
 - Source files are UTF-8, extension `.tarn`.
-- Comments: `// line` and `/// doc comment` (attached to the next item).
+- Comments: `// line` and `/// doc comment` (retained as lexer trivia; the
+  stdlib catalog associates adjacent preceding doc comments with declarations).
   There are no block comments (one form only; also easier for line-based tools).
 - Identifiers: `[A-Za-z_][A-Za-z0-9_]*`. ASCII only in draft 0.
 - There are no semicolons. Statements end at a line break, decided by the
@@ -40,7 +43,7 @@ express the same thing, one of them is removed.
 Keywords:
 
 ```
-fn return if else for in break continue match
+fn async await return if else for in break continue match
 struct enum interface impl copy
 var pub import
 true false
@@ -49,6 +52,8 @@ try spawn unsafe extern mut
 
 `self`, `any` and `scope` are contextual: identifiers with a special meaning in
 one position (receiver, dynamic interface type, structured-concurrency block).
+`move` and `once` are contextual before `fn`; `borrows` is contextual after a
+bodyless function's result type.
 
 ## 2. Modules and imports
 
@@ -59,6 +64,8 @@ The project root is the directory of the entry file (with a manifest, its
 `examples/app/core/session.tarn`. Paths cannot leave that directory (`..`).
 There is no `package` line: the file system already says it (one less thing to
 keep in sync). See ADR 0004.
+
+This example assumes a local `app/config.tarn` exporting `load`:
 
 ```tarn
 import "fs"
@@ -75,10 +82,11 @@ be used before their declaration; locals cannot. Types, functions and values
 share one namespace per scope. Imports are private to the importing module
 and may form cycles. Full rules: `docs/resolution.md`.
 
-Future external package imports remain version-free, for example `import "redis"`.
-Versions belong to planned `tarn.toml`/`tarn.lock` metadata, not source paths.
-External package resolution is not implemented; see
-[dependency security](dependency-security.md) for requirements and open choices.
+External package imports are version-free, for example `import "redis"`.
+The integrated package manager records intent in `tarn.toml` and exact verified
+dependencies in `tarn.lock`. Normal builds consume the lock offline; explicit
+package commands resolve or fetch. See [packages](packages.md) for the implemented
+workflow and [dependency security](dependency-security.md) for its limits.
 
 ## 3. Bindings
 
@@ -96,8 +104,8 @@ var index = 0          // mutable, inferred
   `fn f(a i32)`, `struct S { a i32 }` (ADR 0011).
 - `var name: Type` declares a mutable binding **without a value**; it must be
   assigned on every path before it is used (E4005, ADR 0024).
-- `var name = value` / `var name: Type = value` declares a **mutable** binding. Type annotation optional; initializer
-  required (no uninitialized variables in draft 0).
+- `var name = value` / `var name: Type = value` declares an initialized
+  **mutable** binding. Without an initializer, an explicit type is required.
 - `=` assigns to an existing mutable place.
 - **Shadowing** (ADR 0009):
   - redeclaring a name in the **same scope** is an error (E2003);
@@ -125,7 +133,9 @@ fn parse(line string) {
 Primitive: `bool`, `i8 i16 i32 i64`, `u8 u16 u32 u64`, `isize usize`,
 `f32 f64`, `string`, `void`, `never`.
 
-- `string` is an owned, immutable-by-default UTF-8 string (heap). A string
+- `string` is an owned immutable UTF-8 string. Dynamic values use owned heap
+  storage; literal images are static and do not allocate on each evaluation
+  (ADR 0055). A string
   literal has type `string` in draft 0; a borrowed view is `&string`. Length
   and indices count bytes. `bytes()` returns immutable `&[]u8` borrowing its
   owner; validated UTF-8 conversion and text helpers live in the
@@ -143,15 +153,27 @@ Compound:
 | `[]T` | slice (unsized; only usable behind a reference: `&[]T`, `&mut []T`; `&arr[a..b]` borrows one, `arr[a..b]` alone is E3039) |
 | `&T` | shared reference |
 | `&mut T` | mutable (exclusive) reference |
+| `*T`, `*mut T` | raw FFI pointer; no loan or ownership guarantee |
 | `fn(A, B) R` | function type |
 | `Name<T>` | generic instantiation (type position only) |
 
-There is no `null`. Absence is `Option<T>`.
+There is no `null` literal. Ordinary absence is `Option<T>`; raw FFI pointers
+can use `ffi.null()`.
 
 Integer literals take the integer type their context requires and default to
-`i64`; float literals default to `f64`. Numeric conversions are always explicit; conversions are written `u64(x)` (checked: panics if the value does not fit,
-in all build profiles) or `u64.wrap(x)` (wrapping). Integer arithmetic overflow panics in
-both debug and release (same safety in every profile).
+`i64`; float literals default to `f64`. Numeric conversions are always explicit:
+`u64(x)` checks the destination range and panics if the value does not fit,
+in all build profiles. Float-to-integer conversions truncate toward zero before
+the range check. Wrapping numeric conversions such as `u64.wrap(x)` are not
+implemented. Integer arithmetic overflow panics in both debug and release;
+the explicit integer methods `wrapping_add`, `wrapping_sub` and `wrapping_mul`
+instead compute modulo the integer width (see [collections](collections.md#reference-places-and-modular-arithmetic)).
+
+Comparison operators (`== != < <= > >=`) see through shared references on
+either side: `v.get(i) == id`, `r >= 3` and `names.get(0) == "ana"` compare
+the referenced values. Only references are looked through; numbers still never
+convert implicitly (`&u32 == i64` is E3006). Arithmetic does not look through
+references: write `*r + 1` ([ADR 0085](adr/0085-comparisons-through-references.md)).
 
 ## 5. Functions
 
@@ -226,8 +248,9 @@ fn User.into_name(self) string {         // consumes the receiver
 }
 ```
 
-Enums follow the same rule: `copy enum Light { Red Green }` is copied on
-assignment; a plain `enum` moves. Copy types must contain only copy types.
+Enums follow the same rule: a `copy enum` is copied on assignment; a plain
+`enum` moves. Put each variant on its own line. Copy types must contain only
+copy types.
 
 The declaration mirrors the call site: `User.new("ana")`, `u.greet()`.
 There is no `impl` block for inherent methods.
@@ -283,16 +306,20 @@ fn area(s &Shape) f64 {
   a lowercase name (`n`) is a new binding (ADR 0014). Variant names must
   start with an uppercase letter.
 - Patterns: literals, `_`, bindings, variants, struct patterns
-  `User{name, age: 0}`, ranges `0..=9`. Guards: `n if n > 0 =>` (provisional).
+  `User{name, age: 0}`, ranges `0..=9`. Guards: `n if n > 0 =>`;
+  guarded arms do not count toward exhaustiveness.
 
 ## 9. Errors
 
 `Result<T, E>` and `Option<T>` are ordinary prelude enums.
 
 ```tarn
-fn read_config(path &string) Result<Config, Error> {
+import "fs"
+import "io"
+
+fn read_config(path &string) Result<string, io.Error> {
     text := try fs.read_text(path)
-    return Ok(parse(&text))
+    return Ok(text)
 }
 ```
 
@@ -320,7 +347,7 @@ Summary (full rules in `ownership.md`):
   the result may borrow from), stored in its interface (ADR 0010). When the
   compiler cannot determine or prove it, the program is rejected.
 
-## 11. Generics (provisional, phase 13)
+## 11. Generics
 
 ```tarn
 fn identity<T>(value T) T {
@@ -336,7 +363,7 @@ This is a **v0 restriction, not a permanent promise** (ADR 0012): a syntax
 for explicit generic arguments may be added once real code shows the need.
 No explicit turbofish; this keeps `<` unambiguous for the parser.
 
-## 12. Interfaces (provisional, phase 14)
+## 12. Interfaces
 
 ```tarn
 interface Writer {
@@ -386,8 +413,9 @@ fn main() {
 }
 ```
 
-`spawn` creates a real native pthread on Linux x86_64. Initially its operand must
-be a zero-parameter `move fn` literal. `Task<R>` is owned, non-Copy and movable;
+`spawn` creates native tasks on Linux x86_64 and ARM64. Outside a `scope`, its
+operand must be a zero-parameter `move fn` literal, with transferable captures
+and result. `Task<R>` is owned, non-Copy and movable;
 `join()` consumes it and returns R directly. Joining twice or using a moved
 handle is rejected by ordinary move checking. If an initialized handle is dropped,
 its destruction waits and destroys the unused result. This applies on normal,
@@ -449,7 +477,7 @@ operations have distinct names (`read_async`, `write_async`, `write_all_async`,
 sockets; blocking methods (and DNS) keep blocking the whole executor if called
 from async code. See [ADR 0037](adr/0037-source-async-lowering.md).
 
-## 13b. Closures (provisional)
+## 13b. Closures
 
 `fn(x) T { ... }` is an anonymous function; parameter types may be omitted when
 inferred from context. Captures are inferred shared/mutable borrows. `move fn`
@@ -466,7 +494,8 @@ is an E4001 use-after-move. Mode annotations are invariant, with one exception:
 a closure literal written where `mut fn` is expected and that does not consume
 its captures is typed `mut fn` (Phase 17, ADR 0048); a consuming closure is still
 rejected there. A non-`move` closure literal likewise adopts an expected
-`once fn` (ADR 0052). Spawn remains unsupported.
+`once fn` (ADR 0052). Native spawning follows section 13; ordinary callable
+values are not C function pointers.
 
 Where a function value is expected, a payload enum variant is its
 constructor: `map_err(AppError.Io)`, `apply(Some, 3)` (ADR 0052).
@@ -487,7 +516,7 @@ Borrowed environments stay on the stack. Capturing owned closures use unique hea
 environments; capture-free closures use function items. Destruction goes through
 post-drop IR and destroys each remaining capture once. See ADR 0032.
 
-## 14. Unsafe and FFI (provisional)
+## 14. Unsafe and FFI
 
 ```tarn
 extern "C" fn getpid() i32
@@ -501,7 +530,7 @@ fn pid() i32 {
 
 `unsafe { ... }` is a block statement (blocks never produce values).
 
-Native calls (Phase 18A, ADR 0047) support System V x86_64 scalar signatures:
+Native calls (ADRs 0047/0079) support Linux x86_64 System V and ARM64 AAPCS64 scalar signatures:
 `bool`, fixed-width integers, `usize`/`isize`, `f32`/`f64`, raw pointers and
 `void` results.
 The symbol is the declared name, resolved by the system linker against libc
@@ -509,16 +538,22 @@ and libm. Other parameter or result types still fail native builds with
 "has no C ABI in v0"; they remain usable for semantic contract checks.
 
 `unsafe` is required to call `extern "C"` functions and `unsafe fn` functions
-(E3031, E3071). Raw pointers `*T` / `*mut T` exist (Phase 18B); there is no
-dereference syntax: memory is read through `unsafe fn` helpers in `ffi`.
-Ownership and type checks still apply inside `unsafe`. See [C interop](ffi.md).
+(E3031, E3071). Raw pointers `*T` / `*mut T` exist (Phase 18B); unlike references,
+they have no `*pointer` dereference operator. Memory is read/written through
+`unsafe fn` helpers in `ffi`.
+Ownership and type checks still apply inside `unsafe`. Static C callbacks use
+`ffi.callback(handler)` (ADR 0080). Ordinary `fn` values cannot erase the unsafe
+requirement of unsafe or foreign functions (E3082). See [C interop](ffi.md)
+for supported pointer operations, callback restrictions and the unverified C
+safety boundary.
 
 ## 15. Builtins (draft 0)
 
 - `print(value)` — prints a primitive or string followed by a newline.
 - `panic(message)`.
 
-These move into `core` once the stdlib exists.
+These remain compiler-defined builtins. The prelude also includes public
+declarations from the existing `core` standard-library module.
 
 ## Appendix: notes for implementers
 

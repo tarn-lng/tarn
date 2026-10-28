@@ -112,3 +112,71 @@ fn many_values_and_closures_scale_linearly() {
     src.push_str("    print(s)\n}\n");
     checks_within("values", &src, Duration::from_secs(30));
 }
+
+/// A call on a method or callable-field result checked its base twice (once to
+/// tell fields from methods, once in the call itself), doubling the work per
+/// link: a 20-call chain took 14 s and 30 never finished.
+#[test]
+fn call_chains_check_in_linear_time() {
+    // 4000 links: the semantic phases run on the compiler's own large stack.
+    let chain: String = (0..4000).map(|i| format!(".add({i})")).collect();
+    let src = format!(
+        "struct B {{ total i32 }}\npub fn B.add(&self, x i32) B {{ return B{{total: self.total + x}} }}\nfn main() {{\n    b := B{{total: 0}}{chain}\n    print(b.total)\n}}\n"
+    );
+    checks_within("method-chain", &src, Duration::from_secs(30));
+}
+
+/// The same doubling through callable fields: only the time matters here,
+/// since calling a field of a temporary is rejected by borrow checking.
+#[test]
+fn callable_field_chains_check_in_linear_time() {
+    let chain: String = (0..100).map(|i| format!(".next({i})")).collect();
+    let src = format!(
+        "struct S {{ total i32\n    next fn(i32) S }}\nfn step(x i32) S {{ return S{{total: x, next: step}} }}\nfn main() {{\n    s := step(0){chain}\n    print(s.total)\n}}\n"
+    );
+    let dir = std::env::temp_dir().join(format!("tarn-scaling-field-chain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.tarn");
+    std::fs::write(&file, src).unwrap();
+    let start = Instant::now();
+    let res = tarn_driver::check(&file).unwrap();
+    let elapsed = start.elapsed();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(res.diagnostics.iter().all(|d| d.code != "E3003"), "field calls must still type-check as calls");
+    assert!(elapsed < Duration::from_secs(30), "field chain: checking took {elapsed:?}");
+}
+
+fn checked_source(name: &str, src: &str) -> (tarn_driver::CheckResult, Duration) {
+    let dir = std::env::temp_dir().join(format!("tarn-scaling-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.tarn");
+    std::fs::write(&file, src).unwrap();
+    let start = Instant::now();
+    let res = tarn_driver::check(&file).unwrap();
+    let elapsed = start.elapsed();
+    std::fs::remove_dir_all(&dir).unwrap();
+    (res, elapsed)
+}
+
+/// Chains and operator sequences are parsed in loops, so MAX_NESTING never
+/// saw them, and every later phase recursed through them: 1000 chained calls
+/// overflowed the CLI stack. Past MAX_TREE_DEPTH they are now E1022, and the
+/// rejected tree is destroyed without recursion (ADR 0081).
+#[test]
+fn over_deep_expressions_are_a_diagnostic_not_a_crash() {
+    let chain: String = (0..100_000).map(|i| format!(".add({i})")).collect();
+    let calls = format!("struct B {{ total i32 }}\npub fn B.add(&self, x i32) B {{ return B{{total: self.total + x}} }}\nfn main() {{\n    b := B{{total: 0}}{chain}\n    print(b.total)\n}}\n");
+    let sums = format!("fn main() {{\n    s: i64 := 0{}\n    print(s)\n}}\n", " + 1".repeat(300_000));
+    for (name, src) in [("deep-calls", calls), ("deep-sums", sums)] {
+        let (res, elapsed) = checked_source(name, &src);
+        assert!(res.diagnostics.iter().any(|d| d.code == "E1022"), "{name}: expected E1022");
+        assert!(elapsed < Duration::from_secs(30), "{name}: rejection took {elapsed:?}");
+    }
+}
+
+/// Just under the bound still checks: 8000 operator levels.
+#[test]
+fn long_operator_sequences_below_the_bound_check() {
+    let src = format!("fn main() {{\n    s: i64 := 0{}\n    print(s)\n}}\n", " + 1".repeat(8000));
+    checks_within("long-sum", &src, Duration::from_secs(30));
+}

@@ -95,6 +95,11 @@ pub const TASK_INTRINSICS: [&str; 7] = ["_task_new", "_task_complete", "_task_ta
 /// phases (IR lowering) so they never re-derive layouts or signatures.
 #[derive(Default)]
 pub struct Decls {
+    /// Trusted static C adapter constructor (ADR 0080), found by identity.
+    pub ffi_callback: Option<SymbolId>,
+    /// Scalar-only unsafe memory bridge; never returns a Tarn reference.
+    pub ffi_read: Option<SymbolId>,
+    pub ffi_write: Option<SymbolId>,
     pub task: Option<SymbolId>,
     pub net_sockets: Vec<SymbolId>,
     pub fs_file: Option<SymbolId>,
@@ -210,6 +215,11 @@ impl<'a> Env<'a> {
         let method = |module: usize, owner: Option<SymbolId>, name: &str| r.symbols.iter().enumerate().find(|(_, s)| {
             s.name == name && s.module == Some(ModuleId(module as u32)) && matches!(s.kind, SymbolKind::Method { owner: o } if Some(o) == owner)
         }).map(|(i, _)| SymbolId(i as u32));
+        if let Some((_, ffi)) = stdlib("ffi") {
+            env.decls.ffi_callback = ffi.get("callback");
+            env.decls.ffi_read = ffi.get("_read");
+            env.decls.ffi_write = ffi.get("_write");
+        }
         if let Some((_, io)) = stdlib("io") {
             env.decls.exec_waker = io.get("Waker");
             env.decls.exec_progress = io.get("Progress");
@@ -270,8 +280,9 @@ impl<'a> Env<'a> {
             let Some((_, scope)) = stdlib(module) else { continue };
             for id in &scope.symbols {
                 let symbol = r.symbol(*id);
-                let async_primitive = Some(*id) == env.decls.exec_async_waker || Some(*id) == env.decls.exec_async_park || env.decls.task_intrinsics.contains(id);
-                if !async_primitive && symbol.name.starts_with("_") && env.decls.fns.get(id).is_some_and(|sig| sig.abi.as_deref() == Some("intrinsic")) {
+                let separate_abi = Some(*id) == env.decls.exec_async_waker || Some(*id) == env.decls.exec_async_park || env.decls.task_intrinsics.contains(id)
+                    || Some(*id) == env.decls.ffi_read || Some(*id) == env.decls.ffi_write;
+                if !separate_abi && symbol.name.starts_with("_") && env.decls.fns.get(id).is_some_and(|sig| sig.abi.as_deref() == Some("intrinsic")) {
                     let catalog = if *module == "fs" { &mut env.decls.fs_intrinsics } else if *module == "process" { &mut env.decls.process_intrinsics } else { &mut env.decls.net_intrinsics };
                     catalog.insert(format!("{module}.{}", symbol.name), *id);
                 }
@@ -485,7 +496,10 @@ impl<'a> Env<'a> {
             && matches!(&self_ty, Some(Ty::Adt(id, _)) if Some(*id) == self.decls.task);
         let sync_constructor = f.abi.as_deref() == Some("intrinsic") && (f.name.name == "new" || f.name.name == "with_capacity")
             && matches!(&self_ty, Some(Ty::Adt(id, _)) if Some(*id) == self.decls.mutex || Some(*id) == self.decls.vec || self.decls.atomics.contains_key(id));
-        let result = if task_join || sync_constructor { ResultContract::Owned } else if !holds(&ret) {
+        // This trusted primitive only executes for scalars/raw pointers. Native
+        // ABI validation rejects every loan-bearing instantiation (ADR 0080).
+        let scalar_read = Some(sym) == self.decls.ffi_read;
+        let result = if scalar_read { ResultContract::Copy } else if task_join || sync_constructor { ResultContract::Owned } else if !holds(&ret) {
             if self.decls.is_copy(&ret) { ResultContract::Copy } else { ResultContract::Owned }
         } else if f.body.is_some() {
             ResultContract::InferredBorrow

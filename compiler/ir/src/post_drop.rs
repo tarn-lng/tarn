@@ -133,6 +133,23 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
     errors.extend(crate::filesystem_abi::verify(t));
     errors.extend(crate::process_abi::verify(t));
     errors.extend(crate::async_frame::verify(p, t));
+    // Only this trusted, structurally verified primitive may read an owned
+    // scalar from a raw pointer without inventing reference provenance.
+    for (id, write) in [(t.decls.ffi_read, false), (t.decls.ffi_write, true)] {
+        if let Some(id) = id {
+            let valid = t.decls.fns.get(&id).is_some_and(|sig| {
+                let [parameter] = sig.generics.as_slice() else { return false };
+                let value = Ty::Param(*parameter);
+                let params = if write { vec![Ty::Ptr(true, Box::new(value.clone())), value.clone()] }
+                    else { vec![Ty::Ptr(false, Box::new(value.clone()))] };
+                sig.abi.as_deref() == Some("intrinsic") && sig.receiver.is_none() && !sig.is_async
+                    && sig.params == params && sig.ret == if write { Ty::Void } else { value }
+                    && (write || sig.contract.result == tarn_types::ResultContract::Copy)
+                    && t.decls.copy.is_some_and(|copy| t.decls.bounds.get(parameter).is_some_and(|bounds| bounds.contains(&copy)))
+            });
+            if !valid { errors.push("invalid scalar FFI memory declaration".into()); }
+        }
+    }
     for f in &p.functions {
         let mut err = |msg: String| errors.push(format!("{}: {msg}", f.decl.name));
         if !f.decl.blocks.is_empty() {
@@ -188,6 +205,13 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
         }
         for b in &f.blocks {
             if let Terminator::Call { callee: Callee::Intrinsic(name), args, dest, .. } = &b.term {
+                if name == "ffi.callback" {
+                    let valid = matches!(args.as_slice(), [Operand::Const(Const::Fn(id, ts))]
+                        if ts.is_empty() && p.functions.get(id.0 as usize).is_some_and(|target|
+                            target.decl.kind == FnKind::Body && target.decl.generics.is_empty() && target.decl.asynchronous.is_none()))
+                        && place_ty(&f.decl, t, dest) == Some(Ty::Ptr(false, Box::new(Ty::Int(tarn_types::IntTy::U8))));
+                    if !valid { err("invalid static C callback metadata".into()); }
+                }
                 // String bridges and operators have a fixed typed ABI. Check
                 // it before native execution; no ownership is inferred here.
                 let string_ref = Ty::Ref(false, Box::new(Ty::Str));

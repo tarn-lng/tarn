@@ -53,7 +53,7 @@ abort-on-resource-failure policy.
 
 The child closes unrelated fds >=3, inherits only the configured stdio, has an
 empty signal mask and default SIGPIPE. The implementation uses posix_spawnp
-and GNU libc 2.34+ spawn actions on Linux x86_64. External C must respect child
+and GNU libc 2.34+ spawn actions on Linux x86_64 and ARM64. External C must respect child
 ownership: foreign waitpid or SIGCHLD policy changes can invalidate it.
 See [ADR 0045](adr/0045-blocking-processes.md).
 

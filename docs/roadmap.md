@@ -34,7 +34,7 @@ tested and documented.
 | 15C | Owned lexical paths (ADR 0044) | **done; [report](phase-15c-report.md)** |
 | 15D | Owned blocking child processes (ADR 0045) | **done; [report](phase-15d-report.md)** |
 | 16 | Bounded async HTTP/1.1 server over buffered I/O | **done within documented server subset**: [16A–F plan](phase-16-plan.md), [report](phase-16-report.md), [ADR 0046](adr/0046-bounded-async-http.md) |
-| 17 | Application ergonomics: string.Builder, json, http.serve and response helpers (ADR 0048) | **done**: [plan](phase-17-plan.md), [report](phase-17-report.md) |
+| 17 | Application ergonomics: Builder, json, http.serve and response helpers (ADR 0048) | **done**: [plan](phase-17-plan.md), [report](phase-17-report.md); Builder now lives in core (ADR 0077) |
 | 18 | Minimal native C FFI: scalar extern calls, raw pointers, `--link`, SQLite acceptance (ADR 0047) | **done within documented v0 limits**: [plan](phase-18-plan.md), [report](phase-18-report.md) |
 | 19 | CLI: command surface, `test`, `--watch`, `clean` | implemented (19A/B/C); `clean` explicitly deferred; [plan](phase-19-plan.md), [ADR](adr/0049-integrated-test-runner.md) |
 | 20 | Formatter (basic) | **done within documented basic subset**: [plan](phase-20-plan.md), [report](phase-20-report.md), [ADR 0050](adr/0050-conservative-source-formatting.md) |
@@ -44,7 +44,7 @@ tested and documented.
 | 23 | Explicit error conversion: core combinators, variant constructors as functions, then measured syntax decision | **done**: [plan](phase-23-plan.md), [report](phase-23-report.md), [ADR 0052](adr/0052-explicit-error-conversion.md) |
 | 24 | `os` arguments/environment, `tarn run -- args`, `xlinux doctor` port (milestone 5) | **done**: [report](phase-24-report.md), [ADR 0053](adr/0053-process-arguments-and-environment.md) |
 | 25 | Port-driven stdlib: `os.exit`, `os.can_execute`, `os.disk_space`, `io.Error.from_os`, `Command.env` | **done**: [report](phase-25-report.md), ADR 0053 (Phase 25 extension) |
-| 26 | Less ceremony: redundant casts removed, literals as `&string`, `Self` + `core.Eq` for `==`; formatting designed, deferred | **done**: [report](phase-26-report.md), [ADR 0054](adr/0054-less-ceremony.md) |
+| 26 | Less ceremony: redundant casts removed, literals as `&string`, `Self` + `core.Eq` for `==` | **done**: [report](phase-26-report.md), [ADR 0054](adr/0054-less-ceremony.md); formatting was deferred at this checkpoint and is now implemented (ADR 0077) |
 | 27 | Static string literals: no allocation per literal evaluation | **done**: [report](phase-27-report.md), [ADR 0055](adr/0055-static-string-literals.md) |
 | 28 | Native performance vs Go: optimizer on, trace switches cached, bulk primitives, constant-divisor checks | **done**: [report](phase-28-report.md), [ADR 0056](adr/0056-native-performance-baseline.md) |
 | 29 | Fair Go benchmarks, thread cache for `spawn`, proven integer arithmetic | **done**: [report](phase-29-report.md), [ADR 0057](adr/0057-proven-arithmetic.md) |
@@ -54,7 +54,8 @@ tested and documented.
 
 | 32 | Offset text traversal, integer Builder allocation removal and UTF-8 CLI | implemented scoped subset: [report](phase-32-33-report.md), [ADR 0061](adr/0061-offset-text-traversal.md) |
 | 33 | Bounded system HTTPS and selected-ticket classification CLI | implemented scoped subset: [report](phase-32-33-report.md), [ADR 0062](adr/0062-bounded-system-https.md); local TLS acceptance, not a full Go application port |
-| 35 | Persistent TLS client streams (`net.TlsStream`) over libcurl connect-only | implemented: [ADR 0066](adr/0066-persistent-tls-streams.md); local TLS echo acceptance; WebSocket, async handshake and ALPN remain future work |
+| 34 | Agent-tooling foundations and evidence-led stdlib ergonomics | implemented foundations: [report](phase-34-foundations-report.md), [agent guide](llm-guide.md); semantic queries, structured fixes and MCP remain [planned](phase-34-plan.md) |
+| 35 | Persistent TLS client streams (`net.TlsStream`) over libcurl connect-only | implemented: [ADR 0066](adr/0066-persistent-tls-streams.md); local TLS echo acceptance; WebSocket follows in phase 36; async handshake and ALPN remain outside scope |
 | 36 | RFC 6455 WebSocket client (`websocket`) as ordinary Tarn over `TlsStream` | implemented: [ADR 0067](adr/0067-websocket-client.md), [guide](websocket.md); local TLS WebSocket acceptance; no compression or async variants |
 
 ## Milestones
@@ -65,30 +66,42 @@ tested and documented.
 4. Result/Option/enums/match/try.
 5. fs/path/process ─▶ start porting `xlinux doctor`.
 
-After milestone 2 plus CLI, fmt and VS Code basics (the "first big milestone"
-definition of done): **stop and review** architecture, syntax and ownership
-before borrowing, generics or a large stdlib.
+The original milestone-2 checkpoint called for an architecture, syntax and
+ownership review before expanding the language. It is historical sequencing,
+not a claim that borrowing, generics or the stdlib are still unimplemented.
+
+## Native C interop extension
+
+Static scalar C callbacks and unsafe scalar pointer access extend the existing
+FFI: [ADR 0080](adr/0080-static-c-callbacks.md), [guide](ffi.md). This removes
+the need for handwritten C callback adapters in integrations such as GTK.
+Guaranteed C aggregate layouts, variadic calls, capturing callbacks and
+automatic foreign-resource destruction remain separate design work.
 
 ## Open design questions
 
 - Value-producing `if` (currently: no).
-- Equality for `Option`/`Result` (needs impl bounds; `core.Eq` exists, ADR 0054).
-- Error conversion in `try` (currently exact match only).
+- Automatic error conversion in `try` (currently exact match only; explicit
+  `map_err`/`ok_or` combinators already work).
 - Method-owner syntax for `[]T` / `[N]T` so `len` can move to `core` (ADR 0020).
 
 - Well-formedness of type annotations w.r.t. bounds (`x: Point<string>`).
 - Exact iteration protocol for `for x in xs`.
-- `try` error conversion (`Error.from`) vs. explicit mapping.
 - Reachable monomorphization is implemented (ADR 0028); shared code remains a future measured alternative.
 - Interfaces: explicit `impl I for T` chosen; revisit after xlinux.
-- Does `for x in &[]T` yield `T` (copy types) or `&T`? Examples assume copies of copy types.
+- A general stored-reference iterator framework (current loops copy Copy
+  elements and borrow non-Copy elements when iterating borrowed collections).
 
 Native feature completion after phase 7 adds reachable generic specialization,
 concrete generic ADTs, borrowed fat slices, nonescaping borrowed closures and
 checked shifts/float-to-int casts. Unknown bootstrap stdlib APIs now fail with
 E3040. See [ADR 0028](adr/0028-native-feature-completeness.md) and
 [ADR 0029](adr/0029-checked-shifts-and-float-casts.md). Borrowed dynamic dispatch now executes (ADR 0030); owned dynamic objects remain
-rejected. Optimization remains deferred. Phase 10 adds shared, mutable and consuming callable modes, `move fn` ownership captures and safe returned owned closures (ADR 0032).
+rejected. Native optimization is enabled by default (ADR 0056), with bounded
+inlining and proven arithmetic (ADR 0057). Phase 10 adds shared, mutable and
+consuming callable modes, `move fn` ownership captures and safe returned owned
+closures (ADR 0032). Conditional `Eq` implementations for `Option`/`Result`
+are implemented by ADR 0078.
 
 
 ## Dependency management and supply-chain security

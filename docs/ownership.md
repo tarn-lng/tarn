@@ -16,8 +16,8 @@ later; accepting an unsafe one is a soundness hole.
   **move**: `b := a`, `f(a)`, `return a` and `Struct{field: a}` move `a`.
 - After a move the source is *Moved*; any use is error **E4001**.
 - Moving out of a field moves only that field: the owner is *PartiallyMoved*;
-  the whole owner can no longer be used, but other fields can (draft 0 may
-  reject partial moves entirely — conservative start).
+  the whole owner can no longer be used, but other fields can. Drop elaboration
+  destroys only remaining initialized fields.
 - Moves inside a loop body of a binding declared outside the loop are errors
   (the second iteration would use a moved value) — E4002.
 - A value is dropped at the end of its owner's scope, in reverse declaration
@@ -72,6 +72,11 @@ borrowed while it is alive; with `pick_left(&x, &y)` only `x` stays borrowed.
 
 **Declarations without a body** (interface methods, extern declarations):
 
+The defaults below apply to borrowed results without an explicit clause.
+`borrows(a, b)` can name distinct reference inputs (or a borrowed `self`) and
+therefore permits multiple declared sources; malformed clauses reject E3042.
+See [ADR 0031](adr/0031-declaration-semantic-contracts.md).
+
 | Signature | Provenance |
 |-----------|------------|
 | has `&self` / `&mut self` | `{self}` |
@@ -91,18 +96,21 @@ interface declaration allows (E4204).
 - E4203 `struct fields cannot hold references` (draft 0).
 - E4204 `implementation returns a borrow its interface does not allow`.
 
-Provenance is part of the semantic interface: it appears in
-`tarn check --json` and in the interface hash used by the cache, so a body
-change that alters provenance invalidates dependents.
+Provenance is compiler semantic metadata used when checking calls. Borrow-suite
+snapshots exercise its inferred sources. `tarn check --json` reports diagnostics,
+not a public provenance dump; an interface-hash-based incremental compiler cache
+is not implemented.
 
 ## 4. Interaction with other features
 
 - `try` and early `return` run drops for live owners.
-- Closures (provisional) capture by borrow unless marked `move`.
+- Closures capture by borrow unless marked `move`.
 - `spawn` requires captured values to be moved and transferable (`Send`-like
   property, inferred structurally).
-- `unsafe` does not disable the borrow checker; it only allows raw pointer
-  operations whose invariants the programmer documents.
+- `unsafe` does not disable ownership or type checking; it authorizes foreign
+  and unsafe calls whose invariants the programmer must uphold. Raw pointers
+  carry no loans. C implementations and unsafe FFI are outside Tarn's safety
+  proof; see [FFI](ffi.md).
 
 ## 5. Implementation
 

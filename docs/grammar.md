@@ -1,4 +1,4 @@
-# Tarn grammar (as implemented by `tarn_parser`, phase 2)
+# Tarn grammar (implemented syntax)
 
 EBNF-ish notation: `{x}` zero or more, `[x]` optional, `|` alternative,
 `NL` a `Newline` token. Newline handling (ADR 0008) is summarized after the
@@ -10,9 +10,10 @@ module      = { NL } { item ( NL | EOF ) { NL } } EOF ;
 item        = [ "pub" ] ( import | fn_decl | extern_fn | struct_decl
                         | enum_decl | interface | impl_decl ) ;
 import      = "import" STRING ;
-extern_fn   = "extern" STRING fn_decl ;                 (* body optional *)
-fn_decl     = [ "async" ] "fn" IDENT [ generics ] [ "." IDENT [ generics ] ]
-              "(" [ params ] ")" [ type ] [ block ] ;
+extern_fn   = "extern" STRING "fn" fn_tail ;            (* body optional *)
+fn_decl     = [ "async" | "unsafe" ] "fn" fn_tail ;
+fn_tail     = IDENT [ generics ] [ "." IDENT [ generics ] ]
+              "(" [ params ] ")" [ type ] [ borrow_clause ] [ block ] ;
               (* `fn Pair<A, B>.m<C>(…)`: a list before `.` binds the owner's
                  type parameters (ADR 0015); the token after it decides *)
 params      = param { "," param } [ "," ] ;
@@ -26,11 +27,14 @@ field       = [ "pub" ] IDENT type ;
 enum_decl   = [ "copy" ] "enum" IDENT [ generics ] body(variant) ;
 variant     = IDENT [ "(" type { "," type } [ "," ] ")" ] ;
 interface   = "interface" IDENT [ generics ] body(fn_decl) ;   (* no bodies *)
-impl_decl   = "impl" path "for" type body(fn_decl) ;    (* type args = binders, ADR 0016 *)
+impl_decl   = "impl" path "for" impl_target body(fn_decl) ;
+impl_target = IDENT { "." IDENT } [ "<" gparam { "," gparam } ">" ] ;
+              (* target arguments bind parameters; bounds are allowed, ADR 0078 *)
 body(m)     = "{" { NL } [ m { NL { NL } m } ] { NL } "}" ;   (* one member per line *)
 
 type        = path
             | "&" [ "mut" ] type
+            | "*" [ "mut" ] type                  (* raw FFI pointer, ADR 0047 *)
             | "[" "]" type                       (* slice *)
             | "[" expr "]" type                  (* array *)
             | [ "mut" | "once" ] "fn" "(" [ type { "," type } ] ")" [ type ]
@@ -57,10 +61,10 @@ cond        = expr ;                             (* no bare struct literals *)
 
 expr        = [ range_lhs ] ( ".." | "..=" ) [ binary ] | binary ;
 binary      = unary { BINOP binary } ;           (* precedence climbing, see below *)
-unary       = ( "-" | "!" | "*" | "&" [ "mut" ] | "try" | "await" ) unary | postfix ;
+unary       = ( "-" | "!" | "*" | "&" [ "mut" ] | "try" | "await" | "spawn" ) unary | postfix ;
 postfix     = primary { "." IDENT | "(" [ args ] ")" | "[" expr "]"
                       | "{" [ field_inits ] "}" } ;   (* struct literal: path-only primary *)
-primary     = INT | FLOAT | STRING | "true" | "false" | IDENT
+primary     = INT | FLOAT | STRING | FSTRING | "true" | "false" | IDENT
             | "(" ")" | "(" expr ")"
             | ( "[" "]" type | "[" expr "]" type ) "{" [ args ] "}"   (* array literal *)
             | [ "move" ] "fn" "(" [ cparam { "," cparam } ] ")" [ type ] block ;  (* closure *)
@@ -89,7 +93,7 @@ literal     = [ "-" ] ( INT | FLOAT ) | STRING | "true" | "false" ;
 | 7 | `<<` `>>` | left |
 | 8 | `+` `-` | left |
 | 9 | `*` `/` `%` | left |
-| 10 | prefix `-` `!` `*` `&` `&mut` `try` `await` | right (prefix) |
+| 10 | prefix `-` `!` `*` `&` `&mut` `try` `await` `spawn` | right (prefix) |
 | 11 | postfix `.name` `(args)` `[i]` `Path{...}` | left |
 
 Bitwise operators bind tighter than comparisons (unlike C), so
@@ -130,13 +134,22 @@ bodies lower onto Phase-12C suspended execution (ADR 0037).
 - A bare identifier pattern is not classified by the parser (binding vs. unit
   variant is name resolution's job).
 
-## Not in the implemented subset yet
+## Interpolated string tokens
 
-Everything in `docs/language.md` used by the 28 examples is parsed. Explicit
-generic arguments in expressions are a v0 restriction (ADR 0012). Not yet
-designed or parsed: attributes, `const`/statics, type aliases, raw pointer
-types `*T`, guards beyond a single expression, labeled breaks, numeric literal
-suffixes, char literals, doc-comment attachment to items.
+`FSTRING` is the lexer's cooked `f"..."` token (ADR 0077). Interpolation holes
+contain only an identifier or field path; `{{` and `}}` escape braces.
+Arbitrary expressions in holes are rejected. `///` comments remain lexer trivia;
+the stdlib catalog associates preceding comments without attaching them to AST
+items.
+
+## Outside the implemented subset
+
+Explicit generic arguments in expressions remain a v0 restriction (ADR 0012).
+Attributes, `const`/statics, type aliases, labeled breaks, numeric literal
+suffixes and char literals are not supported. The parser accepts some broader
+declaration forms for diagnostics; semantic restrictions still apply, including
+no generic interfaces (E1021), no `pub impl` (E1015), and no method-owner bounds
+(E2021). Interface/impl methods start with `fn`, not `async fn` or `unsafe fn`.
 
 ## Phase 9 declaration provenance extension
 

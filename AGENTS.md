@@ -941,9 +941,10 @@ If destructors are added in the future, their interaction with `Copy`, partial m
 
 ## Standard Library Opacity
 
-Some standard-library values may still be treated as opaque during bootstrap.
-
-This is temporary technical debt.
+Implemented standard-library APIs have real embedded declarations and ordinary
+type/ownership contracts. Unmodeled bootstrap APIs and channels are rejected
+with E3040; missing members of real modules fail lookup. Internal opaque
+recovery types are not permission to accept arbitrary standard-library calls.
 
 Do not claim complete end-to-end memory-safety guarantees while opaque stdlib values can hide borrowing behavior from the compiler.
 

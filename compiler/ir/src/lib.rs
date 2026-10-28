@@ -20,6 +20,7 @@ mod instantiation;
 pub mod layout;
 mod limits;
 mod lower;
+mod loop_peel;
 pub mod post_drop;
 mod ranges;
 mod pretty;
@@ -29,6 +30,7 @@ pub use instantiation::check_instantiation_cycles;
 pub use limits::check_value_limits;
 pub use lower::lower_program;
 pub use ranges::prove_arithmetic;
+pub use loop_peel::optimize_scalar_loops;
 pub use pretty::{print_function, print_program, print_program_annotated};
 pub use verify::verify;
 

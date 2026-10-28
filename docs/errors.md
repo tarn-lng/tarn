@@ -84,6 +84,7 @@ stream them:
 | E1019 | `uninit_var_needs_type` | `var x` without a value needs a type |
 | E1020 | `nesting_too_deep` | expressions, blocks, types or patterns nested more than 128 levels |
 | E1021 | `generic_interface` | interfaces cannot have type parameters |
+| E1022 | `expression_too_deep` | an expression or statement tree is more than 8192 levels deep (about 4096 chained calls) |
 | E2001 | `undefined_name` | cannot find `x` in this scope |
 | E2002 | `duplicate_definition` | `x` is defined more than once |
 | E2003 | `duplicate_in_scope` | `x` is already declared in this scope |
@@ -214,3 +215,12 @@ Async bodies now lower onto verified frames (ADR 0037); the code is retired.
 These two were briefly emitted as E3074 and E3075, which already meant
 `expanding_instantiation` and `value_too_large`; they were renumbered so each
 code has one meaning.
+
+## Static C callbacks
+
+- E3081 `invalid_c_callback`: `ffi.callback` must be called directly with a
+  named ordinary non-generic, non-async, safe Tarn function. Closures and
+  callable locals cannot supply a static C entry point.
+- E3082 `unsafe_function_value`: an ordinary `fn` value cannot preserve the
+  unsafe requirement of an `unsafe fn` or foreign function. Call directly
+  inside `unsafe`, or implement a wrapper that checks its preconditions.

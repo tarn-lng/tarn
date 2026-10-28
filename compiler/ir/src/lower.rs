@@ -1465,6 +1465,15 @@ impl<'a, 'l> Builder<'a, 'l> {
                         self.assign(dest, Rvalue::Aggregate(Aggregate::Variant(parent, idx, targs), ops), span);
                     }
                     SymbolKind::Function | SymbolKind::Method { .. } | SymbolKind::ImplMethod { .. } => {
+                        if Some(s) == self.lx.t.decls.ffi_callback {
+                            // The frontend established a direct, non-generic function
+                            // identity. Keep it explicit through specialization.
+                            let mut argument = &args[0];
+                            while let ExprKind::Paren(inner) = &argument.kind { argument = inner; }
+                            let Rvalue::Use(function) = self.static_value(argument, &self.ty(argument)) else { unreachable!("typed C callback") };
+                            self.finish_call(self.fn_callee(s, Vec::new()), vec![function], spans_of(args), dest, false, spawn, span);
+                            return;
+                        }
                         if self.async_primitive(s, args, dest.clone(), span) {
                             return;
                         }

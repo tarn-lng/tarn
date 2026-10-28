@@ -3,7 +3,7 @@
 `import "net"` loads the embedded `stdlib/net/net.tarn`. Errors are `io.Error`;
 execution (Execution, Operation, AsyncTask) lives in `runtime` and timers in
 `time` (module layers: [ADR 0041](adr/0041-stdlib-module-layers.md)). The current target is
-Linux x86_64. Blocking operations, including DNS, may block the calling native task.
+Linux x86_64 and ARM64. Blocking operations, including DNS, may block the calling native task.
 The API uses ordinary Tarn ownership, `Result`, `try` and borrowed byte slices.
 
 ```tarn
@@ -234,7 +234,10 @@ use readiness: `set_nonblocking(true)`, `Poll.register_unix`, `Poll.wait` with a
 timeout. A missing path is NotFound, a denied one PermissionDenied, and an
 empty, NUL-containing or 108-byte-or-longer path InvalidAddress. `UnixStream.pair()` returns a
 connected `UnixPair { first, second }` with no filesystem name (ADR 0070); hand
-one end to a child with `process.Command.pass`. There is no listener, abstract
+one end to a child with `process.Command.pass`. `raw_fd()` returns the borrowed descriptor
+number so a foreign event loop (such as GLib) can watch readiness; the stream
+keeps ownership, and the caller removes that registration before the stream is
+closed or destroyed. There is no listener, abstract
 namespace, datagram socket, address query, credential passing or async method yet. See [ADR 0069](adr/0069-unix-stream-client.md).
 
 ## Manual suspended execution (Phase 12C)

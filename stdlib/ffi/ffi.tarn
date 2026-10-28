@@ -62,3 +62,18 @@ pub fn CString.new(text &string) Option<CString> {
 pub fn CString.as_ptr(&self) *u8 { return slice(self.bytes.as_slice()) }
 /// Byte length without the terminator.
 pub fn CString.len(&self) usize { return self.bytes.len() - 1 }
+
+/// Static C ABI adapter for a directly named, non-generic Tarn function.
+/// The erased address owns no context. Passing it to C requires an exact
+/// prototype match and valid context lifetime/threading (ADR 0080).
+pub extern "intrinsic" fn callback<F>(function F) *u8
+
+/// Read one initialized scalar or raw pointer from valid, aligned memory.
+/// The caller must respect active loans, valid bool bytes, and synchronization.
+pub unsafe fn read<T: Copy>(pointer *T) T { return _read(pointer) }
+/// Write one scalar or raw pointer to valid, aligned writable memory.
+/// The caller must respect active loans and synchronization.
+pub unsafe fn write<T: Copy>(pointer *mut T, value T) { _write(pointer, value) }
+
+extern "intrinsic" fn _read<T: Copy>(pointer *T) T
+extern "intrinsic" fn _write<T: Copy>(pointer *mut T, value T)

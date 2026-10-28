@@ -1,0 +1,24 @@
+// Comparisons see through shared references on either side (ADR 0085).
+struct P { x i32 }
+fn main() {
+    var v: Vec<u32> = Vec.new()
+    v.push(7)
+    v.push(9)
+    a := v.get(0)
+    print(a == 7)
+    print(7 == a)
+    print(v.get(1) > 8)
+    print(v.get(0) != v.get(1))
+    id := u32(9)
+    print(v.get(1) == id)
+    var names: Vec<string> = Vec.new()
+    names.push("ana")
+    print(names.get(0) == "ana")
+    var ps: Vec<P> = Vec.new()
+    ps.push(P{x: 3})
+    print(ps.get(0).x == 3)
+    r := &ps.get(0).x
+    print(r >= 3)
+    f := 1.5
+    print(&f < 2.0)
+}

@@ -1,4 +1,4 @@
-# Type checking (phase 4)
+# Type checking
 
 Implementation: `compiler/types`. Output: side tables (expression types,
 local types, method targets, pattern variants) keyed by `NodeId`/`SymbolId`.
@@ -7,7 +7,9 @@ local types, method targets, pattern variants) keyed by `NodeId`/`SymbolId`.
 
 `bool`, `i8…i64`, `u8…u64`, `isize`, `usize`, `f32`, `f64`, `string`, `void`,
 `never`, structs and enums (with type arguments), `&T`, `&mut T`, `[N]T`,
-`[]T` (unsized, behind a reference), `fn(A) R`, type parameters, `any I`.
+`[]T` (unsized, behind a reference), `*T`, `*mut T`, `fn(A) R`, `mut fn(A) R`,
+`once fn(A) R`, type parameters, borrowed `any I` and source async computations.
+Owned dynamic-interface annotations are rejected (E3041).
 
 ## Inference
 
@@ -15,7 +17,7 @@ local types, method targets, pattern variants) keyed by `NodeId`/`SymbolId`.
   unification table; signatures are never inferred.
 - Integer literals get an *integer variable*: it unifies only with integer
   types and defaults to `i64`; float literals default to `f64`. A literal
-  takes the type its context needs (`b: u8 := 2; c := b + 3` → `c: u8`) and is
+  takes the type its context needs (`b: u8 := 2` makes `b + 3` have type `u8`) and is
   range-checked after inference (E3025).
 - Generic functions, methods of generic types (ADR 0015) and variants are
   instantiated with fresh variables per use; the expected type flows into the
@@ -39,10 +41,12 @@ local types, method targets, pattern variants) keyed by `NodeId`/`SymbolId`.
 | `& \| ^` | two integers of the same type | that type |
 | `<< >>` | integers | left type |
 | `&& \|\|` `!` | `bool` | `bool` |
-| `== !=` | same type: numbers, strings, `bool` | `bool` |
+| `== !=` | same type: numbers, strings, `bool`, or a type implementing `core.Eq` | `bool` |
 | `< <= > >=` | same type: numbers, strings | `bool` |
 
-Structs and enums have no `==` in v0 (needs an equality interface).
+Structs/enums opt into equality through `impl Eq for T`; there is no structural
+default. Conditional impl bounds are supported (ADR 0078), including the core
+`Option<T: Eq>` and `Result<T: Eq, E: Eq>` implementations.
 
 ## Places and mutability (ADR 0017)
 
@@ -98,14 +102,19 @@ influences later inference or diagnostics.
 
 ## Unsafe
 
-Calling an `extern` function requires an enclosing `unsafe` block (E3031).
+Calling a foreign `extern "C"` function requires an enclosing `unsafe` block
+(E3031); calling an `unsafe fn` requires one too (E3071). Trusted intrinsic
+declarations do not automatically require unsafe calls. Ordinary callable types
+cannot represent unsafe/foreign functions (E3082). Static C callback construction
+has separate restrictions (E3081); see [FFI](ffi.md).
 
-## Opaque standard library
+## Standard-library declarations and recovery types
 
-Members of standard modules (`fs.read_text`) have the opaque type `<std>`,
-which is compatible with everything and never reported. This keeps examples
-that use the future stdlib checkable for everything else. It is a hole by
-design and disappears when the stdlib declares real signatures.
+Implemented standard-library APIs use real embedded Tarn declarations and normal
+type/ownership checks. Missing members of real modules fail resolution/member
+lookup. Unmodeled bootstrap standard-module APIs and channels reject with E3040;
+they are not accepted as arbitrary safe operations. `Ty::Opaque` still exists
+for compiler recovery, but is not a user-facing compatibility guarantee.
 
 ## Callable invocation modes (phase 10)
 

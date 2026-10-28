@@ -1,0 +1,28 @@
+// No handwritten C adapter: GLib calls the Tarn handler on this thread.
+import "ffi"
+
+struct MainContext {}
+extern "C" fn g_idle_add(function *u8, data *mut i32) u32
+extern "C" fn g_main_context_iteration(context *mut MainContext, may_block i32) i32
+
+fn tick(data *mut i32) i32 {
+    unsafe {
+        count := ffi.read(ffi.to_const(data)) + 1
+        ffi.write(data, count)
+        if count < 3 { return 1 }
+    }
+    return 0
+}
+
+fn main() {
+    var count: i32 = 0
+    unsafe {
+        source := g_idle_add(ffi.callback(tick), ffi.of_mut(&mut count))
+        if source == 0 { panic("GLib registration failed") }
+        for count < 3 {
+            dispatched := g_main_context_iteration(ffi.null(), 1)
+        }
+    }
+    // tick returned 0, removing its source before count leaves scope.
+    print(count)
+}

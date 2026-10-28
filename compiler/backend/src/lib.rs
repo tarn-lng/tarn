@@ -3,6 +3,7 @@
 mod codegen;
 pub mod layout;
 mod inline;
+mod integer_narrow;
 pub mod mono;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -53,7 +54,8 @@ fn emit_entry_object(p: &post_drop::Program, t: &Typed, entry: Option<tarn_ir::F
         return Err(Error::bug(bugs.join("\n")));
     }
     let specialized = if let Some(entry) = entry { mono::specialize_entry(p, t, entry)? } else { mono::specialize(p, t)? };
-    let concrete = inline::inline(specialized, t);
+    let mut concrete = inline::inline(specialized, t);
+    tarn_ir::optimize_scalar_loops(&mut concrete);
     let bugs = post_drop::verify(&concrete, t);
     if !bugs.is_empty() {
         return Err(Error::bug(bugs.join("\n")));
