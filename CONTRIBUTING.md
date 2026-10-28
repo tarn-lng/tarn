@@ -55,6 +55,8 @@ solving the same thing at once.
 
 This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for everyone who has contributed, and how to add yourself.
+
 ## License
 
 Unless you explicitly state otherwise, any contribution you intentionally submit
