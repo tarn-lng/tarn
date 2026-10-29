@@ -4,7 +4,7 @@ error[E3027]: cannot iterate over `{integer}`
 3 |     for i in x {
   |              ^
   |
-  = note: v0 iterates over ranges `a..b`, arrays and `&` / `&mut` arrays and slices
+  = note: `for` iterates over ranges `a..b`, arrays, vectors and `&` / `&mut` arrays, slices and vectors
 
 error[E3027]: a `for` range needs a start and an end
  --> tests/types/fail/E3027_invalid_for.tarn:5:14

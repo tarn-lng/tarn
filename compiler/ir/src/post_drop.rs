@@ -28,6 +28,9 @@ pub enum Drop {
     Variants { place: Place, variants: Vec<Vec<(u32, Drop)>> },
     /// Drop live bitmap elements in increasing index order; never read holes.
     Remaining { place: Place, flag: FlagId },
+    /// An `IterVec` local: destroy its elements from `cursor` to its length in
+    /// index order, then free the storage (ADR 0086).
+    RemainingVec { place: Place, cursor: LocalId },
 }
 
 #[derive(Clone, Debug)]
@@ -365,14 +368,14 @@ fn drop_flags(d: &Drop, out: &mut Vec<FlagId>) {
             }
         }
         Drop::Remaining { flag, .. } => out.push(*flag),
-        Drop::Value(_) => {}
+        Drop::Value(_) | Drop::RemainingVec { .. } => {}
     }
 }
 
 fn root(d: &Drop) -> &Place {
     match d {
         Drop::Guard(_, d) => root(d),
-        Drop::Value(p) | Drop::Fields { place: p, .. } | Drop::Variants { place: p, .. } | Drop::Remaining { place: p, .. } => p,
+        Drop::Value(p) | Drop::Fields { place: p, .. } | Drop::Variants { place: p, .. } | Drop::Remaining { place: p, .. } | Drop::RemainingVec { place: p, .. } => p,
     }
 }
 fn check_drop(d: &Drop, f: &Function, t: &Typed, err: &mut impl FnMut(String)) {
@@ -396,6 +399,15 @@ fn check_drop(d: &Drop, f: &Function, t: &Typed, err: &mut impl FnMut(String)) {
         Drop::Remaining { flag, place } => {
             if !matches!(f.flags.get(flag.0 as usize), Some(FlagKind::Elements(q, _)) if q == place) {
                 err("nonexistent or inconsistent bitmap flag".into());
+            }
+        }
+        Drop::RemainingVec { place, cursor } => {
+            let kind = f.decl.locals.get(place.local.0 as usize).map(|l| l.kind);
+            if !place.proj.is_empty() || kind != Some(LocalKind::IterVec(*cursor))
+                || !matches!(&ty, Ty::Adt(s, args) if Some(*s) == t.decls.vec && args.len() == 1)
+                || f.decl.locals.get(cursor.0 as usize).is_none_or(|l| l.ty != Ty::Int(tarn_types::IntTy::Usize))
+            {
+                err("invalid iteration vector drop".into());
             }
         }
         Drop::Fields { place, fields } => {
@@ -501,5 +513,6 @@ fn print_drop(d: &Drop, pp: &crate::pretty::P<'_>) -> String {
         Drop::Remaining { place, flag } => {
             format!("destroy_remaining {} using df{}", pp.place(place), flag.0)
         }
+        Drop::RemainingVec { place, cursor } => format!("destroy_remaining {} from _{}", pp.place(place), cursor.0),
     }
 }

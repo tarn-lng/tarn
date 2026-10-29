@@ -674,6 +674,12 @@ impl<'e, 'a> FnCx<'e, 'a> {
         match &base {
             Ty::Array(e, _) | Ty::Slice(e) if through.is_some() => (self.project(e, through), self.mode(e, through)),
             Ty::Array(e, _) => ((**e).clone(), self.mode(e, None)),
+            // ADR 0086: `for x in vec` consumes the vector; through `&`/`&mut`
+            // it iterates its slice.
+            Ty::Adt(id, args) if Some(*id) == self.env.decls.vec && args.len() == 1 => {
+                let e = args[0].clone();
+                (self.project(&e, through), self.mode(&e, through))
+            }
             Ty::Opaque | Ty::Error => (Ty::Opaque, BindingMode::Copy),
             _ => (self.bad_iter(&z, span), BindingMode::Copy),
         }
@@ -684,7 +690,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
         self.err(
             Diagnostic::error("E3027", "invalid_for_iter", format!("cannot iterate over `{shown}`"))
                 .primary(span, "")
-                .note("v0 iterates over ranges `a..b`, arrays and `&` / `&mut` arrays and slices"),
+                .note("`for` iterates over ranges `a..b`, arrays, vectors and `&` / `&mut` arrays, slices and vectors"),
         );
         Ty::Error
     }

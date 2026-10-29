@@ -168,6 +168,18 @@ impl Cx<'_> {
             let flag = self.flag(post::FlagKind::Elements(p.clone(), *n));
             return Some(post::Drop::Remaining { place: p.clone(), flag });
         }
+        if p.proj.is_empty()
+            && let LocalKind::IterVec(cursor) = self.f.local(p.local).kind
+        {
+            // The cursor is assigned before the vector, so it is live wherever
+            // the vector is (ADR 0086).
+            let d = post::Drop::RemainingVec { place: p.clone(), cursor };
+            return Some(if state(p, states) == InitState::Maybe {
+                post::Drop::Guard(self.flag(post::FlagKind::Value(p.clone())), Box::new(d))
+            } else {
+                d
+            });
+        }
         let own = state(p, states);
         // Two Maybe bits do not imply correlation: the parent can be
         // wholly moved on one edge and partially moved on another. Never

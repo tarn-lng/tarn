@@ -647,6 +647,12 @@ impl<'a, 'l> Builder<'a, 'l> {
             });
             return;
         }
+        if let Some(elem_ty) = self.vec_elem(peel_ty(&it_ty)) {
+            if matches!(it_ty, Ty::Ref(..)) {
+                return self.for_vec_slice(span, sym, s, iter, &it_ty, elem_ty, body, exit);
+            }
+            return self.for_vec_owned(span, sym, iter, &it_ty, elem_ty, body, exit);
+        }
         // Base place of the elements: `*it` through a reference, or the array
         // itself. Iterating an owned non-copy array consumes it: it is moved
         // into an `IterArray` local whose elements are then moved out by index.
@@ -668,6 +674,118 @@ impl<'a, 'l> Builder<'a, 'l> {
         let len = self.new_local(usize_.clone(), LocalKind::Temp, None, None, false, span);
         self.assign(Place::local(len), Rvalue::Len(base.clone()), span);
         let idx = self.new_local(usize_.clone(), LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(idx), Rvalue::Use(Operand::Const(Const::Int(0, tarn_types::IntTy::Usize))), span);
+        let (head, body_bb, latch) = (self.new_block(), self.new_block(), self.new_block());
+        self.goto(head, span);
+        self.switch_to(head);
+        let c = self.new_local(Ty::Bool, LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(c), Rvalue::Binary(BinOp::Lt, Operand::Copy(Place::local(idx)), Operand::Copy(Place::local(len))), span);
+        self.terminate(Terminator::Switch { discr: Operand::Copy(Place::local(c)), cases: vec![(0, exit)], otherwise: body_bb }, span);
+        self.switch_to(body_bb);
+        let elem = base.project(Proj::Index(idx));
+        self.loop_body(body, latch, exit, |b| {
+            if let Some(sym) = sym {
+                let l = b.declare_user(sym, span);
+                let rv = match mode {
+                    BindingMode::Copy => Rvalue::Use(Operand::Copy(elem.clone())),
+                    BindingMode::Move => Rvalue::Use(Operand::Move(elem.clone())),
+                    BindingMode::Ref(m) => Rvalue::Ref(m, elem.clone()),
+                };
+                b.assign(Place::local(l), rv, span);
+            }
+        });
+        self.switch_to(latch);
+        self.assign(Place::local(idx), Rvalue::Binary(BinOp::Add, Operand::Copy(Place::local(idx)), Operand::Const(Const::Int(1, tarn_types::IntTy::Usize))), span);
+        self.goto(head, span);
+    }
+
+    fn vec_elem(&self, t: &Ty) -> Option<Ty> {
+        match t {
+            Ty::Adt(id, args) if Some(*id) == self.lx.t.decls.vec && args.len() == 1 => Some(args[0].clone()),
+            _ => None,
+        }
+    }
+
+    /// `for x in &v` / `for x in &mut v`: iterate `v.as_slice()` (or
+    /// `as_mut_slice`) with the usual reference binding modes (ADR 0086).
+    #[allow(clippy::too_many_arguments)]
+    fn for_vec_slice(&mut self, span: Span, sym: Option<SymbolId>, s: &Stmt, iter: &Expr, it_ty: &Ty, elem: Ty, body: &ast::Block, exit: BlockId) {
+        let mode = self.tables().binding_modes.get(&s.id).copied().unwrap_or(BindingMode::Copy);
+        // Read through outer references (`&&v`) down to one `&Vec<T>`.
+        let it = self.new_local(it_ty.clone(), LocalKind::Temp, None, None, false, iter.span);
+        let op = self.operand(iter);
+        self.assign(Place::local(it), Rvalue::Use(op), iter.span);
+        let mut place = Place::local(it);
+        let mut ty = it_ty.clone();
+        while let Ty::Ref(_, inner) = &ty
+            && matches!(**inner, Ty::Ref(..))
+        {
+            place = place.project(Proj::Deref);
+            ty = (**inner).clone();
+        }
+        let mutable = matches!(ty, Ty::Ref(true, _));
+        let exclusive = mutable && matches!(mode, BindingMode::Ref(true));
+        let slice_ty = Ty::Ref(exclusive, Box::new(Ty::Slice(Box::new(elem))));
+        let slice = self.new_local(slice_ty, LocalKind::Temp, None, None, false, iter.span);
+        let name = if exclusive { "Vec.as_mut_slice" } else { "Vec.as_slice" };
+        self.finish_call(Callee::Intrinsic(name.into()), vec![Operand::Copy(place)], vec![iter.span], Place::local(slice), false, false, iter.span);
+        let base = Place::local(slice).project(Proj::Deref);
+        self.index_loop(span, sym, base, mode, body, exit);
+    }
+
+    /// `for x in v`: `v` moves into an `IterVec` local; each iteration moves
+    /// the element at the cursor out and advances the cursor before the body,
+    /// so every exit drops exactly the elements not yet yielded (ADR 0086).
+    #[allow(clippy::too_many_arguments)]
+    fn for_vec_owned(&mut self, span: Span, sym: Option<SymbolId>, iter: &Expr, it_ty: &Ty, elem: Ty, body: &ast::Block, exit: BlockId) {
+        let usize_ = Ty::Int(tarn_types::IntTy::Usize);
+        // The cursor exists before the vector so its drop can always read it.
+        let cursor = self.new_local(usize_.clone(), LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(cursor), Rvalue::Use(Operand::Const(Const::Int(0, tarn_types::IntTy::Usize))), span);
+        let it = self.new_local(it_ty.clone(), LocalKind::IterVec(cursor), None, None, false, iter.span);
+        let it_op = self.operand(iter);
+        self.assign(Place::local(it), Rvalue::Use(it_op), iter.span);
+        self.scopes.last_mut().unwrap().push(it);
+        let shared = self.new_local(Ty::Ref(false, Box::new(it_ty.clone())), LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(shared), Rvalue::Ref(false, Place::local(it)), span);
+        let len = self.new_local(usize_.clone(), LocalKind::Temp, None, None, false, span);
+        self.finish_call(Callee::Intrinsic("Vec.len".into()), vec![Operand::Copy(Place::local(shared))], vec![span], Place::local(len), false, false, span);
+        let (head, body_bb) = (self.new_block(), self.new_block());
+        self.goto(head, span);
+        self.switch_to(head);
+        let c = self.new_local(Ty::Bool, LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(c), Rvalue::Binary(BinOp::Lt, Operand::Copy(Place::local(cursor)), Operand::Copy(Place::local(len))), span);
+        self.terminate(Terminator::Switch { discr: Operand::Copy(Place::local(c)), cases: vec![(0, exit)], otherwise: body_bb }, span);
+        self.switch_to(body_bb);
+        let item = self.new_local(elem, LocalKind::Temp, None, None, false, span);
+        let exclusive = self.new_local(Ty::Ref(true, Box::new(it_ty.clone())), LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(exclusive), Rvalue::Ref(true, Place::local(it)), span);
+        self.finish_call(
+            Callee::Intrinsic("Vec.iter_take".into()),
+            vec![Operand::Copy(Place::local(exclusive)), Operand::Copy(Place::local(cursor))],
+            vec![span, span],
+            Place::local(item),
+            false,
+            false,
+            span,
+        );
+        let one = Operand::Const(Const::Int(1, tarn_types::IntTy::Usize));
+        self.assign(Place::local(cursor), Rvalue::Binary(BinOp::Add, Operand::Copy(Place::local(cursor)), one), span);
+        self.loop_body(body, head, exit, |b| {
+            if let Some(sym) = sym {
+                let l = b.declare_user(sym, span);
+                b.assign(Place::local(l), Rvalue::Use(Operand::Move(Place::local(item))), span);
+            }
+        });
+    }
+
+    /// Index loop over `base` (an array or slice place) binding each element
+    /// with `mode`.
+    fn index_loop(&mut self, span: Span, sym: Option<SymbolId>, base: Place, mode: BindingMode, body: &ast::Block, exit: BlockId) {
+        let usize_ = Ty::Int(tarn_types::IntTy::Usize);
+        let len = self.new_local(usize_.clone(), LocalKind::Temp, None, None, false, span);
+        self.assign(Place::local(len), Rvalue::Len(base.clone()), span);
+        let idx = self.new_local(usize_, LocalKind::Temp, None, None, false, span);
         self.assign(Place::local(idx), Rvalue::Use(Operand::Const(Const::Int(0, tarn_types::IntTy::Usize))), span);
         let (head, body_bb, latch) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(head, span);

@@ -2231,6 +2231,12 @@ impl Cx<'_, '_> {
                 self.b.ins().jump(next, &[]);
                 self.enter(next);
             }
+            post::Drop::RemainingVec { place, cursor } => {
+                let ty = self.place_ty(place)?;
+                let addr = self.addr(place)?;
+                let start = self.read(&Place::local(*cursor))?.value.ok_or_else(|| Error::bug("iteration cursor"))?;
+                self.drop_vector_from(addr, &ty, start)?;
+            }
             post::Drop::Remaining { place, flag } => {
                 if !matches!(self.flags[flag.0 as usize], Flag::Bits(..) | Flag::FrameBits(..)) {
                     return Err(Error::bug("remaining without bitmap"));

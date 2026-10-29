@@ -1,0 +1,11 @@
+error[E4001]: use of moved value `v`
+ --> tests/moves/fail/E4001_vector_consumed_by_for.tarn:6:11
+  |
+5 |     for s in v { print(s) }
+  |              - value moved here
+6 |     print(v.len())
+  |           ^ value used here after move
+  |
+  = note: `Vec<string>` is not a copy type, so assigning or passing it moves it
+  = help: to keep using `v`, borrow it where it is moved (`&v`) instead of moving it
+

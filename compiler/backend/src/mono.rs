@@ -278,6 +278,8 @@ fn prune(d: &mut post::Drop, f: &tarn_ir::Function, t: &Typed) -> bool {
             variants.iter().any(|fs| !fs.is_empty())
         }
         post::Drop::Remaining { place, .. } => post::place_ty(f, t, place).is_none_or(|ty| !t.decls.is_copy(&ty)),
+        // The storage is always freed, whatever the element type.
+        post::Drop::RemainingVec { .. } => true,
     }
 }
 

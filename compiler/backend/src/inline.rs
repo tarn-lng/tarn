@@ -162,6 +162,7 @@ impl Map {
             Drop::Fields { place, fields: fs } => Drop::Fields { place: self.place(place), fields: fields(fs) },
             Drop::Variants { place, variants } => Drop::Variants { place: self.place(place), variants: variants.iter().map(|v| fields(v)).collect() },
             Drop::Remaining { place, flag } => Drop::Remaining { place: self.place(place), flag: self.flag(*flag) },
+            Drop::RemainingVec { place, cursor } => Drop::RemainingVec { place: self.place(place), cursor: self.local(*cursor) },
         }
     }
     fn op(&self, op: &Op) -> Op {
@@ -206,6 +207,9 @@ fn splice(caller: &mut post::Function, at: usize, callee: &post::Function) {
         let mut l = l.clone();
         if l.kind == LocalKind::Return || l.kind == LocalKind::Param {
             l.kind = LocalKind::Temp;
+        }
+        if let LocalKind::IterVec(cursor) = l.kind {
+            l.kind = LocalKind::IterVec(map.local(cursor));
         }
         caller.decl.locals.push(l);
     }

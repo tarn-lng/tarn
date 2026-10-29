@@ -156,6 +156,7 @@ fn print_function_annotated(f: &Function, p: &Program, r: &Resolved, t: &Typed, 
             LocalKind::User => format!("{}{}", if l.mutable { "var " } else { "let " }, l.name.clone().unwrap_or_default()),
             LocalKind::Temp => "temp".to_string(),
             LocalKind::IterArray => "iteration array".to_string(),
+            LocalKind::IterVec(cursor) => format!("iteration vector (cursor _{})", cursor.0),
             LocalKind::TaskScopeWitness => "task scope".to_string(),
         };
         let _ = writeln!(out, "    _{i}: {}    // {what}", pp.ty(&l.ty));

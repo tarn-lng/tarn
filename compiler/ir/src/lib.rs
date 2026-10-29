@@ -157,6 +157,11 @@ pub enum LocalKind {
     /// are moved out one by one by index; the move checker does not track
     /// them, and dropping it drops the elements not yet yielded.
     IterArray,
+    /// The vector consumed by `for x in vec` (ADR 0086). Elements are taken by
+    /// the cursor local named here, which is advanced before the body runs;
+    /// dropping it destroys the elements from the cursor on, then frees the
+    /// storage.
+    IterVec(LocalId),
     /// Storage witness tying scoped task handles to structured completion.
     TaskScopeWitness,
 }

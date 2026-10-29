@@ -206,11 +206,17 @@ if x > 0 {
 for i in 0..10 { }       // range, exclusive end; 0..=10 inclusive
 for item in &list { }    // iterate by reference: `list` stays usable
 for item in list { }     // copy arrays: by value; non-copy arrays: consumes `list`
+for item in vec { }      // consumes a `Vec<T>`: each element is moved out in order
+for item in &mut vec { } // `&T` / `&mut T` elements; the vector stays usable
 for running { }          // while-style
 for { }                  // infinite
 ```
 
 - `for` is the only loop keyword.
+- Consuming a `Vec<T>` moves each element into the loop variable in index
+  order. Leaving early with `break`, `return` or `try` destroys the elements not
+  yet yielded, once and in order, and frees the storage. There is no extra pass
+  over the elements ([ADR 0086](adr/0086-consuming-vector-iteration.md)).
 - Braces are mandatory; parentheses around conditions are not used.
 - `if`, `for` and `match` are statements; they do not produce values. A
   value-dependent result is written with a mutable binding or a `return`

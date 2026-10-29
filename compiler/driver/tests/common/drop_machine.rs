@@ -145,6 +145,9 @@ impl Machine<'_> {
                     self.drop_plan(fr, d);
                 }
             }
+            // The abstract machine has no vector storage: a consuming vector
+            // loop's leftovers are the whole remaining value.
+            post::Drop::RemainingVec { place, .. } => self.destroy(Self::take(fr, place, false)),
             post::Drop::Remaining { place, flag } => {
                 let Some(Flag::Bits(bits)) = fr.flags[flag.0 as usize].clone() else { panic!("uninit bitmap") };
                 let Some(Value::Fields(xs)) = Self::slot(fr, place).take() else { panic!("dead array") };
