@@ -154,6 +154,8 @@ pub struct Decls {
     pub structs: HashMap<SymbolId, StructDef>,
     pub enums: HashMap<SymbolId, EnumDef>,
     pub fns: HashMap<SymbolId, FnSig>,
+    /// Evaluated `const` items (ADR 0090).
+    pub consts: HashMap<SymbolId, crate::consts::ConstDef>,
     pub bounds: HashMap<ParamId, Vec<SymbolId>>,
     pub param_names: HashMap<ParamId, String>,
     /// The `Copy` capability from `core`, if loaded.
@@ -245,6 +247,7 @@ impl<'a> Env<'a> {
             }
         }
         env.collect();
+        crate::consts::evaluate(&mut env);
         if let Some((_, io)) = stdlib("io") {
             env.decls.net_error = io.get("Error");
         }
@@ -428,7 +431,7 @@ impl<'a> Env<'a> {
                             self.fn_sig(m, f, &binders, self_ty.clone(), None);
                         }
                     }
-                    ItemKind::Import(_) | ItemKind::Error => {}
+                    ItemKind::Import(_) | ItemKind::Const(_) | ItemKind::Error => {}
                 }
             }
         }

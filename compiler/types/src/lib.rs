@@ -8,6 +8,7 @@ mod captures;
 mod capabilities;
 pub use capabilities::{Capability, NativeCapabilities};
 mod check;
+pub mod consts;
 mod env;
 mod exhaust;
 mod ty;

@@ -120,6 +120,13 @@ impl Parser {
                 self.parse_struct(false)
             }
             TokenKind::Enum => self.parse_enum(false),
+            TokenKind::Const => {
+                self.bump();
+                let name = self.expect_ident("constant name");
+                let ty = self.parse_type();
+                self.expect(&TokenKind::Eq);
+                ItemKind::Const(ConstDecl { name, ty, value: self.parse_expr() })
+            }
             TokenKind::Interface => self.parse_interface(),
             TokenKind::Impl => self.parse_impl(is_pub, pub_span),
             _ => {
@@ -127,7 +134,7 @@ impl Parser {
                 let span = self.span();
                 self.error(
                     Diagnostic::error("E1013", "expected_item", format!("expected item, found {found}"))
-                        .primary(span, "expected `fn`, `struct`, `enum`, `interface`, `impl` or `import`")
+                        .primary(span, "expected `fn`, `const`, `struct`, `enum`, `interface`, `impl` or `import`")
                         .note("statements must be inside a function body"),
                 );
                 ItemKind::Error

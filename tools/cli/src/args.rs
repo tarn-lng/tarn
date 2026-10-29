@@ -5,7 +5,7 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
         return Ok(args);
     };
     if super::packages::COMMANDS.contains(&command.as_str()) { super::packages::validate(command,&args[1..])?; return Ok(args); }
-    if command == "stdlib" { return Ok(args); }
+    if matches!(command.as_str(), "stdlib" | "syntax" | "explain") { return Ok(args); }
     if command == "fmt" { return formatter_args(args); }
     let native = matches!(command.as_str(), "build" | "run" | "test" | "profile");
     let source = native

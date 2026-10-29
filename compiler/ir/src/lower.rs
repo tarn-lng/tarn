@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use tarn_ast::{self as ast, ElseBranch, Expr, ExprKind, ForKind, ItemKind, Pattern, PatternKind, ReceiverKind, Stmt, StmtKind};
 use tarn_diagnostics::{Diagnostic, Severity};
 use tarn_resolve::{ModuleId, ModuleInput, Res, Resolved, SymbolKind};
+use tarn_types::consts::ConstValue;
 use tarn_types::{BindingMode, CoercionKind, MethodTarget, Typed};
 
 /// Program-wide lowering context.
@@ -1163,6 +1164,19 @@ impl<'a, 'l> Builder<'a, 'l> {
         self.read(Place::local(t), &target)
     }
 
+    /// The value of a `const` item named by `e` (ADR 0090), as an immediate.
+    fn constant(&self, e: &Expr) -> Option<Const> {
+        let Some(Res::Symbol(s)) = self.res(e.id) else { return None };
+        let def = self.lx.t.decls.consts.get(s)?;
+        Some(match (&def.value, &def.ty) {
+            (ConstValue::Int(v), ty) => int_const(*v, ty),
+            (ConstValue::Float(text), Ty::Float(f)) => Const::Float(text.clone(), *f),
+            (ConstValue::Bool(b), _) => Const::Bool(*b),
+            (ConstValue::Str(text), _) => Const::Str(text.clone()),
+            (ConstValue::Float(_), _) => return None,
+        })
+    }
+
     fn operand_raw(&mut self, e: &Expr) -> Operand {
         let ty = self.ty(e);
         match &e.kind {
@@ -1182,6 +1196,7 @@ impl<'a, 'l> Builder<'a, 'l> {
                 Operand::Const(int_const(-(v as i128), &ty))
             }
             ExprKind::Paren(inner) => self.operand(inner),
+            ExprKind::Ident(_) | ExprKind::Field { .. } if let Some(c) = self.constant(e) => Operand::Const(c),
             _ if self.is_place(e) => {
                 let p = self.place(e);
                 self.read(p, &ty)
@@ -1322,6 +1337,9 @@ impl<'a, 'l> Builder<'a, 'l> {
 
     /// A name that is not a place: unit variant, function value, std member.
     fn static_value(&mut self, e: &Expr, ty: &Ty) -> Rvalue {
+        if let Some(c) = self.constant(e) {
+            return Rvalue::Use(Operand::Const(c));
+        }
         match self.res(e.id) {
             Some(Res::Symbol(s)) => match &self.lx.r.symbol(*s).kind {
                 SymbolKind::Variant { parent } => {

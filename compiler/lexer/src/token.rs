@@ -34,6 +34,7 @@ pub enum TokenKind {
     Break,
     Continue,
     Match,
+    Const,
     Struct,
     Enum,
     Interface,
@@ -93,37 +94,40 @@ pub enum TokenKind {
     Eof,
 }
 
+/// Every reserved word, in one table: the lexer and `tarn syntax` both read
+/// it, so tools never describe a different language than the compiler parses.
+pub const KEYWORDS: &[(&str, TokenKind)] = &[
+    ("fn", TokenKind::Fn),
+    ("async", TokenKind::Async),
+    ("await", TokenKind::Await),
+    ("return", TokenKind::Return),
+    ("if", TokenKind::If),
+    ("else", TokenKind::Else),
+    ("for", TokenKind::For),
+    ("in", TokenKind::In),
+    ("break", TokenKind::Break),
+    ("continue", TokenKind::Continue),
+    ("match", TokenKind::Match),
+    ("const", TokenKind::Const),
+    ("struct", TokenKind::Struct),
+    ("enum", TokenKind::Enum),
+    ("interface", TokenKind::Interface),
+    ("impl", TokenKind::Impl),
+    ("copy", TokenKind::Copy),
+    ("var", TokenKind::Var),
+    ("pub", TokenKind::Pub),
+    ("import", TokenKind::Import),
+    ("true", TokenKind::True),
+    ("false", TokenKind::False),
+    ("try", TokenKind::Try),
+    ("spawn", TokenKind::Spawn),
+    ("unsafe", TokenKind::Unsafe),
+    ("extern", TokenKind::Extern),
+    ("mut", TokenKind::Mut),
+];
+
 pub fn keyword(ident: &str) -> Option<TokenKind> {
-    use TokenKind::*;
-    Some(match ident {
-        "fn" => Fn,
-        "async" => Async,
-        "await" => Await,
-        "return" => Return,
-        "if" => If,
-        "else" => Else,
-        "for" => For,
-        "in" => In,
-        "break" => Break,
-        "continue" => Continue,
-        "match" => Match,
-        "struct" => Struct,
-        "enum" => Enum,
-        "interface" => Interface,
-        "impl" => Impl,
-        "copy" => Copy,
-        "var" => Var,
-        "pub" => Pub,
-        "import" => Import,
-        "true" => True,
-        "false" => False,
-        "try" => Try,
-        "spawn" => Spawn,
-        "unsafe" => Unsafe,
-        "extern" => Extern,
-        "mut" => Mut,
-        _ => return None,
-    })
+    KEYWORDS.iter().find(|(word, _)| *word == ident).map(|(_, kind)| kind.clone())
 }
 
 impl TokenKind {
@@ -147,6 +151,7 @@ impl TokenKind {
             Break => "break",
             Continue => "continue",
             Match => "match",
+            Const => "const",
             Struct => "struct",
             Enum => "enum",
             Interface => "interface",

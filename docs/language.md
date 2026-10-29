@@ -286,6 +286,23 @@ Methods can only be declared in the module that declares the type.
 Struct literal: `User{name: "ana", age: 30}`. All fields must be given.
 Field shorthand `User{name, age}` is allowed when a local of the same name exists.
 
+## Constants
+
+```tarn
+const SLOTS usize = 8
+pub const BLOCK_SIZE usize = SLOTS * 4 + 8
+const NAME string = "tarn-ui-action"
+```
+
+- `const NAME Type = value` at module level; `pub` exports it. The type is
+  required and must be an integer, float, `bool` or `string`.
+- The value is evaluated at compile time from literals, other constants,
+  arithmetic, bitwise and boolean operators, and integer conversions such as
+  `u32(SLOTS)`. Overflow, division by zero, values that do not fit and cycles
+  are compile errors (E3084).
+- A use is the value itself; a constant cannot be assigned. Constants are not
+  patterns yet: write `v if v == SLOTS =>`.
+
 ## 8. Enums and pattern matching
 
 ```tarn

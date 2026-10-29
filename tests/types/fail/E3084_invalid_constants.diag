@@ -1,0 +1,44 @@
+error[E3084]: constant value 300 does not fit in `u8`
+ --> tests/types/fail/E3084_invalid_constants.tarn:1:16
+  |
+1 | const BIG u8 = 300
+  |                ^^^
+  |
+  = note: `u8` holds 0..=255
+
+error[E3084]: constant `LOOP_A` depends on itself
+ --> tests/types/fail/E3084_invalid_constants.tarn:3:20
+  |
+3 | const LOOP_B i32 = LOOP_A
+  |                    ^^^^^^
+
+error[E3084]: division by zero in a constant
+ --> tests/types/fail/E3084_invalid_constants.tarn:4:22
+  |
+4 | const ZERO i32 = 1 / 0
+  |                      ^
+
+error[E3084]: expected `u32`, found constant of type `u8`
+ --> tests/types/fail/E3084_invalid_constants.tarn:5:17
+  |
+5 | const MIX u32 = SMALL
+  |                 ^^^^^
+  |
+  = help: convert explicitly: `u32(...)`
+
+error[E3084]: this expression is not a constant
+ --> tests/types/fail/E3084_invalid_constants.tarn:7:18
+  |
+7 | const CALL i32 = f()
+  |                  ^^^
+  |
+  = note: constants allow literals, other constants, arithmetic, bitwise and boolean operators, and integer conversions
+
+error[E3084]: a constant must be an integer, float, `bool` or `string`
+ --> tests/types/fail/E3084_invalid_constants.tarn:8:11
+  |
+8 | const VEC Vec<i32> = 0
+  |           ^^^^^^^^
+  |
+  = help: use a function for other values
+

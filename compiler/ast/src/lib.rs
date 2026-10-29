@@ -46,7 +46,16 @@ pub enum ItemKind {
     Enum(EnumDecl),
     Interface(InterfaceDecl),
     Impl(ImplDecl),
+    Const(ConstDecl),
     Error,
+}
+
+/// `const NAME T = value` (ADR 0090): a named compile-time scalar or string.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstDecl {
+    pub name: Ident,
+    pub ty: Type,
+    pub value: Expr,
 }
 
 #[derive(Clone, Debug, PartialEq)]

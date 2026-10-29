@@ -888,11 +888,15 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
             other => {
                 let shown = self.show(other);
-                self.err(
-                    Diagnostic::error("E3020", "pattern_mismatch", format!("a variant pattern cannot match a value of type `{shown}`"))
-                        .primary(p.span, "")
-                        .note("only enum values have variants"),
-                );
+                let mut d = Diagnostic::error("E3020", "pattern_mismatch", format!("a variant pattern cannot match a value of type `{shown}`"))
+                    .primary(p.span, "")
+                    .note("only enum values have variants");
+                if let (Res::ScrutineeVariant(name), PatternKind::Ident(_)) = (r, &p.kind)
+                    && matches!(other, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Str)
+                {
+                    d = d.help(format!("constants are not patterns; compare with a guard: `value if value == {name} =>`"));
+                }
+                self.err(d);
                 return;
             }
         };
@@ -1230,6 +1234,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
             Some(Res::ScrutineeVariant(_)) | None => Ty::Error,
             Some(Res::Symbol(s)) => match self.kind(s).clone() {
+                SymbolKind::Const => self.env.decls.consts.get(&s).map_or(Ty::Error, |c| c.ty.clone()),
                 SymbolKind::Local { .. } | SymbolKind::Param | SymbolKind::SelfParam | SymbolKind::PatternBinding | SymbolKind::LoopBinding | SymbolKind::ClosureParam => {
                     self.locals.get(&s).cloned().unwrap_or(Ty::Error)
                 }

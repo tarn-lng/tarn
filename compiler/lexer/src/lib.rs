@@ -7,7 +7,7 @@
 
 mod token;
 
-pub use token::{FPiece, Token, TokenKind, keyword};
+pub use token::{FPiece, KEYWORDS, Token, TokenKind, keyword};
 
 use tarn_diagnostics::{Diagnostic, FileId, LineCol, SourceFile, Span};
 

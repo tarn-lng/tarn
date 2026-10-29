@@ -2,6 +2,7 @@
 
 mod args;
 mod stdlib;
+mod reference;
 mod watch;
 mod process;
 mod testing;
@@ -46,6 +47,8 @@ usage:
                                      run under callgrind and list the costliest
                                      Tarn functions (requires valgrind)
     tarn stdlib [module] [--json]     discover embedded public APIs
+    tarn syntax [--json]              keywords and language rules for this compiler
+    tarn explain <code> [--json]      explain a diagnostic code, e.g. E3083
     tarn version                     print the compiler version
 
 Entry uses the nearest tarn.toml package.entry; otherwise ./main.tarn.
@@ -92,6 +95,8 @@ fn run() -> ExitCode {
     }
     match args.first().map(String::as_str) {
         Some("stdlib") => stdlib::run(&args[1..]),
+        Some("syntax") => reference::syntax(&args[1..]),
+        Some("explain") => reference::explain(&args[1..]),
         Some("lex") => cmd_lex(&args[1..]),
         Some("ast") => cmd_ast(&args[1..]),
         Some("check") => cmd_check(&args[1..], false),

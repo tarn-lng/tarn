@@ -3,6 +3,8 @@
 Use the installed compiler as the source of truth. Start with:
 
 ```sh
+tarn syntax                 # keywords and these rules, from this compiler
+tarn explain E3083          # what a diagnostic code means
 tarn stdlib --json
 tarn stdlib string --json
 tarn stdlib core --json
@@ -20,6 +22,15 @@ claim inferred provenance or thread capabilities.
   `var x := value` is invalid. Parameters use `x Type`.
 - `if` is a statement. `match` is also an expression: `x := match o {` with
   `Some(v) => v` arms; an arm block must `return`, `break`, `continue` or panic.
+- Module constants: `const PAGE u32 = 0`, `pub const NAME string = "x"`.
+  Values are literals, other constants, arithmetic/bitwise/boolean operators
+  and integer conversions (`u32(OTHER)`), checked at compile time. Constants
+  are not patterns; use a guard: `v if v == PAGE =>`.
+- Integers have `to_string()`: `code.to_string()`.
+- Raw pointers: `*mut T` passes where `*T` is expected; `p == q` compares
+  addresses; `ffi.offset(p, n)`/`ffi.offset_mut(p, n)` move by `n` elements;
+  `ffi.vec_mut(&mut v)` points at a Vec's first element. Reads and writes
+  still need `unsafe { ffi.read(p) }`.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
   `Result.map_err(callback)` converts errors explicitly. `unwrap`, `expect(msg)`,
   `unwrap_or`, `map`,
@@ -51,5 +62,6 @@ CSV-to-JSON command. `evidence/status_device/collector.tarn` demonstrates
 Linux proc parsing, counter resets and process identity.
 
 Unknown-member spelling suggestions already exist. A suggestion is guidance,
-not proof that the proposed API has the intended semantics. Structured fixes,
-semantic queries, explain and MCP remain milestones in phase-34-plan.md.
+not proof that the proposed API has the intended semantics. `tarn explain`
+covers registered codes; structured fixes, semantic queries and MCP remain
+milestones in phase-34-plan.md.

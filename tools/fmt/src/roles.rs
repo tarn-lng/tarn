@@ -7,6 +7,10 @@ pub fn binary_operators(module: &Module, tokens: &[&Token], out: &mut HashSet<u3
     for item in &module.items {
         match &item.kind {
             ItemKind::Fn(f) => function(f, tokens, out),
+            ItemKind::Const(c) => {
+                ty(&c.ty, tokens, out);
+                expr(&c.value, tokens, out);
+            }
             ItemKind::Struct(s) => {
                 for field in &s.fields {
                     ty(&field.ty, tokens, out);

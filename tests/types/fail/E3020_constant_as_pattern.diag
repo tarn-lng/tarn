@@ -1,0 +1,18 @@
+error[E3020]: a variant pattern cannot match a value of type `u32`
+ --> tests/types/fail/E3020_constant_as_pattern.tarn:5:9
+  |
+5 |         PAGE => { print("page") }
+  |         ^^^^
+  |
+  = note: only enum values have variants
+  = help: constants are not patterns; compare with a guard: `value if value == PAGE =>`
+
+warning[W3001]: this arm can never match
+ --> tests/types/fail/E3020_constant_as_pattern.tarn:6:9
+  |
+6 |         _ => { print("other") }
+  |         ^
+  |
+  = note: every value it matches is handled by an earlier arm
+  = help: remove it, or move it before the arm that covers it
+

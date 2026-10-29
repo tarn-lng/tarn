@@ -43,6 +43,13 @@ impl Dumper {
                 let _ = write!(self.out, "(import {:?})", i.path);
             }
             ItemKind::Fn(f) => self.func(f, p, ind),
+            ItemKind::Const(c) => {
+                let _ = write!(self.out, "({p}const {} ", c.name.name);
+                self.ty(&c.ty);
+                self.s(" ");
+                self.expr(&c.value, ind);
+                self.s(")");
+            }
             ItemKind::Struct(s) => {
                 let _ = write!(self.out, "({p}{}struct {}", if s.is_copy { "copy " } else { "" }, s.name.name);
                 self.generics(&s.generics);

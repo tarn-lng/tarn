@@ -146,6 +146,10 @@ impl<'a> Cx<'a> {
                     let sym = self.item_symbol(&f.name, SymbolKind::Function, m, f.id, scope, item.is_pub);
                     self.declare(scope, sym, m, "E2002");
                 }
+                ItemKind::Const(c) => {
+                    let sym = self.item_symbol(&c.name, SymbolKind::Const, m, item.id, scope, item.is_pub);
+                    self.declare(scope, sym, m, "E2002");
+                }
                 ItemKind::Struct(s) => {
                     let sym = self.item_symbol(&s.name, SymbolKind::Struct, m, item.id, scope, item.is_pub);
                     let id = self.declare(scope, sym, m, "E2002");
@@ -375,6 +379,7 @@ pub(crate) fn kind_name(k: &SymbolKind) -> &'static str {
         SymbolKind::PreludeType => "type",
         SymbolKind::Module(_) => "module",
         SymbolKind::Function => "function",
+        SymbolKind::Const => "constant",
         SymbolKind::Struct => "struct",
         SymbolKind::Enum => "enum",
         SymbolKind::Interface => "interface",

@@ -372,6 +372,10 @@ impl<'c, 'a> Walker<'c, 'a> {
         for item in &ast.items {
             match &item.kind {
                 ItemKind::Fn(f) => self.function(f),
+                ItemKind::Const(c) => {
+                    self.ty(&c.ty);
+                    self.expr(&c.value);
+                }
                 ItemKind::Struct(s) => self.in_scope(ScopeKind::Item, item.span, |w| {
                     w.generics(&s.generics);
                     for f in &s.fields {

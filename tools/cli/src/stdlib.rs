@@ -153,6 +153,14 @@ pub fn run(args: &[String]) -> ExitCode {
                     );
                 }
             }
+            ItemKind::Const(c) => {
+                add(
+                    format!("{name}.{}", c.name.name),
+                    "constant",
+                    item.span,
+                    item.span.end,
+                );
+            }
             ItemKind::Interface(i) => {
                 add(
                     format!("{name}.{}", i.name.name),
