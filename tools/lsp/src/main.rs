@@ -337,5 +337,53 @@ fn check(
     buffers: &std::collections::HashMap<std::path::PathBuf, String>,
 ) -> Result<tarn_driver::CheckResult, String> {
     let packages = tarn_packages::graph::package_set(file)?;
-    tarn_driver::check_editor_with_packages(file, buffers, packages.as_ref())
+    match module_root(file, buffers) {
+        Some(root) => tarn_driver::check_editor_in_root(file, &root, buffers, packages.as_ref()),
+        None => tarn_driver::check_editor_with_packages(file, buffers, packages.as_ref()),
+    }
+}
+
+/// Local imports resolve against the entry file's directory, but an open
+/// file is often a module that some entry higher up imports (`src/value.tarn`
+/// importing "src/signature"). Among the file's directory and its ancestors,
+/// up to the project's tarn.toml, pick the nearest that resolves the most of
+/// its local imports; None keeps the file's own directory.
+fn module_root(
+    file: &std::path::Path,
+    buffers: &std::collections::HashMap<std::path::PathBuf, String>,
+) -> Option<PathBuf> {
+    let text = match buffers.get(file) {
+        Some(text) => text.clone(),
+        None => std::fs::read_to_string(file).ok()?,
+    };
+    let stdlib = tarn_driver::stdlib_modules();
+    let imports: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("import")?.trim().strip_prefix('"')?.split('"').next())
+        .filter(|path| !stdlib.contains(path))
+        .collect();
+    if imports.is_empty() {
+        return None;
+    }
+    let own = file.parent()?;
+    let resolved = |root: &std::path::Path| {
+        imports
+            .iter()
+            .filter(|path| {
+                let module = root.join(format!("{path}.tarn"));
+                module.is_file() || buffers.contains_key(&module)
+            })
+            .count()
+    };
+    let mut best = (resolved(own), own);
+    for dir in own.ancestors().skip(1).take(8) {
+        let count = resolved(dir);
+        if count > best.0 {
+            best = (count, dir);
+        }
+        if dir.join("tarn.toml").is_file() {
+            break;
+        }
+    }
+    (best.1 != own).then(|| best.1.to_path_buf())
 }
