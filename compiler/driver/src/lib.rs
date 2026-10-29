@@ -177,14 +177,22 @@ fn official_stdlib_path(name: &str) -> PathBuf {
 }
 
 fn load_editor_sources(entry: &Path, overlays: &std::collections::HashMap<PathBuf, String>, editor: bool, packages: Option<&PackageSet>) -> Result<(Program, Vec<Diagnostic>), String> {
+    load_sources(entry, None, overlays, editor, packages)
+}
+
+fn load_sources(entry: &Path, module_root: Option<&Path>, overlays: &std::collections::HashMap<PathBuf, String>, editor: bool, packages: Option<&PackageSet>) -> Result<(Program, Vec<Diagnostic>), String> {
     let official_entry = if editor {
         entry.canonicalize().ok().and_then(|entry| stdlib_modules().into_iter().find(|name|
             official_stdlib_path(name).canonicalize().ok().as_ref() == Some(&entry)))
     } else { None };
     let packages = if official_entry.is_none() { packages } else { None };
     let mut import_targets = std::collections::HashMap::new();
-    let root = entry.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-    let stem = entry.file_stem().and_then(|s| s.to_str()).ok_or("invalid file name")?.to_string();
+    let root = module_root.map(Path::to_path_buf)
+        .unwrap_or_else(|| entry.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")));
+    let stem = match module_root.and_then(|r| entry.strip_prefix(r).ok()) {
+        Some(relative) => relative.with_extension("").to_str().ok_or("invalid file name")?.replace('\\', "/"),
+        None => entry.file_stem().and_then(|s| s.to_str()).ok_or("invalid file name")?.to_string(),
+    };
     // Entry filenames do not confer reserved stdlib module identity.
     let stem = if let Some(name) = official_entry { name.to_string() }
         else if trusted_source(&stem).is_some() { format!("entry/{stem}") } else { stem };
@@ -316,6 +324,13 @@ pub fn check_editor_with_overlays(entry: &Path, overlays: &std::collections::Has
 /// Editor checking with verified package dependencies.
 pub fn check_editor_with_packages(entry: &Path, overlays: &std::collections::HashMap<PathBuf, String>, packages: Option<&PackageSet>) -> Result<CheckResult, String> {
     check_loaded(load_editor_sources(entry, overlays, true, packages)?)
+}
+
+/// Editor checking of a module file under an explicit local module root, for
+/// files that a program imports from an entry in an ancestor directory. The
+/// file is named by its path below `root`, as an import from there names it.
+pub fn check_editor_in_root(entry: &Path, root: &Path, overlays: &std::collections::HashMap<PathBuf, String>, packages: Option<&PackageSet>) -> Result<CheckResult, String> {
+    check_loaded(load_sources(entry, Some(root), overlays, true, packages)?)
 }
 
 fn check_loaded(loaded: (Program, Vec<Diagnostic>)) -> Result<CheckResult, String> {

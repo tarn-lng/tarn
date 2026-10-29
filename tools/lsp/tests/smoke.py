@@ -178,3 +178,21 @@ assert version.returncode == 0 and version.stdout.decode().startswith('tarn-lsp 
 unknown = subprocess.run([binary, '--bogus'], capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
 assert unknown.returncode == 2 and b'--bogus' in unknown.stderr, unknown
 print('PASS: --version prints and exits; unknown arguments are rejected')
+
+# A module opened on its own resolves imports from the ancestor its entry uses.
+with tempfile.TemporaryDirectory() as tmp:
+    project = Path(tmp)
+    (project / 'tarn.toml').write_text('[package]\nname = "nested"\nversion = "0.1.0"\nentry = "main.tarn"\n')
+    (project / 'src').mkdir()
+    (project / 'src/b.tarn').write_text('pub fn answer() i32 { return 42 }\n')
+    module = project / 'src/a.tarn'
+    module.write_text('import "src/b"\npub fn twice() i32 { return b.answer() * 2 }\n')
+    (project / 'main.tarn').write_text('import "src/a"\nfn main() { print(a.twice()) }\n')
+    out = exchange([
+        {'id': 1, 'method': 'initialize', 'params': {}},
+        opened(module.as_uri(), module.read_text()),
+        {'id': 2, 'method': 'shutdown', 'params': None},
+    ])
+    diagnostics = [m['params'] for m in out if m.get('method') == 'textDocument/publishDiagnostics' and m['params']['uri'] == module.as_uri()]
+    assert diagnostics and diagnostics[-1]['diagnostics'] == [], diagnostics
+print('PASS: nested modules resolve imports from the project root')
