@@ -745,6 +745,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
     fn match_expr(&mut self, m: &MatchStmt, expected: Option<&Ty>) -> Ty {
         let st = self.expr(&m.scrutinee, None);
         let mut result: Option<Ty> = expected.cloned();
+        let mut failed = false;
         for arm in &m.arms {
             self.pattern(&arm.pattern, &st);
             if let Some(g) = &arm.guard {
@@ -765,6 +766,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 StmtKind::Block(b) => {
                     self.stmts(&b.stmts);
                     if !self.leaves(&b.stmts) {
+                        failed = true;
                         self.err(
                             Diagnostic::error("E3083", "match_arm_without_value", "this arm of a `match` expression produces no value")
                                 .primary(arm.body.span, "control reaches the end of this block")
@@ -777,6 +779,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     if self.leaves(std::slice::from_ref(arm.body.as_ref())) {
                         continue;
                     }
+                    failed = true;
                     self.err(
                         Diagnostic::error("E3083", "match_arm_without_value", "this arm of a `match` expression produces no value")
                             .primary(arm.body.span, "a statement, not a value")
@@ -786,7 +789,9 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
         }
         self.exhaustive(m, &st);
-        result.unwrap_or(Ty::Never)
+        // An arm already reported as valueless must not make the whole match
+        // `Never`: that would turn every later use into a false error.
+        result.unwrap_or(if failed { Ty::Error } else { Ty::Never })
     }
 
     /// Whether control never reaches the end of `stmts`, counting a direct

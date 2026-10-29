@@ -698,15 +698,22 @@ impl<'c, 'a> Walker<'c, 'a> {
                 for a in &p.args {
                     self.ty(a);
                 }
-                let Some(mut res) = self.path_res(p) else { return };
                 // An imported module may share a primitive's spelling (`string`).
                 // In a single-component type path, retain the primitive type;
-                // expression/member paths continue to name the module.
-                if p.segments.len() == 1 && matches!(&res,Res::Symbol(id) if matches!(self.cx.sym(*id).kind,SymbolKind::Module(_))) {
-                    if let Some((index, _)) = self.cx.r.symbols.iter().enumerate().find(|(_, s)| s.name == p.segments[0].name && matches!(s.kind, SymbolKind::Primitive)) {
-                        res = Res::Symbol(SymbolId(index as u32));
+                // expression/member paths continue to name the module. The
+                // type does not use the import, so it is not marked used.
+                let first = &p.segments[0];
+                let primitive = (p.segments.len() == 1
+                    && self.lookup(&first.name, first.span).is_some_and(|id| matches!(self.cx.sym(id).kind, SymbolKind::Module(_))))
+                .then(|| self.cx.r.symbols.iter().position(|s| s.name == first.name && matches!(s.kind, SymbolKind::Primitive)))
+                .flatten();
+                let res = match primitive {
+                    Some(index) => Res::Symbol(SymbolId(index as u32)),
+                    None => {
+                        let Some(res) = self.path_res(p) else { return };
+                        res
                     }
-                }
+                };
                 if let Res::Symbol(id) = res
                     && let Some(&arity) = self.cx.r.type_arity.get(&id)
                     && arity != p.args.len()

@@ -1,0 +1,16 @@
+error[E3083]: this arm of a `match` expression produces no value
+ --> tests/types/fail/E3083_no_cascade.tarn:7:20
+  |
+7 |         Some(p) => {
+  |                    ^ control reaches the end of this block
+  |
+  = help: write the value after `=>`, or end the block with `return`, `break`, `continue` or `panic`
+
+error[E3083]: this arm of a `match` expression produces no value
+  --> tests/types/fail/E3083_no_cascade.tarn:10:17
+   |
+10 |         None => {
+   |                 ^ control reaches the end of this block
+   |
+   = help: write the value after `=>`, or end the block with `return`, `break`, `continue` or `panic`
+

@@ -1,0 +1,15 @@
+struct Part {
+    widget i32
+}
+fn main() {
+    o: Option<Part> := None
+    part := match o {
+        Some(p) => {
+            print("x")
+        }
+        None => {
+            print("y")
+        }
+    }
+    print(part.widget)
+}

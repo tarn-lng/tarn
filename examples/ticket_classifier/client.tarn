@@ -1,6 +1,5 @@
 import "https"
 import "json"
-import "string"
 pub copy struct Error { pub code i32 }
 pub fn fetch(url &string, method &string, header &string, body &string, options &https.Options) Result<json.Value, Error> {
     var response: https.Response
