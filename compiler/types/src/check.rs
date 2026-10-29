@@ -1890,7 +1890,14 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 ExprKind::Field { base, name } => {
                     let bt = self.expr(base, None);
                     let (inner, _) = peel(&self.infer.shallow(&bt));
-                    let field = if let Ty::Adt(s, _) = inner { self.env.decls.structs.get(&s).is_some_and(|d| d.fields.iter().any(|f| f.name == name.name)) } else { false };
+                    // `x.name(...)` calls a field only when the field holds a
+                    // callable; otherwise it is a method call, so a method may
+                    // share a data field's name (`window` and `window()`).
+                    let field = if let Ty::Adt(s, targs) = &inner {
+                        self.env.decls.structs.get(s).and_then(|d| d.fields.iter().find(|f| f.name == name.name)).is_some_and(|f| matches!(f.ty, Ty::Fn(..)) || self.lookup_method(*s, targs, &name.name).is_none())
+                    } else {
+                        false
+                    };
                     // Reuse the base type: checking `base` again would double the
                     // work at every link of a call chain (exponential time).
                     if field {

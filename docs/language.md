@@ -263,6 +263,11 @@ copy types.
 The declaration mirrors the call site: `User.new("ana")`, `u.greet()`.
 There is no `impl` block for inherent methods.
 
+A method may share a field's name: `n.window` reads the field and
+`n.window()` calls the method. A call `x.name(...)` uses the field only when
+the field holds a callable (`fn` type) or no method of that name exists
+(ADR 0092).
+
 Methods of a **generic type** name the type's parameters right after the type
 (ADR 0015); the names are binders, one per parameter, in order:
 
