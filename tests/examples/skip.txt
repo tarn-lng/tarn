@@ -10,5 +10,6 @@ tcp_echo server: waits for a connection
 status_metrics nondeterministic: prints live timestamps and interface counters
 csv_report needs input: reads CSV from stdin
 sqlite needs libsqlite3 and --link flags
+glib_callback needs libglib2.0 and --link glib-2.0
 textstats needs input: reads text from stdin
 ticket_classifier needs arguments and an HTTPS service
