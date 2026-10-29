@@ -1,11 +1,11 @@
 error[E3023]: method `eq` does not match its declaration in `Eq`
-  --> tests/types/fail/E3023_eq_wrong_self.tarn:9:8
-   |
- 9 |     fn eq(&self, other &Feet) bool { return self.value == other.value }
-   |        ^^
-  ::: stdlib/core/core.tarn:88:8
-88 |     fn eq(&self, other &Self) bool
-   |        -- declared here
-   |
-   = note: parameter 1 is `&Feet`, the interface declares `&Meters`
+   --> tests/types/fail/E3023_eq_wrong_self.tarn:9:8
+    |
+  9 |     fn eq(&self, other &Feet) bool { return self.value == other.value }
+    |        ^^
+   ::: stdlib/core/core.tarn:116:8
+116 |     fn eq(&self, other &Self) bool
+    |        -- declared here
+    |
+    = note: parameter 1 is `&Feet`, the interface declares `&Meters`
 

@@ -11,11 +11,20 @@ pub extern "intrinsic" fn of<T>(value &T) *T
 pub extern "intrinsic" fn of_mut<T>(value &mut T) *mut T
 pub extern "intrinsic" fn slice<T>(data &[]T) *T
 pub extern "intrinsic" fn slice_mut<T>(data &mut []T) *mut T
+/// Pointer to the first element of a vector; like `slice`, the borrow ends
+/// here and the vector must not grow while C uses the pointer.
+pub fn vec<T>(data &Vec<T>) *T { return slice(data.as_slice()) }
+pub fn vec_mut<T>(data &mut Vec<T>) *mut T { return slice_mut(data.as_mut_slice()) }
 /// Mutable-to-shared pointer conversion; the reverse is not provided.
 pub extern "intrinsic" fn to_const<T>(pointer *mut T) *T
 /// Numeric address, for comparisons and C sentinels such as `(void*)-1`.
 pub extern "intrinsic" fn address<T>(pointer *T) usize
 pub extern "intrinsic" fn from_address<T>(value usize) *mut T
+
+/// `pointer` moved by `count` elements of `T`. Only the address is computed;
+/// whether the result is valid to read is the caller's `unsafe` obligation.
+pub extern "intrinsic" fn offset<T>(pointer *T, count usize) *T
+pub extern "intrinsic" fn offset_mut<T>(pointer *mut T, count usize) *mut T
 
 pub fn is_null<T>(pointer *T) bool { return address(pointer) == 0 }
 

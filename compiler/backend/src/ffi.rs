@@ -83,6 +83,15 @@ impl Cx<'_, '_> {
             ("to_const", [a], Ty::Ptr(false, _)) if matches!(a.ty, Ty::Ptr(true, _)) => word(a)?,
             ("address", [a], Ty::Int(IntTy::Usize)) if matches!(a.ty, Ty::Ptr(..)) => word(a)?,
             ("from_address", [a], Ty::Ptr(true, _)) if a.ty == Ty::Int(IntTy::Usize) => word(a)?,
+            // Address arithmetic only (wrapping, like `address` + `from_address`);
+            // the stride is the pointee's size.
+            ("offset", [p, count], Ty::Ptr(false, inner)) | ("offset_mut", [p, count], Ty::Ptr(true, inner))
+                if p.ty == *dest && count.ty == Ty::Int(IntTy::Usize) =>
+            {
+                let stride = i64::from(layout::layout(self.t, inner)?.size);
+                let bytes = self.b.ins().imul_imm(word(count)?, stride);
+                self.b.ins().iadd(word(p)?, bytes)
+            }
             _ => return Err(Error::bug(format!("ffi intrinsic {name} shape"))),
         };
         Ok(Some(Val { value: Some(value), ty: dest.clone() }))

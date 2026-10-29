@@ -1,0 +1,8 @@
+error[E3006]: cannot apply `<` to `*i64` and `*i64`
+ --> tests/types/fail/E3006_pointer_ordering.tarn:5:8
+  |
+5 |     if p < p { print("never") }
+  |        ^^^^^
+  |
+  = note: `==`/`!=` need numbers, strings, booleans or a type implementing `Eq`; implement `Eq` or use `match`
+

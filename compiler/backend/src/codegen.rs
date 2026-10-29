@@ -1625,6 +1625,7 @@ impl Cx<'_, '_> {
                 ),
                 _ => return Err(Error::unsupported("floating-point remainder/bit operation")),
             },
+            Ty::Ptr(..) if matches!(op, BinOp::Eq | BinOp::Ne) => self.b.ins().icmp(if op == BinOp::Eq { IntCC::Equal } else { IntCC::NotEqual }, x, y),
             Ty::Int(_) | Ty::Bool => {
                 let signed = matches!(a.ty,Ty::Int(i) if i.signed());
                 if cmp {

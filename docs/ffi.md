@@ -38,14 +38,18 @@ that would erase their unsafe call requirement. Call them directly inside
 neither Transfer nor Share, so they cannot cross a native task boundary
 (E3047), even inside a Copy struct. `*[]T` and `*any I` are rejected (E3072).
 
-Creating and converting pointers is safe because nothing is accessed:
+Creating, converting, moving and comparing pointers is safe because nothing
+is accessed. `*mut T` coerces to `*T` implicitly, and `==`/`!=` compare two
+pointers of the same type by address (ADR 0088):
 
 | `ffi` | |
 |---|---|
 | `null<T>() *mut T` | null pointer; type from context |
 | `of(&T) *T`, `of_mut(&mut T) *mut T` | address of a borrowed value; the borrow ends at the call |
 | `slice(&[]T) *T`, `slice_mut(&mut []T) *mut T` | address of the first element |
-| `to_const(*mut T) *T` | the only mutability conversion |
+| `vec(&Vec<T>) *T`, `vec_mut(&mut Vec<T>) *mut T` | address of a vector's first element |
+| `offset(*T, usize) *T`, `offset_mut(*mut T, usize) *mut T` | moved by `n` elements of `T` (wrapping address arithmetic) |
+| `to_const(*mut T) *T` | explicit form of the implicit `*mut T → *T` coercion |
 | `address(*T) usize`, `from_address<T>(usize) *mut T`, `is_null(*T)` | numeric view, e.g. `(void*)-1` sentinels |
 
 Because a pointer does not keep its pointee borrowed, the caller must keep the

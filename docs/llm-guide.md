@@ -20,7 +20,8 @@ claim inferred provenance or thread capabilities.
   `var x := value` is invalid. Parameters use `x Type`.
 - `if` and `match` are statements. Return explicitly from each branch.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
-  `Result.map_err(callback)` converts errors explicitly. `unwrap_or`, `map`,
+  `Result.map_err(callback)` converts errors explicitly. `unwrap`, `expect(msg)`,
+  `unwrap_or`, `map`,
   `and_then`, `is_some` and `is_ok` already exist; inspect core for exact types.
 - Generic arguments in expressions are unsupported. Let the expected type
   infer them: `var counts: collections.Map<string, u64> = collections.Map.new()`.

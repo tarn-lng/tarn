@@ -1140,6 +1140,12 @@ impl<'a, 'l> Builder<'a, 'l> {
             self.assign(Place::local(t), Rvalue::Coerce(CoerceKind::Poller, op, target.clone()), e.span);
             return self.read(Place::local(t), &target);
         }
+        if let Ty::Ptr(true, inner) = self.ty(e) {
+            let target = Ty::Ptr(false, inner);
+            let t = self.new_local(target.clone(), LocalKind::Temp, None, None, false, e.span);
+            self.assign(Place::local(t), Rvalue::Coerce(CoerceKind::MutToShared, op, target.clone()), e.span);
+            return self.read(Place::local(t), &target);
+        }
         let Ty::Ref(m, inner) = self.ty(e) else { return op };
         let shared = m && !c.mut_to_shared;
         let (kind, target) = match (c.kind, *inner) {

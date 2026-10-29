@@ -143,7 +143,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
     }
 
     /// `actual` is used where `expected` is required. Applies the implicit
-    /// coercions: `&mut T → &T`, `&[N]T → &[]T`, `&T → &any I`.
+    /// coercions: `&mut T → &T`, `*mut T → *T`, `&[N]T → &[]T`, `&T → &any I`.
     /// Records the coercion applied to `node` (for IR lowering).
     fn coerce(&mut self, actual: &Ty, expected: &Ty, span: Span, node: Option<NodeId>) -> bool {
         let (a, x) = (self.infer.shallow(actual), self.infer.shallow(expected));
@@ -181,6 +181,16 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 }
                 return true;
             }
+        }
+        // `*mut T → *T`: the same address with fewer permissions, as
+        // `ffi.to_const` does; never the reverse direction.
+        if let (Ty::Ptr(true, ai), Ty::Ptr(false, xi)) = (&a, &x)
+            && self.infer.unify(ai, xi)
+        {
+            if let Some(n) = node {
+                self.tables.coercions.insert(n, Coercion { mut_to_shared: true, kind: CoercionKind::None });
+            }
+            return true;
         }
         if let (Ty::Async(output), Ty::Fn(tarn_ast::CallMode::Mutable, params, ret)) = (&a, &x)
             && let [Ty::Ref(false, waker)] = params.as_slice()
@@ -1530,7 +1540,8 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 let (inner, _) = peel(&z);
                 let ok = match &inner {
                     Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Opaque | Ty::Error => true,
-                    Ty::Bool => matches!(op, Eq | Ne),
+                    // Raw pointers compare by address; nothing is accessed.
+                    Ty::Bool | Ty::Ptr(..) => matches!(op, Eq | Ne),
                     Ty::Var(v) => self.infer.kind(*v) != VarKind::General,
                     _ => false,
                 };
