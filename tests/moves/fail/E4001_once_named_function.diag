@@ -1,0 +1,11 @@
+error[E4001]: use of moved value `once`
+ --> tests/moves/fail/E4001_once_named_function.tarn:6:11
+  |
+5 |     print(once(1))
+  |           ------- value moved here
+6 |     print(once(2))
+  |           ^^^^^^^ value used here after move
+  |
+  = note: `once fn(i32) i32` is not a copy type, so assigning or passing it moves it
+  = help: to keep using `once`, borrow it where it is moved (`&once`) instead of moving it
+

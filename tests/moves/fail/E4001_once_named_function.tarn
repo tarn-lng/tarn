@@ -1,0 +1,7 @@
+// A named function used as a once fn is still consumed by its call (ADR 0087).
+fn double(x i32) i32 { return x * 2 }
+fn main() {
+    once: once fn(i32) i32 := double
+    print(once(1))
+    print(once(2))
+}

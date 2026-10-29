@@ -1,0 +1,5 @@
+// `_` is not a discard target; an expression statement discards its value.
+fn f() i32 { return 1 }
+fn main() {
+    _ = f()
+}
