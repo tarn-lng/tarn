@@ -1,0 +1,8 @@
+error[E3083]: this arm of a `match` expression produces no value
+ --> tests/types/fail/E3083_match_arm_without_value.tarn:5:17
+  |
+5 |         None => {
+  |                 ^ control reaches the end of this block
+  |
+  = help: write the value after `=>`, or end the block with `return`, `break`, `continue` or `panic`
+

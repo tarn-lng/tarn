@@ -810,22 +810,24 @@ impl<'c, 'a> Walker<'c, 'a> {
                     });
                 }
             },
-            StmtKind::Match(m) => {
-                self.expr(&m.scrutinee);
-                for arm in &m.arms {
-                    self.in_scope(ScopeKind::MatchArm, arm.span, |w| {
-                        w.pattern(&arm.pattern);
-                        if let Some(g) = &arm.guard {
-                            w.expr(g);
-                        }
-                        match &arm.body.kind {
-                            StmtKind::Block(b) => w.stmts(&b.stmts),
-                            _ => w.stmt(&arm.body),
-                        }
-                    });
-                }
-            }
+            StmtKind::Match(m) => self.match_(m),
             StmtKind::Block(b) | StmtKind::Unsafe(b) | StmtKind::Scope(b) => self.block(b),
+        }
+    }
+
+    fn match_(&mut self, m: &MatchStmt) {
+        self.expr(&m.scrutinee);
+        for arm in &m.arms {
+            self.in_scope(ScopeKind::MatchArm, arm.span, |w| {
+                w.pattern(&arm.pattern);
+                if let Some(g) = &arm.guard {
+                    w.expr(g);
+                }
+                match &arm.body.kind {
+                    StmtKind::Block(b) => w.stmts(&b.stmts),
+                    _ => w.stmt(&arm.body),
+                }
+            });
         }
     }
 
@@ -943,6 +945,10 @@ impl<'c, 'a> Walker<'c, 'a> {
                 for x in elems {
                     self.expr(x);
                 }
+                None
+            }
+            ExprKind::Match(m) => {
+                self.match_(m);
                 None
             }
             ExprKind::Closure { params, ret, body, .. } => {

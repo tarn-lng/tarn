@@ -412,6 +412,9 @@ pub enum ExprKind {
         ret: Option<Type>,
         body: Block,
     },
+    /// `match e { P => value }` in expression position (ADR 0089). Each arm
+    /// body is `StmtKind::Expr` (the arm's value) or a diverging block.
+    Match(Box<MatchStmt>),
     Error,
 }
 

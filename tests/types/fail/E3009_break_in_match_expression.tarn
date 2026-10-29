@@ -1,0 +1,12 @@
+fn f(a i32) i32 {
+    for {
+        x := match a {
+            0 => { break }
+            _ => 1
+        }
+        return x
+    }
+}
+fn main() {
+    print(f(1))
+}

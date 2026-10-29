@@ -224,3 +224,6 @@ code has one meaning.
 - E3082 `unsafe_function_value`: an ordinary `fn` value cannot preserve the
   unsafe requirement of an `unsafe fn` or foreign function. Call directly
   inside `unsafe`, or implement a wrapper that checks its preconditions.
+- E3083 `match_arm_without_value`: an arm of a `match` expression neither
+  gives a value nor leaves (`return`, `break`, `continue`, `panic`). Write the
+  value after `=>`, or use a `match` statement.

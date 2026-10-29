@@ -1,0 +1,30 @@
+struct Buffer {
+    data string
+}
+fn Buffer.new() Buffer {
+    return Buffer{data: "resource"}
+}
+fn consume(b Buffer) {
+}
+fn pick(o Option<Buffer>) Buffer {
+    return match o {
+        Some(b) => b
+        None => Buffer.new()
+    }
+}
+fn main(c bool) {
+    var o: Option<Buffer> = None
+    if c {
+        o = Some(Buffer.new())
+    }
+    kept := match o {
+        Some(b) => b
+        None => { return }
+    }
+    var spare: Option<Buffer> = Some(Buffer.new())
+    consume(match spare {
+        Some(b) => b
+        None => Buffer.new()
+    })
+    consume(pick(None))
+}

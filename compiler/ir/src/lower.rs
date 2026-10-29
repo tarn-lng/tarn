@@ -494,7 +494,7 @@ impl<'a, 'l> Builder<'a, 'l> {
             }
             StmtKind::If(i) => self.if_stmt(i),
             StmtKind::For(f) => self.for_stmt(s, f),
-            StmtKind::Match(m) => self.match_stmt(m),
+            StmtKind::Match(m) => self.match_stmt(m, None),
             StmtKind::Block(b) | StmtKind::Unsafe(b) => self.block(b),
             StmtKind::Scope(b) => {
                 self.task_scopes.push(self.scopes.len());
@@ -813,7 +813,9 @@ impl<'a, 'l> Builder<'a, 'l> {
 
     // ------------------------------------------------------------ match
 
-    fn match_stmt(&mut self, m: &ast::MatchStmt) {
+    /// A `match` statement, or with `dest` a `match` expression whose value
+    /// arms store into `dest` (ADR 0089).
+    fn match_stmt(&mut self, m: &ast::MatchStmt, dest: Option<Place>) {
         let st = self.ty(&m.scrutinee);
         let scrut = self.place(&m.scrutinee);
         let join = self.new_block();
@@ -842,7 +844,10 @@ impl<'a, 'l> Builder<'a, 'l> {
                 StmtKind::Block(b) => self.stmts(&b.stmts),
                 _ => {
                     self.stmt_temps.push(Vec::new());
-                    self.stmt(&arm.body);
+                    match (&arm.body.kind, &dest) {
+                        (StmtKind::Expr(value), Some(dest)) => self.expr_into(value, dest.clone()),
+                        _ => self.stmt(&arm.body),
+                    }
                     let temps = self.stmt_temps.pop().unwrap_or_default();
                     if !self.dead {
                         for t in temps.into_iter().rev() {
@@ -1266,6 +1271,7 @@ impl<'a, 'l> Builder<'a, 'l> {
                 self.assign(dest, Rvalue::Aggregate(Aggregate::Array(elem), ops), span);
             }
             ExprKind::Closure { params, body, .. } => self.closure(e, params, body, dest),
+            ExprKind::Match(m) => self.match_stmt(m, Some(dest)),
             ExprKind::Ident(_) | ExprKind::Field { .. } if !self.is_place(e) => {
                 let rv = self.static_value(e, &ty);
                 self.assign(dest, rv, span);

@@ -220,9 +220,9 @@ for { }                  // infinite
   yet yielded, once and in order, and frees the storage. There is no extra pass
   over the elements ([ADR 0086](adr/0086-consuming-vector-iteration.md)).
 - Braces are mandatory; parentheses around conditions are not used.
-- `if`, `for` and `match` are statements; they do not produce values. A
-  value-dependent result is written with a mutable binding or a `return`
-  from each branch (provisional; see open questions in the roadmap).
+- `if` and `for` are statements; they do not produce values. `match` is a
+  statement at the start of a line and an expression anywhere a value is
+  expected (`x := match ...`, `return match ...`, arguments; ADR 0089).
 - Struct literals are not allowed directly in `if`/`for`/`match` heads; wrap
   them in parentheses (avoids the `if x == P{...} {` ambiguity).
 
@@ -310,6 +310,16 @@ fn area(s &Shape) f64 {
   available unqualified.
 - `match` must be exhaustive. `_` is the wildcard.
 - Arms are `pattern => statement` or `pattern => { block }`, one per line.
+- In a `match` expression each arm is `pattern => value`, or a block that
+  never reaches its end (`return`, `break`, `continue`, `panic`). There is no
+  implicit last-expression value:
+
+  ```tarn
+  ui := match native.create(config) {
+      Ok(value) => value
+      Err(error) => { return Err(error) }
+  }
+  ```
 - In patterns, a **capitalized** name (`Empty`, `Circle(r)`) is a variant and
   a lowercase name (`n`) is a new binding (ADR 0014). Variant names must
   start with an uppercase letter.

@@ -201,6 +201,16 @@ fn expr(e: &Expr, tokens: &[&Token], out: &mut HashSet<u32>) {
                 expr(e, tokens, out);
             }
         }
+        ExprKind::Match(m) => {
+            expr(&m.scrutinee, tokens, out);
+            for arm in &m.arms {
+                pattern(&arm.pattern, tokens, out);
+                if let Some(e) = &arm.guard {
+                    expr(e, tokens, out);
+                }
+                stmt(&arm.body, tokens, out);
+            }
+        }
         ExprKind::Closure {
             params, ret, body, ..
         } => {

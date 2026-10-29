@@ -18,7 +18,8 @@ claim inferred provenance or thread capabilities.
 
 - Declare with `x := value` (immutable) or `var x: Type = value` (mutable).
   `var x := value` is invalid. Parameters use `x Type`.
-- `if` and `match` are statements. Return explicitly from each branch.
+- `if` is a statement. `match` is also an expression: `x := match o {` with
+  `Some(v) => v` arms; an arm block must `return`, `break`, `continue` or panic.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
   `Result.map_err(callback)` converts errors explicitly. `unwrap`, `expect(msg)`,
   `unwrap_or`, `map`,

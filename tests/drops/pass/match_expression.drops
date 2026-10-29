@@ -1,0 +1,161 @@
+fn Buffer.new [post-drop] {
+    _0: Buffer
+  bb0:
+    _0 = Buffer{"resource"}
+    return
+}
+
+fn consume [post-drop] {
+    _0: void
+    _1: Buffer
+  bb0:
+    _0 = ()
+    destroy _1
+    return
+}
+
+fn pick [post-drop] {
+    _0: Buffer
+    _1: Option<Buffer>
+    _2: u32
+    _3: Buffer
+    _4: u32
+    df0: bool for (_1 as #0).0
+  bb0:
+    df0 = true
+    goto bb2
+  bb1:
+    variants _1 { #0: if df0 { destroy (_1 as #0).0 }, #1:  }
+    df0 = false
+    return
+  bb2:
+    _2 = discriminant(_1)
+    switch copy _2 [0 => bb5, _ => bb3]
+  bb3:
+    _4 = discriminant(_1)
+    switch copy _4 [1 => bb6, _ => bb4]
+  bb4:
+    unreachable
+  bb5:
+    live _3
+    _3 = move (_1 as #0).0
+    df0 = false
+    _0 = move _3
+    dead _3
+    goto bb1
+  bb6:
+    _0 = call Buffer.new() -> bb7
+  bb7:
+    goto bb1
+}
+
+fn main [post-drop] {
+    _0: void
+    _1: bool
+    _2: Option<Buffer>
+    _3: Option<Buffer>
+    _4: Option<Buffer>
+    _5: Buffer
+    _6: Buffer
+    _7: u32
+    _8: Buffer
+    _9: u32
+    _10: Buffer
+    _11: Option<Buffer>
+    _12: Buffer
+    _13: Option<Buffer>
+    _14: void
+    _15: Buffer
+    _16: u32
+    _17: Buffer
+    _18: u32
+    _19: void
+    _20: Buffer
+    _21: Option<Buffer>
+    df0: bool for (_13 as #0).0
+  bb0:
+    df0 = false
+    _2 = Option<Buffer>.None()
+    live _3
+    _3 = move _2
+    switch copy _1 [0 => bb2, _ => bb1]
+  bb1:
+    _5 = call Buffer.new() -> bb4
+  bb2:
+    goto bb3
+  bb3:
+    goto bb6
+  bb4:
+    _4 = Option<Buffer>.Some(move _5)
+    destroy _3
+    _3 = move _4
+    goto bb3
+  bb5:
+    live _10
+    _10 = move _6
+    _12 = call Buffer.new() -> bb11
+  bb6:
+    _7 = discriminant(_3)
+    switch copy _7 [0 => bb9, _ => bb7]
+  bb7:
+    _9 = discriminant(_3)
+    switch copy _9 [1 => bb10, _ => bb8]
+  bb8:
+    unreachable
+  bb9:
+    live _8
+    _8 = move (_3 as #0).0
+    _6 = move _8
+    dead _8
+    goto bb5
+  bb10:
+    _0 = ()
+    destroy _3
+    dead _3
+    return
+  bb11:
+    _11 = Option<Buffer>.Some(move _12)
+    live _13
+    df0 = false
+    _13 = move _11
+    df0 = true
+    goto bb13
+  bb12:
+    _14 = call consume(move _15) -> bb19
+  bb13:
+    _16 = discriminant(_13)
+    switch copy _16 [0 => bb16, _ => bb14]
+  bb14:
+    _18 = discriminant(_13)
+    switch copy _18 [1 => bb17, _ => bb15]
+  bb15:
+    unreachable
+  bb16:
+    live _17
+    _17 = move (_13 as #0).0
+    df0 = false
+    _15 = move _17
+    dead _17
+    goto bb12
+  bb17:
+    _15 = call Buffer.new() -> bb18
+  bb18:
+    goto bb12
+  bb19:
+    _21 = Option<Buffer>.None()
+    _20 = call pick(move _21) -> bb20
+  bb20:
+    _19 = call consume(move _20) -> bb21
+  bb21:
+    _0 = ()
+    variants _13 { #0: if df0 { destroy (_13 as #0).0 }, #1:  }
+    df0 = false
+    dead _13
+    df0 = false
+    destroy _10
+    dead _10
+    variants _3 { #0: , #1:  }
+    dead _3
+    return
+}
+

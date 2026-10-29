@@ -133,6 +133,13 @@ impl<'a> Node<'a> {
                     }
                 }),
                 ExprKind::Closure { body, .. } => out.push((Node::Block(body), d)),
+                ExprKind::Match(m) => {
+                    expr(&m.scrutinee);
+                    for arm in &m.arms {
+                        arm.guard.iter().for_each(|g| out.push((Node::Expr(g), d + 1)));
+                        out.push((Node::Stmt(&arm.body), d + 1));
+                    }
+                }
                 ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Ident(_) | ExprKind::Error => {}
             },
         }
@@ -195,6 +202,14 @@ fn split(e: Expr, pending: &mut Vec<Expr>) {
             InterpPart::Text(_) => None,
         })),
         ExprKind::Closure { body, .. } => block_exprs(body, pending),
+        ExprKind::Match(m) => {
+            let m = *m;
+            pending.push(m.scrutinee);
+            for arm in m.arms {
+                pending.extend(arm.guard);
+                stmt_exprs(*arm.body, pending);
+            }
+        }
         _ => {}
     }
 }
