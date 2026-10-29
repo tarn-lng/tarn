@@ -506,7 +506,11 @@ rejected there. A non-`move` closure literal likewise adopts an expected
 values are not C function pointers.
 
 Where a function value is expected, a payload enum variant is its
-constructor: `map_err(AppError.Io)`, `apply(Some, 3)` (ADR 0052).
+constructor: `map_err(AppError.Io)`, `apply(Some, 3)` (ADR 0052). A named
+function or method adopts the expected mode too, since it has no
+environment: `map_err(wrap)`, `o.map(double)` and `each(&mut c, Counter.bump)`
+for a `mut fn(&mut Counter)` parameter (ADR 0087). Unsafe and foreign functions
+are still not values (E3082).
 
 ```tarn
 fn make() fn() usize {

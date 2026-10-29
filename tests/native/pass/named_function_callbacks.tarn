@@ -1,0 +1,30 @@
+// Named functions serve as fn, mut fn and once fn values (ADR 0087).
+import "string"
+struct Counter { n i32 }
+fn Counter.bump(&mut self) { self.n = self.n + 1 }
+fn double(x i32) i32 { return x * 2 }
+fn label(x i32) string { return "n" + string.from_i64(i64(x)) }
+fn id<T>(x T) T { return x }
+fn twice(f mut fn(i32) i32, x i32) i32 {
+    y := f(x)
+    return f(y)
+}
+fn each(c &mut Counter, step mut fn(&mut Counter)) { step(c)
+    step(c) }
+fn main() {
+    print(twice(double, 3))
+    print(twice(id, 5))
+    var c = Counter{n: 0}
+    each(&mut c, Counter.bump)
+    print(c.n)
+    r: Result<i32, string> := Ok(7)
+    print(r.map(label).unwrap_or("none"))
+    // Option.map and Result.map_err take `once fn`.
+    o: Option<i32> := Some(3)
+    print(o.map(double).unwrap_or(0))
+    e: Result<i32, i32> := Err(4)
+    match e.map_err(label) { Ok(v) => { print(v) }
+        Err(text) => { print(text) } }
+    once: once fn(i32) i32 := double
+    print(once(1))
+}

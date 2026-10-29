@@ -1215,7 +1215,14 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     ps.extend(sig.params.iter().cloned());
                     let output = subst(&sig.ret, &map);
                     let result = if sig.is_async { Ty::Async(Box::new(output)) } else { output };
-                    Ty::Fn(CallMode::Shared, ps.iter().map(|p| subst(p, &map)).collect(), Box::new(result))
+                    // A named function has no environment (null, ADR 0032), so
+                    // it serves any invocation mode: `map_err(wrap)` where a
+                    // `once fn` is expected, `mut fn` callbacks (ADR 0087).
+                    let mode = match expected.map(|x| self.infer.shallow(x)) {
+                        Some(Ty::Fn(mode, ..)) => mode,
+                        _ => CallMode::Shared,
+                    };
+                    Ty::Fn(mode, ps.iter().map(|p| subst(p, &map)).collect(), Box::new(result))
                 }
                 SymbolKind::Module(_) => Ty::Error,
                 k => {
