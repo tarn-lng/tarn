@@ -114,10 +114,20 @@ tarn build app.tarn --link sqlite3
 tarn run app.tarn --link :libsqlite3.so.0   # exact file when no dev symlink exists
 ```
 
-Linking is a build-time grant, never something source code or an import can
-request. `--link` accepts a library name (`-lname`) or `:exact-file`; option-
-or path-like values are rejected. Missing symbols and libraries are reported by
-name. Opaque C handles are ordinary empty structs used behind pointers:
+A package declares its libraries once in `tarn.toml`, and `build`, `run`,
+`test` and `profile` link them before any `--link` flags (ADR 0091):
+
+```toml
+[native]
+links = ["gtk-4", "gio-2.0", "gobject-2.0"]
+```
+
+Linking is a build-time grant by the package author, never something source
+code or an import can request. Only the entry package's manifest grants links;
+a dependency's `[native]` table is ignored. Names use the `--link` spelling: a
+library name (`-lname`) or `:exact-file`. Option- or path-like values are
+rejected. Missing symbols and libraries are reported by name, and well-known
+prefixes suggest the library (`g_list_model_*` → `gio-2.0`). Opaque C handles are ordinary empty structs used behind pointers:
 
 ```tarn
 struct Db {}

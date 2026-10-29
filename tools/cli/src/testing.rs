@@ -65,6 +65,7 @@ pub fn run_with_sources(
     options: &Options,
     mut loaded: impl FnMut(&[std::path::PathBuf], bool),
 ) -> (ExitCode, Vec<std::path::PathBuf>) {
+    let linked = super::linked_libraries(entry, options.libraries.clone());
     let tested = crate::package_set(entry).and_then(|packages| {
         if options.bench {
             tarn_driver::testing::check_benches_with_packages(entry, packages.as_ref())
@@ -119,11 +120,18 @@ pub fn run_with_sources(
             .expect("generated test entry")
             .decl
             .id;
+        let libraries = match linked {
+            Ok(libraries) => libraries,
+            Err(error) => {
+                super::native_error(options.json, "manifest", &error);
+                return (ExitCode::from(1), paths);
+            }
+        };
         if let Err(error) = tarn_backend::build_tests(
             drops,
             result.typed.as_ref().unwrap(),
             &executable,
-            &options.libraries,
+            &libraries,
             entry,
         ) {
             super::native_error(options.json, "native", &error.to_string());

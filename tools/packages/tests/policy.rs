@@ -139,3 +139,19 @@ fn unfetched_package_names_cache_path_and_suggests_fetch() {
     assert!(error.contains(&store::cache_root(&home, &release).display().to_string()), "{error}");
     assert!(error.contains("tarn fetch"), "{error}");
 }
+#[test]
+fn manifest_declares_native_links_in_link_spelling() {
+    let base = "[package]\nname='sample'\nversion='1.0.0'\n";
+    let m = Manifest::parse(Path::new("/tmp"), &format!("{base}[native]\nlinks=['gtk-4', 'gio-2.0', ':libfoo.so.1', 'gtk-4']\n")).unwrap();
+    assert_eq!(m.links, ["gtk-4", "gio-2.0", ":libfoo.so.1"]);
+    assert!(Manifest::parse(Path::new("/tmp"), base).unwrap().links.is_empty());
+    for tail in [
+        "[native]\nlinks=['-Wl,--wrap=x']\n",
+        "[native]\nlinks=['gtk 4']\n",
+        "[native]\nlinks='gtk-4'\n",
+        "[native]\nlinks=[4]\n",
+        "[native]\nflags=['-O2']\n",
+    ] {
+        assert!(Manifest::parse(Path::new("/tmp"), &format!("{base}{tail}")).is_err(), "{tail}");
+    }
+}

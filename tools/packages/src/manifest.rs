@@ -49,6 +49,8 @@ pub struct Manifest {
     pub registry: Option<String>,
     pub dependencies: BTreeMap<String, Dependency>,
     pub policy: Policy,
+    /// `[native] links`: system C libraries this package links (ADR 0091).
+    pub links: Vec<String>,
 }
 pub fn package_name(name: &str) -> Result<()> {
     if name.is_empty()
@@ -156,7 +158,7 @@ impl Manifest {
             .map_err(|e| format!("invalid tarn.toml: {e}"))?;
         keys(
             document.as_table(),
-            &["package", "dependencies", "registry", "security"],
+            &["package", "dependencies", "registry", "security", "native"],
             "manifest",
         )?;
         let package = document
@@ -212,6 +214,7 @@ impl Manifest {
             }
         }
         let policy = policy(&document)?;
+        let links = links(&document)?;
         Ok(Self {
             root: root.into(),
             document,
@@ -221,6 +224,7 @@ impl Manifest {
             registry,
             dependencies,
             policy,
+            links,
         })
     }
     pub fn fingerprint(&self) -> String {
@@ -239,6 +243,27 @@ impl Manifest {
         })
     }
 }
+/// `[native] links = ["gtk-4", ":libfoo.so.1"]`, in the spelling of `--link`.
+fn links(document: &DocumentMut) -> Result<Vec<String>> {
+    let Some(item) = document.get("native") else { return Ok(Vec::new()) };
+    let table = item.as_table_like().ok_or("[native] must be a table")?;
+    keys(table, &["links"], "native")?;
+    let Some(item) = table.get("links") else { return Ok(Vec::new()) };
+    let array = item.as_array().ok_or("native.links must be an array of library names")?;
+    let mut out: Vec<String> = Vec::new();
+    for value in array.iter() {
+        let name = value.as_str().ok_or("native.links must contain strings")?;
+        let file = name.strip_prefix(':').unwrap_or(name);
+        if file.is_empty() || file.starts_with('-') || !file.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.+-".contains(&b)) {
+            return Err(format!("invalid library `{name}` in native.links: use a name such as `sqlite3` or an exact file such as `:libsqlite3.so.0`"));
+        }
+        if !out.iter().any(|l| l == name) {
+            out.push(name.to_owned());
+        }
+    }
+    Ok(out)
+}
+
 pub fn find(start: &Path) -> Option<PathBuf> {
     let mut path = if start.is_dir() {
         start.to_path_buf()

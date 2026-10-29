@@ -31,6 +31,8 @@ claim inferred provenance or thread capabilities.
   addresses; `ffi.offset(p, n)`/`ffi.offset_mut(p, n)` move by `n` elements;
   `ffi.vec_mut(&mut v)` points at a Vec's first element. Reads and writes
   still need `unsafe { ffi.read(p) }`.
+- C libraries go in tarn.toml, not in source: `[native]` then
+  `links = ["gtk-4", "gio-2.0"]`. A linker error names the likely library.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
   `Result.map_err(callback)` converts errors explicitly. `unwrap`, `expect(msg)`,
   `unwrap_or`, `map`,

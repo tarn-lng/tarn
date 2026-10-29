@@ -2,7 +2,8 @@
 
 Tarn targets little-endian Linux x86_64 and ARM64. Native compilation uses the
 host architecture; cross-compilation is not implemented. `tarn build` and `tarn run` require `cc`
-and system libraries explicitly granted with repeated `--link` flags.
+and system libraries granted by the package's `[native] links` in `tarn.toml`
+or by repeated `--link` flags.
 The standard library and native runtime source are embedded in the compiler.
 
 ## Entries and commands
