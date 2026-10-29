@@ -20,7 +20,9 @@ pub use tarn_ast::{CallMode, ReceiverKind};
 /// `<layer>._<operation>` (ADR 0041), e.g. `net._read` -> `read`.
 pub fn stdlib_intrinsic_operation(name: &str) -> Option<&str> {
     let (module, operation) = name.split_once("._")?;
-    tarn_resolve::STDLIB_LAYERS.contains(&module).then_some(operation)
+    // FFI memory intrinsics have a generic scalar ABI, verified separately
+    // from the fixed native I/O bridges (ADR 0080).
+    (module != "ffi" && tarn_resolve::STDLIB_LAYERS.contains(&module)).then_some(operation)
 }
 pub use ty::{FloatTy, IntTy, ParamId, Ty};
 

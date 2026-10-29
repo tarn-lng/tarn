@@ -245,6 +245,10 @@ fn rvalue_reads(rv: &Rvalue, live: &mut [bool]) {
 fn drop_reads(d: &Drop, live: &mut [bool]) {
     match d {
         Drop::Value(p) | Drop::Fields { place: p, .. } | Drop::Variants { place: p, .. } | Drop::Remaining { place: p, .. } => place_reads(p, live),
+        Drop::RemainingVec { place, cursor } => {
+            place_reads(place, live);
+            live[cursor.0 as usize] = true;
+        }
         Drop::Guard(_, d) => drop_reads(d, live),
     }
 }
@@ -309,7 +313,7 @@ fn rename_return(f: &mut post::Function, to: LocalId) {
     }
     fn drop(d: &mut Drop, fix: &impl Fn(&mut Place)) {
         match d {
-            Drop::Value(p) | Drop::Remaining { place: p, .. } => fix(p),
+            Drop::Value(p) | Drop::Remaining { place: p, .. } | Drop::RemainingVec { place: p, .. } => fix(p),
             Drop::Guard(_, d) => drop(d, fix),
             Drop::Fields { place, fields } => {
                 fix(place);

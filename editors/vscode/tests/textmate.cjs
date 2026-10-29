@@ -3,7 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
-const dependencies = path.join(path.dirname(process.execPath), 'resources/app/node_modules.asar');
+// Distribution builds (e.g. Code - OSS on a system Electron) keep the modules
+// elsewhere: TARN_VSCODE_MODULES=/usr/lib/code/node_modules.asar.
+const dependencies = process.env.TARN_VSCODE_MODULES || path.join(path.dirname(process.execPath), 'resources/app/node_modules.asar');
 const textmate = require(path.join(dependencies, 'vscode-textmate'));
 const oniguruma = require(path.join(dependencies, 'vscode-oniguruma'));
 (async () => {

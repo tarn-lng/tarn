@@ -1,0 +1,65 @@
+// Consuming and borrowed vector iteration on every exit path (ADR 0086).
+import "string"
+struct Item { name string }
+
+fn items(n i64) Vec<Item> {
+    var out: Vec<Item> = Vec.new()
+    var i: i64 = 0
+    for i < n {
+        out.push(Item{name: "item" + string.from_i64(i)})
+        i = i + 1
+    }
+    return out
+}
+
+fn find(v Vec<Item>, wanted &string) Option<string> {
+    for item in v {
+        if item.name.eq(wanted) { return Some(item.name) }
+    }
+    return None
+}
+
+fn check(v Vec<Item>) Result<i64, string> {
+    var seen: i64 = 0
+    for item in v {
+        if item.name.eq(&"item2") { return Err("stop at " + item.name) }
+        seen = seen + 1
+    }
+    return Ok(seen)
+}
+
+fn main() {
+    // Full consumption, in order.
+    for item in items(3) { print(item.name) }
+    // Break: the rest is destroyed once.
+    for item in items(4) {
+        if item.name.eq(&"item1") { break }
+        print("before break: " + item.name)
+    }
+    // Return from inside, and an early error.
+    match find(items(5), &"item3") { Some(n) => { print("found " + n) }
+        None => { print("none") } }
+    match check(items(5)) { Ok(n) => { print(n) }
+        Err(e) => { print(e) } }
+    // Continue skips without leaking.
+    for item in items(3) {
+        if item.name.eq(&"item1") { continue }
+        print("kept " + item.name)
+    }
+    // Copy elements.
+    var nums: Vec<u32> = Vec.new()
+    nums.push(4)
+    nums.push(5)
+    var total: u32 = 0
+    for n in nums { total = total + n }
+    print(total)
+    // Borrowed iteration: the vector stays usable.
+    var names = items(2)
+    for item in &names { print("ref " + item.name) }
+    for item in &mut names { item.name = item.name + "!" }
+    for item in names.as_slice() { print(item.name) }
+    print(names.len())
+    // Empty vector.
+    var none: Vec<Item> = Vec.new()
+    for item in none { print(item.name) }
+}

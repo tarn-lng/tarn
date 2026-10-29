@@ -8,6 +8,7 @@
 //! returns a node (possibly an `Error` node) and the callers resynchronize at
 //! statement or item boundaries, so one mistake produces one diagnostic.
 
+mod depth;
 mod exprs;
 mod items;
 mod patterns;
@@ -30,9 +31,15 @@ pub struct ParseResult {
 pub fn parse_file(file_id: FileId, file: &SourceFile) -> ParseResult {
     let lexed = tarn_lexer::lex(file_id, file);
     let mut p = Parser::new(file_id, lexed.tokens);
-    let module = p.parse_module();
+    let mut module = p.parse_module();
     let mut diagnostics = lexed.diagnostics;
+    // Trees past MAX_NESTING were already cut short and reported (E1020).
+    let too_deep = p.too_deep;
     diagnostics.extend(p.diags);
+    if !too_deep && let Some(d) = depth::check(&module) {
+        diagnostics.push(d);
+        depth::dismantle(&mut module);
+    }
     ParseResult { module, diagnostics, comments: lexed.comments }
 }
 

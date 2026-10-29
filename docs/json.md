@@ -43,8 +43,18 @@ than 128 is rejected rather than exhausting the stack. Invalid UTF-8 inside a
 string fails at that string's opening quote.
 
 ```tarn
-enum Value { Null, Bool(bool), Number(string), Text(string), List(Vec<Value>), Object(Vec<Member>) }
-struct Member { key string, value Value }
+enum Value {
+    Null
+    Bool(bool)
+    Number(string)
+    Text(string)
+    List(Vec<Value>)
+    Object(Vec<Member>)
+}
+struct Member {
+    key string
+    value Value
+}
 ```
 
 Numbers keep their validated source text: `as_u64`/`as_i64` convert integral

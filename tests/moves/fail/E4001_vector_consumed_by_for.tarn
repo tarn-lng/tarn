@@ -1,0 +1,7 @@
+// A consumed vector cannot be used after its loop (ADR 0086).
+fn main() {
+    var v: Vec<string> = Vec.new()
+    v.push("a")
+    for s in v { print(s) }
+    print(v.len())
+}

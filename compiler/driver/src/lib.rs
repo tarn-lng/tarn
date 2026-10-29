@@ -322,7 +322,39 @@ fn check_loaded(loaded: (Program, Vec<Diagnostic>)) -> Result<CheckResult, Strin
     check_loaded_with_bindings(loaded, &std::collections::HashMap::new())
 }
 
-fn check_loaded_with_bindings((program, mut diagnostics): (Program, Vec<Diagnostic>), generated_starts: &std::collections::HashMap<PathBuf, usize>) -> Result<CheckResult, String> {
+/// Stack for the semantic phases. They recurse over expression trees whose
+/// depth the parser bounds (MAX_NESTING, MAX_TREE_DEPTH; ADR 0081). The size is
+/// address space only: Linux commits pages as they are touched, so ordinary
+/// programs use the same memory as before.
+pub const COMPILER_STACK: usize = 256 * 1024 * 1024;
+
+/// Runs `work` on a scoped thread with `COMPILER_STACK`, so every caller (CLI,
+/// LSP, tests with 2 MiB threads) gets the same depth guarantees.
+/// Nested calls (the CLI and LSP already run `main` on it) reuse the thread.
+pub fn with_compiler_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    thread_local!(static ON_COMPILER_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if ON_COMPILER_STACK.get() {
+        return work();
+    }
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("tarn-compiler".into())
+            .stack_size(COMPILER_STACK)
+            .spawn_scoped(scope, || {
+                ON_COMPILER_STACK.set(true);
+                work()
+            })
+            .expect("cannot start the compiler thread")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+fn check_loaded_with_bindings(loaded: (Program, Vec<Diagnostic>), generated_starts: &std::collections::HashMap<PathBuf, usize>) -> Result<CheckResult, String> {
+    with_compiler_stack(move || check_loaded_on_stack(loaded, generated_starts))
+}
+
+fn check_loaded_on_stack((program, mut diagnostics): (Program, Vec<Diagnostic>), generated_starts: &std::collections::HashMap<PathBuf, usize>) -> Result<CheckResult, String> {
     let mut resolved = None;
     let mut typed = None;
     let mut ir = None;

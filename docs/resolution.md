@@ -35,7 +35,8 @@ closure captures.
 
 - Inside a module: every module-level name, regardless of declaration order.
 - From another module: `mod.name` only if `name` is `pub` (E2006). Imports
-  are never re-exported. Member access of std modules is unchecked for now.
+  are never re-exported. Embedded stdlib declarations have real members and
+  visibility checks; unmodeled bootstrap APIs reject E3040 during type checking.
 - Methods (`fn T.m`): reachable as `T.m` from anywhere `T` is reachable; `pub`
   on methods is recorded for the type checker (method visibility across
   modules is enforced when value method calls are resolved).
@@ -54,9 +55,13 @@ closure captures.
 
 ## Imports
 
-`import "p/q"` binds `q`. Resolution order: local module file
-`<root>/p/q.tarn` → standard module list → E2007 (with a "did you mean"
-for std names). Cycles are allowed. Unused imports: W2003.
+`import "p/q"` binds `q`. Local files use `<root>/p/q.tarn`; verified package
+dependencies use isolated roots, and a local/dependency ambiguity is rejected.
+Trusted stdlib modules always load embedded sources. Ordinary bundled modules
+can be overridden by local files. Missing imports fail E2007 (with spelling
+hints); see [packages](packages.md) for dependency resolution and
+[architecture](architecture.md) for stdlib layers. Local module cycles are
+allowed; package dependency cycles are rejected. Unused imports: W2003.
 
 ## Methods and impls
 

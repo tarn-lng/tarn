@@ -114,6 +114,14 @@ impl Cx<'_, '_> {
             {
                 Val { value: Some(self.pair(data, len)), ty: dest.clone() }
             }
+            // Consuming iteration (ADR 0086): move the element at the cursor
+            // out without changing the header; the IterVec drop skips it.
+            ("iter_take", 2) if *mutable && *dest == elem && args[1].ty == Ty::Int(IntTy::Usize) => {
+                let index = args[1].value.ok_or_else(|| Error::bug("vector cursor"))?;
+                self.vec_bounds(index, len);
+                let at = self.vec_element(data, index, &elem)?;
+                self.vec_take(at, &elem)?
+            }
             ("at", 2) if *dest == elem && self.t.decls.is_copy(&elem) => {
                 let index = args[1].value.ok_or_else(|| Error::bug("vector index"))?;
                 self.vec_bounds(index, len);
@@ -229,6 +237,14 @@ impl Cx<'_, '_> {
 
     /// Destroy every remaining element in index order, then free storage.
     pub(super) fn drop_vector(&mut self, addr: cl::Value, vec: &Ty) -> Result<()> {
+        let zero = self.b.ins().iconst(types::I64, 0);
+        self.drop_vector_from(addr, vec, zero)
+    }
+
+    /// Destroy the elements from `start` to the length in index order, then
+    /// free storage. Elements before `start` were moved out by a consuming
+    /// `for` loop (ADR 0086) and are not read.
+    pub(super) fn drop_vector_from(&mut self, addr: cl::Value, vec: &Ty, start: cl::Value) -> Result<()> {
         let (data_at, len_at, _, elem) = self.vec_fields(vec)?;
         let flags = cl::MemFlags::new();
         let data = self.b.ins().load(types::I64, flags, addr, data_at);
@@ -238,8 +254,7 @@ impl Cx<'_, '_> {
             let body = self.b.create_block();
             let exit = self.b.create_block();
             self.b.append_block_param(header, types::I64);
-            let zero = self.b.ins().iconst(types::I64, 0);
-            self.b.ins().jump(header, &[zero.into()]);
+            self.b.ins().jump(header, &[start.into()]);
             self.b.switch_to_block(header);
             let i = self.b.block_params(header)[0];
             let more = self.b.ins().icmp(IntCC::UnsignedLessThan, i, len);

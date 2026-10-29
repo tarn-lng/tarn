@@ -1,0 +1,52 @@
+// Consuming vector iteration in generic, inlined and async functions (ADR 0086).
+import "io"
+import "runtime"
+import "string"
+
+fn names(n i64) Vec<string> {
+    var out: Vec<string> = Vec.new()
+    var i: i64 = 0
+    for i < n {
+        out.push("n" + string.from_i64(i))
+        i = i + 1
+    }
+    return out
+}
+
+// Generic: instantiated per element type.
+fn count<T>(v Vec<T>) i64 {
+    var c: i64 = 0
+    for item in v { c = c + 1 }
+    return c
+}
+
+// Small: a candidate for inlining.
+fn first(v Vec<string>) string {
+    for s in v { return s }
+    return ""
+}
+
+async fn length(s string) i64 { return i64(s.len()) }
+
+// Awaits inside the loop: the vector and cursor live in the async frame.
+async fn total(v Vec<string>) i64 {
+    var sum: i64 = 0
+    for s in v {
+        sum = sum + await length(s)
+        if sum > 4 { return sum }
+    }
+    return sum
+}
+
+fn main() Result<void, io.Error> {
+    print(count(names(3)))
+    var nums: Vec<i64> = Vec.new()
+    nums.push(1)
+    print(count(nums))
+    print(first(names(4)))
+    print(first(Vec.new()))
+    execution := try runtime.Execution.new()
+    var op = runtime.Operation.new(&execution, total(names(6)))
+    print(try execution.block_on(&mut op))
+    return Ok(())
+}

@@ -72,7 +72,8 @@ Deliver the following boundaries in order, with independent validation:
    C structs/callbacks or GUI. This is a separate phase, not a promise of full
    desktop support.
 
-The native platform remains Linux x86_64. All measurements compare equivalent
+Native platforms are Linux x86_64 and ARM64 (ADR 0079); the original measurements
+in the foundation reports used x86_64. All measurements compare equivalent
 workloads, and failed or unexecuted validation is reported explicitly.
 
 ## Sub-phases

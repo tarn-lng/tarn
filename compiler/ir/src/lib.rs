@@ -20,6 +20,7 @@ mod instantiation;
 pub mod layout;
 mod limits;
 mod lower;
+mod loop_peel;
 pub mod post_drop;
 mod ranges;
 mod pretty;
@@ -29,6 +30,7 @@ pub use instantiation::check_instantiation_cycles;
 pub use limits::check_value_limits;
 pub use lower::lower_program;
 pub use ranges::prove_arithmetic;
+pub use loop_peel::optimize_scalar_loops;
 pub use pretty::{print_function, print_program, print_program_annotated};
 pub use verify::verify;
 
@@ -155,6 +157,11 @@ pub enum LocalKind {
     /// are moved out one by one by index; the move checker does not track
     /// them, and dropping it drops the elements not yet yielded.
     IterArray,
+    /// The vector consumed by `for x in vec` (ADR 0086). Elements are taken by
+    /// the cursor local named here, which is advanced before the body runs;
+    /// dropping it destroys the elements from the cursor on, then frees the
+    /// storage.
+    IterVec(LocalId),
     /// Storage witness tying scoped task handles to structured completion.
     TaskScopeWitness,
 }

@@ -250,6 +250,11 @@ pub fn UnixStream.write(&mut self, buffer &[]u8) Result<usize, io.Error> { retur
 pub fn UnixStream.write_all(&mut self, buffer &[]u8) Result<void, io.Error> { return self.stream.write_all(buffer) }
 pub fn UnixStream.shutdown(&mut self, how Shutdown) Result<void, io.Error> { return self.stream.shutdown(how) }
 pub fn UnixStream.close(self) Result<void, io.Error> { return self.stream.close() }
+/// The descriptor for registering with a foreign event loop (for example
+/// GLib's `g_unix_fd_add_full`). It is borrowed: the stream still owns and
+/// closes it. Remove any foreign registration before the stream is closed or
+/// destroyed, and never close the number yourself.
+pub fn UnixStream.raw_fd(&self) i32 { return self.stream.fd }
 fn _open(address SocketAddr, udp bool) Result<io._Raw, io.Error> {
     for {
         raw := _socket(address, udp)

@@ -674,6 +674,12 @@ impl<'e, 'a> FnCx<'e, 'a> {
         match &base {
             Ty::Array(e, _) | Ty::Slice(e) if through.is_some() => (self.project(e, through), self.mode(e, through)),
             Ty::Array(e, _) => ((**e).clone(), self.mode(e, None)),
+            // ADR 0086: `for x in vec` consumes the vector; through `&`/`&mut`
+            // it iterates its slice.
+            Ty::Adt(id, args) if Some(*id) == self.env.decls.vec && args.len() == 1 => {
+                let e = args[0].clone();
+                (self.project(&e, through), self.mode(&e, through))
+            }
             Ty::Opaque | Ty::Error => (Ty::Opaque, BindingMode::Copy),
             _ => (self.bad_iter(&z, span), BindingMode::Copy),
         }
@@ -684,7 +690,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
         self.err(
             Diagnostic::error("E3027", "invalid_for_iter", format!("cannot iterate over `{shown}`"))
                 .primary(span, "")
-                .note("v0 iterates over ranges `a..b`, arrays and `&` / `&mut` arrays and slices"),
+                .note("`for` iterates over ranges `a..b`, arrays, vectors and `&` / `&mut` arrays, slices and vectors"),
         );
         Ty::Error
     }
@@ -1186,7 +1192,18 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     Ty::Adt(parent, generics.iter().map(|p| map[p].clone()).collect())
                 }
                 SymbolKind::Function | SymbolKind::Method { .. } | SymbolKind::ImplMethod { .. } => {
+                    if Some(s) == self.env.decls.ffi_callback {
+                        self.err(Diagnostic::error("E3081", "invalid_c_callback", "the C callback constructor must be called directly")
+                            .primary(e.span, "use `ffi.callback(handler)` instead of storing the constructor"));
+                        return Ty::Error;
+                    }
                     let Some(sig) = self.env.decls.fns.get(&s).cloned() else { return Ty::Error };
+                    if sig.is_unsafe || sig.abi.as_deref().is_some_and(|abi| abi != "intrinsic") {
+                        self.err(Diagnostic::error("E3082", "unsafe_function_value", "an unsafe or foreign function cannot become an ordinary callable value")
+                            .primary(e.span, "the `fn` type does not preserve its unsafe call requirement")
+                            .help("call the function directly inside `unsafe`, or write a Tarn wrapper that checks its safety requirements"));
+                        return Ty::Error;
+                    }
                     let map = self.instantiate(&sig.generics);
                     if !sig.generics.is_empty() {
                         self.tables.type_args.insert(e.id, sig.generics.iter().map(|p| map[p].clone()).collect());
@@ -1223,6 +1240,11 @@ impl<'e, 'a> FnCx<'e, 'a> {
 
     fn field(&mut self, e: &Expr, base: &Expr, name: &Ident) -> Ty {
         let bt = self.expr(base, None);
+        self.field_of(e, bt, name)
+    }
+
+    /// Field type given the already-checked type `bt` of its base.
+    fn field_of(&mut self, e: &Expr, bt: Ty, name: &Ident) -> Ty {
         let (inner, through) = peel(&self.infer.zonk(&bt));
         let _ = through;
         match &inner {
@@ -1434,7 +1456,12 @@ impl<'e, 'a> FnCx<'e, 'a> {
     fn binary(&mut self, e: &Expr, op: BinaryOp, lhs: &Expr, rhs: &Expr) -> Ty {
         use BinaryOp::*;
         let lt = self.expr(lhs, None);
-        let rt = self.expr(rhs, Some(&lt));
+        // Comparisons see through references (`&u32 == 1`): the right side is
+        // checked against the referenced type, not the reference.
+        let comparison = matches!(op, Eq | Ne | Lt | Le | Gt | Ge);
+        let lz = self.infer.zonk(&lt);
+        let rhs_expected = if comparison { peel(&lz).0 } else { lt.clone() };
+        let rt = self.expr(rhs, Some(&rhs_expected));
         let (l, r) = (self.infer.shallow(&lt), self.infer.shallow(&rt));
         let numeric = |t: &Ty, cx: &Self| match t {
             Ty::Int(_) | Ty::Float(_) | Ty::Opaque | Ty::Error => true,
@@ -1486,7 +1513,10 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 Ty::Bool
             }
             Eq | Ne | Lt | Le | Gt | Ge => {
-                if !self.infer.unify(&l, &r) {
+                // Either side may be a shared reference: `&T` compares with `T`.
+                let (lz, rz) = (self.infer.zonk(&l), self.infer.zonk(&r));
+                let (lp, rp) = (peel(&lz).0, peel(&rz).0);
+                if !self.infer.unify(&lp, &rp) {
                     return fail(self, "comparison needs two values of the same type");
                 }
                 let z = self.infer.zonk(&l);
@@ -1777,7 +1807,15 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     let bt = self.expr(base, None);
                     let (inner, _) = peel(&self.infer.shallow(&bt));
                     let field = if let Ty::Adt(s, _) = inner { self.env.decls.structs.get(&s).is_some_and(|d| d.fields.iter().any(|f| f.name == name.name)) } else { false };
-                    if field { self.value_call(e, callee, args) } else { self.method_call(e, base, name, args) }
+                    // Reuse the base type: checking `base` again would double the
+                    // work at every link of a call chain (exponential time).
+                    if field {
+                        let ct = self.field_of(callee, bt, name);
+                        let ct = self.record(callee, ct);
+                        self.value_call_typed(e, callee, ct, args)
+                    } else {
+                        self.method_call(e, base, bt, name, args)
+                    }
                 },
                 _ => self.value_call(e, callee, args),
             },
@@ -1794,8 +1832,13 @@ impl<'e, 'a> FnCx<'e, 'a> {
     }
 
     fn value_call(&mut self, e: &Expr, callee: &Expr, args: &[Expr]) -> Ty {
-        self.tables.callable_calls.insert(e.id);
         let ct = self.expr(callee, None);
+        self.value_call_typed(e, callee, ct, args)
+    }
+
+    /// Call through a value whose type `ct` was already checked and recorded.
+    fn value_call_typed(&mut self, e: &Expr, callee: &Expr, ct: Ty, args: &[Expr]) -> Ty {
+        self.tables.callable_calls.insert(e.id);
         let (inner, through) = peel(&self.infer.shallow(&ct));
         match inner {
             Ty::Fn(mode, ps, r) => {
@@ -1894,6 +1937,21 @@ impl<'e, 'a> FnCx<'e, 'a> {
         }
         let what = if has_recv { format!("method `{name}`") } else { format!("`{name}`") };
         self.args(e, &what, &ps, args);
+        if Some(s) == self.env.decls.ffi_callback && let [argument] = args {
+            let mut argument = argument;
+            while let ExprKind::Paren(inner) = &argument.kind { argument = inner; }
+            let valid = match self.res(argument.id) {
+                Some(Res::Symbol(id)) => self.env.decls.fns.get(&id).is_some_and(|f| {
+                    f.abi.is_none() && !f.is_async && !f.is_unsafe && f.generics.is_empty() && f.receiver.is_none()
+                }),
+                _ => false,
+            };
+            if !valid {
+                self.err(Diagnostic::error("E3081", "invalid_c_callback", "C callback must directly name an ordinary non-generic Tarn function")
+                    .primary(argument.span, "closures, callable locals, async, unsafe and foreign functions are not supported")
+                    .help("use a named function with scalar/pointer parameters and pass context explicitly through a raw pointer"));
+            }
+        }
         let obligation_start = self.obligations.len();
         self.obligations_for(&sig.generics, &map, e.span);
         let mut evidence_updates = Vec::new();
@@ -1927,8 +1985,8 @@ impl<'e, 'a> FnCx<'e, 'a> {
         if sig.is_async { Ty::Async(Box::new(output)) } else { output }
     }
 
-    fn method_call(&mut self, e: &Expr, base: &Expr, name: &Ident, args: &[Expr]) -> Ty {
-        let bt = self.expr(base, None);
+    /// `bt` is the already-checked type of `base`; `base` is not checked again.
+    fn method_call(&mut self, e: &Expr, base: &Expr, bt: Ty, name: &Ident, args: &[Expr]) -> Ty {
         let z = self.infer.zonk(&bt);
         let (inner, through) = peel(&z);
         // Find the method.

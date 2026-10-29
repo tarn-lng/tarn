@@ -9,7 +9,7 @@ mod token;
 
 pub use token::{FPiece, Token, TokenKind, keyword};
 
-use tarn_diagnostics::{Diagnostic, FileId, SourceFile, Span};
+use tarn_diagnostics::{Diagnostic, FileId, LineCol, SourceFile, Span};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
@@ -34,6 +34,7 @@ pub fn lex(file_id: FileId, file: &SourceFile) -> LexResult {
         src: file.text.as_bytes(),
         pos: 0,
         out: LexResult::default(),
+        last: None,
     };
     lx.run();
     lx.out
@@ -45,6 +46,10 @@ struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,
     out: LexResult,
+    /// Offset and position of the previous token. Tokens arrive in order, so
+    /// a token on the same line counts characters only from there: counting
+    /// from the line start made long generated lines quadratic.
+    last: Option<(u32, LineCol)>,
 }
 
 impl<'a> Lexer<'a> {
@@ -74,7 +79,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn push_raw(&mut self, kind: TokenKind, span: Span) {
-        let lc = self.file.line_col(span.start);
+        let lc = match self.last {
+            Some((offset, prev)) if offset <= span.start && !self.src[offset as usize..span.start as usize].contains(&b'\n') => LineCol {
+                line: prev.line,
+                column: prev.column + self.file.text[offset as usize..span.start as usize].chars().count() as u32,
+            },
+            _ => self.file.line_col(span.start),
+        };
+        self.last = Some((span.start, lc));
         self.out.tokens.push(Token { kind, span, line: lc.line, column: lc.column });
     }
 

@@ -1,0 +1,16 @@
+error[E3006]: cannot apply `==` to `&u32` and `i64`
+ --> tests/types/fail/E3006_reference_comparison_mismatch.tarn:6:13
+  |
+6 |     same := v.get(0) == wide
+  |             ^^^^^^^^^^^^^^^^
+  |
+  = note: comparison needs two values of the same type
+
+error[E3006]: cannot apply `<` to `&u32` and `string`
+ --> tests/types/fail/E3006_reference_comparison_mismatch.tarn:7:13
+  |
+7 |     text := v.get(0) < "1"
+  |             ^^^^^^^^^^^^^^
+  |
+  = note: comparison needs two values of the same type
+

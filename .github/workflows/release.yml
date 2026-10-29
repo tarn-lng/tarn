@@ -7,6 +7,10 @@ on:
       tag:
         description: Existing release tag (vX.Y.Z)
         required: true
+      skip_tests:
+        description: Skip test suites for an explicitly requested build-only release
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -44,14 +48,25 @@ jobs:
       - name: Report existing formatting debt
         continue-on-error: true
         run: cargo fmt --all -- --check > formatting.log 2>&1
-      - run: cargo test --locked --release --workspace
+      - if: ${{ inputs.skip_tests != true }}
+        run: cargo test --locked --release --workspace
         env:
           # Keep Cranelift's IR verifier on for the whole test suite.
           TARN_VERIFY_CODEGEN: '1'
+      - name: Record requested validation mode
+        env:
+          SKIP_TESTS: ${{ inputs.skip_tests == true }}
+        run: |
+          if [ "$SKIP_TESTS" = true ]; then
+            echo 'Test suites intentionally skipped for this manually requested release. Compilation and artifact integrity checks remain enabled.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - run: cargo build --locked --release -p tarn -p tarn-lsp
-      - run: python3 tools/release/test-container-policy.py
-      - run: python3 tools/release/test-platform.py
-      - run: tools/release/test-install.sh
+      - if: ${{ inputs.skip_tests != true }}
+        run: python3 tools/release/test-container-policy.py
+      - if: ${{ inputs.skip_tests != true }}
+        run: python3 tools/release/test-platform.py
+      - if: ${{ inputs.skip_tests != true }}
+        run: tools/release/test-install.sh
       - run: tools/release/package.sh "$VERSION"
       - uses: actions/upload-artifact@v4
         with:
@@ -75,6 +90,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.build.outputs.tag }}
+          SKIP_TESTS: ${{ inputs.skip_tests == true }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo 'Release already exists; refusing asset replacement' >&2
@@ -86,7 +102,11 @@ jobs:
           cmp artifacts/linux-toolchain-x86_64/tools/release/install.sh artifacts/linux-toolchain-aarch64/tools/release/install.sh
           cp artifacts/linux-toolchain-x86_64/tools/release/install.sh dist/install.sh
           (cd dist; sha256sum --check --strict SHA256SUMS)
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --generate-notes \
+          EXTRA_NOTES=()
+          if [ "$SKIP_TESTS" = true ]; then
+            EXTRA_NOTES=(--notes "Validation: unit, regression, installer and container smoke test suites were intentionally skipped at the user's request. Native binaries were compiled for both supported architectures and release assets retain checksum verification.")
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --generate-notes "${EXTRA_NOTES[@]}" \
             --title "Tarn $TAG — experimental Linux x86_64 / ARM64" \
             dist/*.tar.gz dist/SHA256SUMS dist/install.sh
   container:
@@ -97,3 +117,4 @@ jobs:
     uses: ./.github/workflows/container.yml
     with:
       tag: ${{ needs.build.outputs.tag }}
+      skip_tests: ${{ inputs.skip_tests == true }}

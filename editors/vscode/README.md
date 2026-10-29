@@ -87,7 +87,12 @@ ELECTRON_RUN_AS_NODE=1 /usr/share/code/code tests/textmate.cjs
 
 The TextMate test uses the engines bundled with the local VS Code installation;
 its Electron process runs as Node without opening a window. Adjust the Code path
-for your installation. `tests/integration.cjs` is an extension-host test runner
+for your installation. Distribution builds that run Code - OSS on a system
+Electron keep the engines elsewhere; point the test at them:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 TARN_VSCODE_MODULES=/usr/lib/code/node_modules.asar electron42 tests/textmate.cjs
+``` `tests/integration.cjs` is an extension-host test runner
 for `--extensionTestsPath`, covering real activation, formatting, unsaved
 compiler diagnostics and lifecycle. Run it in a temporary workspace containing
 `main.tarn` with `fn main(){print("😀")}`, and use isolated `--user-data-dir` and

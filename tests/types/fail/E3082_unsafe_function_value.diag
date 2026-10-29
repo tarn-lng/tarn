@@ -1,0 +1,8 @@
+error[E3082]: an unsafe or foreign function cannot become an ordinary callable value
+ --> tests/types/fail/E3082_unsafe_function_value.tarn:3:14
+  |
+3 |  callable := foreign_read
+  |              ^^^^^^^^^^^^ the `fn` type does not preserve its unsafe call requirement
+  |
+  = help: call the function directly inside `unsafe`, or write a Tarn wrapper that checks its safety requirements
+

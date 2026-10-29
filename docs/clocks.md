@@ -14,7 +14,7 @@ can abort on an unrepresentable duration. Wall time can move backwards when the
 system clock changes; use Instant for intervals. UTC here means a Unix epoch
 representation, not leap-second/calendar/time-zone formatting support.
 
-The bridge uses libc clock_gettime and Linux x86_64's two-i64 timespec layout
-through unsafe FFI in the implementation. Public APIs remain safe. No time-zone
+The bridge uses libc clock_gettime and the two-i64 timespec layout on supported
+LP64 Linux x86_64/ARM64 through unsafe FFI. Public APIs remain safe. No time-zone
 database, date parser, wall-clock deadline API or platform expansion is added.
 Design: [ADR 0060](adr/0060-general-purpose-foundations.md).

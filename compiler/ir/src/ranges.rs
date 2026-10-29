@@ -507,3 +507,29 @@ fn rvalue_locals(rv: &Rvalue, out: &mut Vec<usize>) {
         }
     }
 }
+
+/// Re-run the same conservative proof on a verified executable CFG after a
+/// scalar-only loop rewrite. Destruction/flag operations are retained in the
+/// executable IR and never rewritten; only Plain arithmetic annotations are
+/// copied back from the scalar mirror. Escaped locals stay untracked.
+pub(crate) fn prove_post_function(function: &mut post_drop::Function) {
+    let mut mirror = function.decl.clone();
+    mirror.blocks = function.blocks.iter().map(|block| BasicBlock {
+        stmts: block.stmts.iter().filter_map(|statement| match &statement.op {
+            post_drop::Op::Plain(kind) => Some(Statement { kind: kind.clone(), span: statement.span }),
+            _ => None,
+        }).collect(),
+        term: block.term.clone(),
+        term_span: block.term_span,
+    }).collect();
+    prove_function(&mut mirror);
+    for (block, proved) in function.blocks.iter_mut().zip(mirror.blocks) {
+        let mut statements = proved.stmts.into_iter();
+        for statement in &mut block.stmts {
+            if let post_drop::Op::Plain(kind) = &mut statement.op {
+                *kind = statements.next().unwrap().kind;
+            }
+        }
+        debug_assert!(statements.next().is_none());
+    }
+}

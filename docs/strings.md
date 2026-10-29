@@ -57,7 +57,10 @@ is used for ordinary parse failure. These APIs use Option, not io.Error.
 The module uses functions rather than adding primitive methods outside core.
 See [ADR 0042](adr/0042-string-essentials.md) for ownership, native bridges,
 allocation tradeoffs and bootstrap limits. `Builder` (Phase 17; in `core` since
-ADR 0077) accumulates text efficiently, and `f"..."` interpolation builds on it. Offset cursors and borrowed byte views are available (Phase 32); general borrowed string values, Unicode classification and float formatting remain deferred.
+ADR 0077) accumulates text efficiently, and `f"..."` interpolation builds on it.
+Offset cursors and borrowed byte views are available (Phase 32); float parsing
+and formatting are described below (ADR 0063). Borrowed substring values and
+general Unicode classification remain outside the implemented surface.
 
 `string.fields(&text)` (Phase 31) returns owned nonempty fields separated by
 ASCII whitespace. Unicode whitespace classification remains separate work.

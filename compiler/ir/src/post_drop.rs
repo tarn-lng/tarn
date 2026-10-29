@@ -28,6 +28,9 @@ pub enum Drop {
     Variants { place: Place, variants: Vec<Vec<(u32, Drop)>> },
     /// Drop live bitmap elements in increasing index order; never read holes.
     Remaining { place: Place, flag: FlagId },
+    /// An `IterVec` local: destroy its elements from `cursor` to its length in
+    /// index order, then free the storage (ADR 0086).
+    RemainingVec { place: Place, cursor: LocalId },
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +136,23 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
     errors.extend(crate::filesystem_abi::verify(t));
     errors.extend(crate::process_abi::verify(t));
     errors.extend(crate::async_frame::verify(p, t));
+    // Only this trusted, structurally verified primitive may read an owned
+    // scalar from a raw pointer without inventing reference provenance.
+    for (id, write) in [(t.decls.ffi_read, false), (t.decls.ffi_write, true)] {
+        if let Some(id) = id {
+            let valid = t.decls.fns.get(&id).is_some_and(|sig| {
+                let [parameter] = sig.generics.as_slice() else { return false };
+                let value = Ty::Param(*parameter);
+                let params = if write { vec![Ty::Ptr(true, Box::new(value.clone())), value.clone()] }
+                    else { vec![Ty::Ptr(false, Box::new(value.clone()))] };
+                sig.abi.as_deref() == Some("intrinsic") && sig.receiver.is_none() && !sig.is_async
+                    && sig.params == params && sig.ret == if write { Ty::Void } else { value }
+                    && (write || sig.contract.result == tarn_types::ResultContract::Copy)
+                    && t.decls.copy.is_some_and(|copy| t.decls.bounds.get(parameter).is_some_and(|bounds| bounds.contains(&copy)))
+            });
+            if !valid { errors.push("invalid scalar FFI memory declaration".into()); }
+        }
+    }
     for f in &p.functions {
         let mut err = |msg: String| errors.push(format!("{}: {msg}", f.decl.name));
         if !f.decl.blocks.is_empty() {
@@ -188,6 +208,13 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
         }
         for b in &f.blocks {
             if let Terminator::Call { callee: Callee::Intrinsic(name), args, dest, .. } = &b.term {
+                if name == "ffi.callback" {
+                    let valid = matches!(args.as_slice(), [Operand::Const(Const::Fn(id, ts))]
+                        if ts.is_empty() && p.functions.get(id.0 as usize).is_some_and(|target|
+                            target.decl.kind == FnKind::Body && target.decl.generics.is_empty() && target.decl.asynchronous.is_none()))
+                        && place_ty(&f.decl, t, dest) == Some(Ty::Ptr(false, Box::new(Ty::Int(tarn_types::IntTy::U8))));
+                    if !valid { err("invalid static C callback metadata".into()); }
+                }
                 // String bridges and operators have a fixed typed ABI. Check
                 // it before native execution; no ownership is inferred here.
                 let string_ref = Ty::Ref(false, Box::new(Ty::Str));
@@ -341,14 +368,14 @@ fn drop_flags(d: &Drop, out: &mut Vec<FlagId>) {
             }
         }
         Drop::Remaining { flag, .. } => out.push(*flag),
-        Drop::Value(_) => {}
+        Drop::Value(_) | Drop::RemainingVec { .. } => {}
     }
 }
 
 fn root(d: &Drop) -> &Place {
     match d {
         Drop::Guard(_, d) => root(d),
-        Drop::Value(p) | Drop::Fields { place: p, .. } | Drop::Variants { place: p, .. } | Drop::Remaining { place: p, .. } => p,
+        Drop::Value(p) | Drop::Fields { place: p, .. } | Drop::Variants { place: p, .. } | Drop::Remaining { place: p, .. } | Drop::RemainingVec { place: p, .. } => p,
     }
 }
 fn check_drop(d: &Drop, f: &Function, t: &Typed, err: &mut impl FnMut(String)) {
@@ -372,6 +399,15 @@ fn check_drop(d: &Drop, f: &Function, t: &Typed, err: &mut impl FnMut(String)) {
         Drop::Remaining { flag, place } => {
             if !matches!(f.flags.get(flag.0 as usize), Some(FlagKind::Elements(q, _)) if q == place) {
                 err("nonexistent or inconsistent bitmap flag".into());
+            }
+        }
+        Drop::RemainingVec { place, cursor } => {
+            let kind = f.decl.locals.get(place.local.0 as usize).map(|l| l.kind);
+            if !place.proj.is_empty() || kind != Some(LocalKind::IterVec(*cursor))
+                || !matches!(&ty, Ty::Adt(s, args) if Some(*s) == t.decls.vec && args.len() == 1)
+                || f.decl.locals.get(cursor.0 as usize).is_none_or(|l| l.ty != Ty::Int(tarn_types::IntTy::Usize))
+            {
+                err("invalid iteration vector drop".into());
             }
         }
         Drop::Fields { place, fields } => {
@@ -477,5 +513,6 @@ fn print_drop(d: &Drop, pp: &crate::pretty::P<'_>) -> String {
         Drop::Remaining { place, flag } => {
             format!("destroy_remaining {} using df{}", pp.place(place), flag.0)
         }
+        Drop::RemainingVec { place, cursor } => format!("destroy_remaining {} from _{}", pp.place(place), cursor.0),
     }
 }

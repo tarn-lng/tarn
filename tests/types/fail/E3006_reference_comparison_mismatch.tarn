@@ -1,0 +1,8 @@
+// Seeing through a reference never converts numbers: `&u32` still differs from `i64`.
+fn main() {
+    var v: Vec<u32> = Vec.new()
+    v.push(1)
+    wide: i64 := 1
+    same := v.get(0) == wide
+    text := v.get(0) < "1"
+}

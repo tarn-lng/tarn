@@ -1,0 +1,8 @@
+error[E3081]: C callback must directly name an ordinary non-generic Tarn function
+ --> tests/types/fail/E3081_c_callback.tarn:4:26
+  |
+4 |  address := ffi.callback(fn(value i32) i32 { return value + captured })
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ closures, callable locals, async, unsafe and foreign functions are not supported
+  |
+  = help: use a named function with scalar/pointer parameters and pass context explicitly through a raw pointer
+

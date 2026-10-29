@@ -408,6 +408,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
             }
         }
     }
+    let c_callbacks = ffi::emit_callbacks(&mut module, p, &ids)?;
     let mut thunks = HashMap::new();
     for id in &ordered {
         let f = &p.functions[id.0 as usize].decl;
@@ -590,6 +591,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
                 f,
                 ids: &ids,
                 thunks: &thunks,
+                c_callbacks: &c_callbacks,
                 frame_drops: &frame_drops,
                 env: None,
                 environments: HashMap::new(),
@@ -690,6 +692,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
                 f: main,
                 ids: &ids,
                 thunks: &thunks,
+                c_callbacks: &c_callbacks,
                 frame_drops: &frame_drops,
                 env: None,
                 environments: HashMap::new(),
@@ -863,6 +866,7 @@ struct Cx<'a, 'b> {
     f: &'b post::Function,
     ids: &'b HashMap<FunctionId, FuncId>,
     thunks: &'b HashMap<FunctionId, FuncId>,
+    c_callbacks: &'b HashMap<FunctionId, FuncId>,
     frame_drops: &'b HashMap<FunctionId, FuncId>,
     /// Frame pointer of an async body.
     env: Option<cl::Value>,
@@ -1047,6 +1051,24 @@ impl Cx<'_, '_> {
             cl::InstructionData::UnaryImm { opcode: cl::Opcode::Iconst, imm } => Some(imm.bits()),
             _ => None,
         }
+    }
+    /// Equivalent pre-operation guards for unsigned word arithmetic with a
+    /// constant. This preserves the fault instead of proving it unnecessary;
+    /// the successful path can use an immediate add/multiply without producing
+    /// an overflow result or constraining the machine's multiply registers.
+    fn checked_unsigned_constant(&mut self, op: BinOp, x: cl::Value, y: cl::Value) -> Option<cl::Value> {
+        let (value, constant) = self.constant(y).map(|c| (x, c as u64)).or_else(|| self.constant(x).map(|c| (y, c as u64)))?;
+        let limit = match op {
+            BinOp::Add if constant != 0 => u64::MAX - constant,
+            BinOp::Mul if constant > 1 => u64::MAX / constant,
+            _ => return None,
+        };
+        let overflow = self.b.ins().icmp_imm(IntCC::UnsignedGreaterThan, value, limit as i64);
+        self.fault_if(overflow);
+        Some(match op {
+            BinOp::Add => self.b.ins().iadd_imm(value, constant as i64),
+            _ => self.b.ins().imul_imm(value, constant as i64),
+        })
     }
     /// Enter a helper block whose predecessors are all emitted, sealing it so
     /// variable reads inside it resolve without speculative block parameters.
@@ -1626,16 +1648,22 @@ impl Cx<'_, '_> {
                         BinOp::SubProven => self.b.ins().isub(x, y),
                         BinOp::MulProven => self.b.ins().imul(x, y),
                         BinOp::Add | BinOp::Sub | BinOp::Mul => {
-                            let (v, overflow) = match (op, signed) {
-                                (BinOp::Add, true) => self.b.ins().sadd_overflow(x, y),
-                                (BinOp::Add, false) => self.b.ins().uadd_overflow(x, y),
-                                (BinOp::Sub, true) => self.b.ins().ssub_overflow(x, y),
-                                (BinOp::Sub, false) => self.b.ins().usub_overflow(x, y),
-                                (BinOp::Mul, true) => self.b.ins().smul_overflow(x, y),
-                                _ => self.b.ins().umul_overflow(x, y),
-                            };
-                            self.fault_if(overflow);
-                            v
+                            if !signed && self.b.func.dfg.value_type(x) == types::I64
+                                && let Some(value) = self.checked_unsigned_constant(op, x, y)
+                            {
+                                value
+                            } else {
+                                let (v, overflow) = match (op, signed) {
+                                    (BinOp::Add, true) => self.b.ins().sadd_overflow(x, y),
+                                    (BinOp::Add, false) => self.b.ins().uadd_overflow(x, y),
+                                    (BinOp::Sub, true) => self.b.ins().ssub_overflow(x, y),
+                                    (BinOp::Sub, false) => self.b.ins().usub_overflow(x, y),
+                                    (BinOp::Mul, true) => self.b.ins().smul_overflow(x, y),
+                                    _ => self.b.ins().umul_overflow(x, y),
+                                };
+                                self.fault_if(overflow);
+                                v
+                            }
                         }
                         BinOp::Div | BinOp::Rem => {
                             // A constant divisor needs only the checks it can fail.
@@ -1656,9 +1684,9 @@ impl Cx<'_, '_> {
                             }
                             match (op, signed) {
                                 (BinOp::Div, true) => self.b.ins().sdiv(x, y),
-                                (BinOp::Div, false) => self.b.ins().udiv(x, y),
+                                (BinOp::Div, false) => super::integer_narrow::unsigned_divrem(&mut self.b, x, y, false),
                                 (BinOp::Rem, true) => self.b.ins().srem(x, y),
-                                _ => self.b.ins().urem(x, y),
+                                _ => super::integer_narrow::unsigned_divrem(&mut self.b, x, y, true),
                             }
                         }
                         BinOp::BitAnd => self.b.ins().band(x, y),
@@ -1803,6 +1831,17 @@ impl Cx<'_, '_> {
             Terminator::Call { callee, args, dest, next, spawn, .. } => {
                 if *spawn && !matches!(callee, Callee::TaskSpawn { .. }) {
                     return Err(Error::unsupported("spawn"));
+                }
+                if matches!(callee, Callee::Intrinsic(name) if name == "ffi.callback") {
+                    let [Operand::Const(Const::Fn(id, _))] = args.as_slice() else { return Err(Error::bug("C callback target missing")); };
+                    let adapter = *self.c_callbacks.get(id).ok_or_else(|| Error::bug("C callback adapter missing"))?;
+                    let adapter = self.module.declare_func_in_func(adapter, self.b.func);
+                    let address = self.b.ins().func_addr(types::I64, adapter);
+                    let ty = self.place_ty(dest)?;
+                    self.write(dest, Val { value: Some(address), ty })?;
+                    let next = next.ok_or_else(|| Error::bug("C callback missing return edge"))?;
+                    self.b.ins().jump(self.blocks[next.0 as usize], &[]);
+                    return Ok(());
                 }
                 let args = args.iter().map(|o| self.operand(o)).collect::<Result<Vec<_>>>()?;
                 let dest_ty = self.place_ty(dest)?;
@@ -2191,6 +2230,12 @@ impl Cx<'_, '_> {
                 }
                 self.b.ins().jump(next, &[]);
                 self.enter(next);
+            }
+            post::Drop::RemainingVec { place, cursor } => {
+                let ty = self.place_ty(place)?;
+                let addr = self.addr(place)?;
+                let start = self.read(&Place::local(*cursor))?.value.ok_or_else(|| Error::bug("iteration cursor"))?;
+                self.drop_vector_from(addr, &ty, start)?;
             }
             post::Drop::Remaining { place, flag } => {
                 if !matches!(self.flags[flag.0 as usize], Flag::Bits(..) | Flag::FrameBits(..)) {

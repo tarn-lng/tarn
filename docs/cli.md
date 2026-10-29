@@ -1,14 +1,17 @@
 # Integrated CLI
 
-Tarn currently targets Linux x86_64. `tarn build` and `tarn run` require `cc`
+Tarn targets little-endian Linux x86_64 and ARM64. Native compilation uses the
+host architecture; cross-compilation is not implemented. `tarn build` and `tarn run` require `cc`
 and system libraries explicitly granted with repeated `--link` flags.
 The standard library and native runtime source are embedded in the compiler.
 
 ## Entries and commands
 
-Source commands accept a file or directory. Without an entry, they use
-`./main.tarn`; a directory selects its `main.tarn`. Imports remain relative
-to the entry directory. Options may precede or follow the entry.
+Source commands accept a file or directory. For a directory or omitted entry,
+they use the nearest `tarn.toml` package entry when present, otherwise
+`main.tarn` in the selected directory. Imports remain relative to the entry
+directory; verified package dependencies have isolated module roots. Options
+may precede or follow the entry. See [packages](packages.md).
 
 ```sh
 tarn check
@@ -21,7 +24,9 @@ tarn run --watch
 Unknown options, extra entries and missing option values exit 2 with usage.
 Compilation, linking and test failures exit 1; successful commands exit 0.
 Ordinary `run` propagates the program's exit status, including signals.
-Program arguments after `--` are explicitly unsupported pending an argv API.
+`run` passes arguments after `--` verbatim to the program; read them with
+`os.args()` (including the executable name at index 0). `profile` also accepts
+program arguments after `--`. These are not compiler options.
 
 ## Tests
 
@@ -83,9 +88,27 @@ an edit to a watched source after their creation.
 records. CLI failures without source spans are `command_error` objects with
 `stage` and `message`; usage errors remain text on stderr.
 
-## Deferred commands
+## Catalog, benchmarks and profiling
 
-`fmt` belongs to Phase 20. `cache` and package commands are outside Phase 19.
+`tarn stdlib [module] --json` exposes public signatures, doc comments, source
+lines and hashes of the compiler's embedded stdlib. An old binary retains old
+declarations even if checkout files change; rebuild to refresh it.
+
+`tarn test --bench [--runs n]` selects `bench_*` functions instead of `test_*`,
+with the same signature restrictions. It runs each in isolated processes
+(default five runs) and reports median wall/CPU time and peak resident memory.
+`--filter` and `--json` are supported. Benchmarks contain their own work loops.
+
+`tarn profile app.tarn [--link lib]... [-- args...]` builds a program, runs it
+under Valgrind Callgrind and lists its 15 costliest functions by instruction
+count. Valgrind must be installed. See [ADR 0059](adr/0059-performance-tooling.md).
+
+## Packages and deferred commands
+
+Package commands (`init`, `add`, `remove`, `update`, `fetch`, `deps`, `verify`,
+`audit`, `publish`) are implemented; see [packages](packages.md). `audit`
+additionally uses exit code 3 for unknown evidence. There is no public `cache`
+command; the native runtime object already has an internal cache.
 `clean` remains a stub because build outputs live beside sources and the CLI
 has no safe artifact inventory. It must never guess which files to delete.
 

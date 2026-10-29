@@ -256,7 +256,13 @@ impl Server {
         Ok(true)
     }
 }
+/// Formatting and navigation walk syntax trees recursively, so the server
+/// runs on the compiler's large stack (ADR 0081).
 fn main() -> io::Result<()> {
+    tarn_driver::with_compiler_stack(serve)
+}
+
+fn serve() -> io::Result<()> {
     let mut server = Server::default();
     let mut input = io::BufReader::new(io::stdin().lock());
     let mut out = io::stdout().lock();
