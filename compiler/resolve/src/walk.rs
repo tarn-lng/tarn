@@ -185,6 +185,17 @@ impl<'c, 'a> Walker<'c, 'a> {
     }
 
     fn undefined(&mut self, name: &str, span: Span) {
+        // `_ = f()` from Go or Rust: Tarn discards a result by writing the
+        // expression as a statement, so `_` is never a discard target.
+        if name == "_" && !self.pending.iter().any(|(_, names)| names.contains_key(name)) {
+            self.cx.diags.push(
+                Diagnostic::error("E2001", "undefined_name", "`_` is not a discard target")
+                    .primary(span, "not a declared name")
+                    .note("an expression statement already discards its value: `f()` evaluates and drops the result")
+                    .help("remove `_ =` and keep the expression as a statement"),
+            );
+            return;
+        }
         // Declared later in an enclosing block?
         for (_, names) in self.pending.iter().rev() {
             if let Some(&decl) = names.get(name) {

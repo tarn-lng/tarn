@@ -107,6 +107,8 @@ var index = 0          // mutable, inferred
 - `var name = value` / `var name: Type = value` declares an initialized
   **mutable** binding. Without an initializer, an explicit type is required.
 - `=` assigns to an existing mutable place.
+- A call or other expression written as a statement discards its value:
+  `g_source_remove(id)`. There is no `_ = value` (E2001 explains this).
 - **Shadowing** (ADR 0009):
   - redeclaring a name in the **same scope** is an error (E2003);
   - a **nested** scope may shadow a name from an enclosing scope;

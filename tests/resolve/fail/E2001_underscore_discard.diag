@@ -1,0 +1,9 @@
+error[E2001]: `_` is not a discard target
+ --> tests/resolve/fail/E2001_underscore_discard.tarn:4:5
+  |
+4 |     _ = f()
+  |     ^ not a declared name
+  |
+  = note: an expression statement already discards its value: `f()` evaluates and drops the result
+  = help: remove `_ =` and keep the expression as a statement
+
