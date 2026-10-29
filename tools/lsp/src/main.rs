@@ -114,14 +114,33 @@ impl Server {
         Ok(())
     }
     fn format_document(&self, params: &Value) -> Result<Value, (i32, &'static str)> {
-        let file = params["textDocument"]["uri"].as_str().and_then(path).ok_or((-32602, "formatting requires a file URI"))?;
-        let text = self.buffers.get(&file).ok_or((-32803, "formatting requires an open document"))?;
-        let formatted = tarn_fmt::format(text).map_err(|error| (-32803, match error {
-            tarn_fmt::FormatError::Syntax(_) => "cannot format a document with syntax errors",
-            tarn_fmt::FormatError::Invariant => "formatter could not preserve document syntax",
-        }))?;
-        if formatted == *text { return Ok(json!([])); }
-        Ok(json!([{"range":{"start":{"line":0,"character":0},"end":position(text,text.len() as u32)},"newText":formatted}]))
+        let file = params["textDocument"]["uri"]
+            .as_str()
+            .and_then(path)
+            .ok_or((-32602, "formatting requires a file URI"))?;
+        let text = self
+            .buffers
+            .get(&file)
+            .ok_or((-32803, "formatting requires an open document"))?;
+        let formatted = tarn_fmt::format(text).map_err(|error| {
+            (
+                -32803,
+                match error {
+                    tarn_fmt::FormatError::Syntax(_) => {
+                        "cannot format a document with syntax errors"
+                    }
+                    tarn_fmt::FormatError::Invariant => {
+                        "formatter could not preserve document syntax"
+                    }
+                },
+            )
+        })?;
+        if formatted == *text {
+            return Ok(json!([]));
+        }
+        Ok(
+            json!([{"range":{"start":{"line":0,"character":0},"end":position(text,text.len() as u32)},"newText":formatted}]),
+        )
     }
     fn symbol(&self, params: &Value, definition: bool) -> Option<Value> {
         let file = path(params["textDocument"]["uri"].as_str()?)?;
@@ -197,15 +216,16 @@ impl Server {
                     self.shutdown = true;
                     Value::Null
                 }
-                "textDocument/formatting" => {
-                    match self.format_document(p) {
-                        Ok(edits) => edits,
-                        Err((code, message)) => {
-                            send(out, json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}}))?;
-                            return Ok(true);
-                        }
+                "textDocument/formatting" => match self.format_document(p) {
+                    Ok(edits) => edits,
+                    Err((code, message)) => {
+                        send(
+                            out,
+                            json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}}),
+                        )?;
+                        return Ok(true);
                     }
-                }
+                },
                 "textDocument/hover" => self.symbol(p, false).unwrap_or(Value::Null),
                 "textDocument/definition" => self.symbol(p, true).unwrap_or(Value::Null),
                 _ => {
@@ -259,7 +279,28 @@ impl Server {
 /// Formatting and navigation walk syntax trees recursively, so the server
 /// runs on the compiler's large stack (ADR 0081).
 fn main() -> io::Result<()> {
-    tarn_driver::with_compiler_stack(serve)
+    // Language clients may pass `--stdio` and `--clientProcessId=N`; stdio is the only transport.
+    match std::env::args().nth(1).as_deref() {
+        None | Some("--stdio") => tarn_driver::with_compiler_stack(serve),
+        Some(arg) if arg.starts_with("--clientProcessId") => {
+            tarn_driver::with_compiler_stack(serve)
+        }
+        Some("--version" | "-V") => {
+            println!("tarn-lsp {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Some("--help" | "-h") => {
+            println!(
+                "tarn-lsp {}\nLanguage server for Tarn over stdio.\n\nUsage: tarn-lsp [--stdio | --version | --help]",
+                env!("CARGO_PKG_VERSION")
+            );
+            Ok(())
+        }
+        Some(other) => {
+            eprintln!("tarn-lsp: unknown argument `{other}`; try --help");
+            std::process::exit(2)
+        }
+    }
 }
 
 fn serve() -> io::Result<()> {
@@ -291,7 +332,10 @@ mod tests {
 
 /// Editor checking with the project's verified package dependencies (ADR
 /// 0051). Package loading is the tool's job; the compiler receives plain data.
-fn check(file: &std::path::Path, buffers: &std::collections::HashMap<std::path::PathBuf, String>) -> Result<tarn_driver::CheckResult, String> {
+fn check(
+    file: &std::path::Path,
+    buffers: &std::collections::HashMap<std::path::PathBuf, String>,
+) -> Result<tarn_driver::CheckResult, String> {
     let packages = tarn_packages::graph::package_set(file)?;
     tarn_driver::check_editor_with_packages(file, buffers, packages.as_ref())
 }

@@ -171,3 +171,10 @@ with tempfile.TemporaryDirectory(prefix='tarn package lsp ') as directory:
     assert any('cannot be overridden' in d['message'] for d in diagnostics[-1]['diagnostics']), diagnostics[-1]
     assert cached.read_text() == 'pub fn answer() i32 { return 42 }\n'
 print('PASS: package definition navigation and locked dependency overlay refusal')
+
+binary = str(ROOT / 'target/debug/tarn-lsp')
+version = subprocess.run([binary, '--version'], capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
+assert version.returncode == 0 and version.stdout.decode().startswith('tarn-lsp '), version
+unknown = subprocess.run([binary, '--bogus'], capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
+assert unknown.returncode == 2 and b'--bogus' in unknown.stderr, unknown
+print('PASS: --version prints and exits; unknown arguments are rejected')
