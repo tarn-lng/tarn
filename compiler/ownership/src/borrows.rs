@@ -954,7 +954,7 @@ impl<'a> Fx<'a> {
                 Diagnostic::error("E4201", "reference_escapes", format!("the result of calling `{name}` may borrow from `{name}`, which is dropped when this function returns"))
                     .primary(span, "returned here")
                     .secondary(ln.span, format!("`{name}` is called here"))
-                    .note(format!("the result type may hold a reference, and a `move fn` can return a reference into its own captured values"))
+                    .note("the result type may hold a reference, and a `move fn` can return a reference into its own captured values")
                     .help(format!("take `{name}` as `once fn(...)` (the call consumes it), or as `&fn(...)` so the caller keeps it alive"))
             } else {
                 Diagnostic::error("E4201", "reference_escapes", format!("cannot return a reference to `{name}`"))
