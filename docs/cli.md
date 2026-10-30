@@ -32,30 +32,49 @@ program arguments after `--`. These are not compiler options.
 ## Tests
 
 ```sh
-tarn test
-tarn test tests/stdlib
-tarn test app/ --filter parser --timeout 2000
+tarn test                              # every test in the package
+tarn test gtk/                         # every test below a directory
+tarn test gtk/protocol_test.tarn       # one test file
+tarn test gtk/protocol.tarn            # a module's own tests and protocol_test.tarn
+tarn test --filter encode --timeout 2000
 tarn test --json
 tarn test --watch
 ```
 
-The entry module and sibling `*_test.tarn` modules contribute `fn test_*()`
-functions. A test is safe, synchronous, non-generic, takes no arguments and
-returns void or `Result<void, E>`. Tests in a module can use that module's
-private items. Sibling modules need ordinary public APIs to access application
-items. Tests in imported helper modules are not discovered automatically.
-The application's original `main` is not run by the harness.
+Tests are `fn test_*()` functions. They can live in `*_test.tarn` files
+anywhere in the package, next to the code or in a directory such as `tests/`,
+or inside any module (ADR 0093). No layout is required. The target selects
+what runs:
+
+- a directory (default: the package root) runs every `*_test.tarn` below it,
+  the package entry when it lies inside, and the inline tests of the package
+  modules those tests load;
+- a file runs its own tests, and a module `x.tarn` also runs `x_test.tarn`.
+
+Hidden directories (such as `.build`), `target` and nested packages (their own
+`tarn.toml`) are not scanned. Imports in tests resolve from the package root,
+exactly as in the application: `import "gtk/protocol"`. Tests are named by
+module path, `gtk/protocol_test.test_encode`, so equal file names in different
+directories do not clash.
+
+A test is safe, synchronous, non-generic, takes no arguments and returns void
+or `Result<void, E>`. Tests in a module can use that module's private items;
+a separate `x_test.tarn` uses its public API. The application's `main` is not
+run by the harness.
 
 The runner builds one executable and executes each selected test in a fresh
 process, in module-qualified name order. `--filter` matches a substring of
 that name. `--timeout` is a positive integer in milliseconds, default 10000.
-No selected tests is a successful empty run. Panic, Err and timeout fail that
-test and execution proceeds to the next. Tests do not need a main function.
-No special assertion API is required: use conditionals and `panic`.
+No selected tests is a successful run that says `no tests found`. Panic, Err
+and timeout fail that test and execution proceeds to the next.
+
+A failure is reported as one block: the reason (`panicked: <message>`,
+`panicked: test returned Err(Kind.Refused(3))`, `timeout after N ms`,
+`exited with code N`), then the test's stdout and stderr.
 
 Output is captured concurrently from both streams. Failed text reports show
 the captured output; JSON test records include `name`, `status` (`ok`, `FAILED`,
-`timeout`), `duration_ms`, `stdout`, `stderr`, and nullable `exit_code`/`signal` fields. A final `test_summary` object
+`timeout`), `duration_ms`, `message` (the panic message, or null), `stdout`, `stderr`, and nullable `exit_code`/`signal` fields. A final `test_summary` object
 contains `total`, `passed` and `failed`. Output is decoded strictly: an invalid
 UTF-8 stream has a null text field and a lossless `stdout_bytes` or `stderr_bytes`
 array. The byte fields are null for valid text. Failed human reports show invalid

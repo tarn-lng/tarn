@@ -200,49 +200,56 @@ pub fn run_with_sources(
         use std::os::unix::process::ExitStatusExt;
         let exit_code = status.and_then(|status| status.code());
         let signal = status.and_then(|status| status.signal());
+        // A panic aborts (signal 6) after the runtime writes `panic: <message>`
+        // to stderr; report it as the reason instead of as a raw signal.
+        let panic_message = stderr_text.and_then(|text| text.lines().rev().find_map(|l| l.strip_prefix("panic: ")).map(str::to_string));
         if options.json {
             println!(
-                "{{\"kind\":\"test\",\"name\":{},\"status\":{},\"duration_ms\":{},\"stdout\":{},\"stderr\":{},\"exit_code\":{},\"signal\":{},\"stdout_bytes\":{},\"stderr_bytes\":{}}}",
+                "{{\"kind\":\"test\",\"name\":{},\"status\":{},\"duration_ms\":{},\"message\":{},\"stdout\":{},\"stderr\":{},\"exit_code\":{},\"signal\":{},\"stdout_bytes\":{},\"stderr_bytes\":{}}}",
                 quoted(&case.name),
                 quoted(label),
                 started.elapsed().as_millis(),
+                panic_message.as_deref().map_or_else(|| "null".into(), quoted),
                 stdout_text.map_or_else(|| "null".into(), quoted),
                 stderr_text.map_or_else(|| "null".into(), quoted),
                 exit_code.map_or_else(|| "null".into(), |value| value.to_string()),
                 signal.map_or_else(|| "null".into(), |value| value.to_string()),
-                if stdout_text.is_some() {
-                    "null".into()
-                } else {
-                    format!("{stdout:?}")
-                },
-                if stderr_text.is_some() {
-                    "null".into()
-                } else {
-                    format!("{stderr:?}")
-                }
+                if stdout_text.is_some() { "null".into() } else { format!("{stdout:?}") },
+                if stderr_text.is_some() { "null".into() } else { format!("{stderr:?}") }
             );
         } else {
             println!("{} ... {label}", case.name);
             if !ok {
-                if timed_out {
-                    eprintln!("timeout after {} ms", options.timeout.as_millis());
+                // One block per failure, on one stream, so it reads in order.
+                let reason = if timed_out {
+                    format!("timeout after {} ms", options.timeout.as_millis())
+                } else if let Some(message) = &panic_message {
+                    format!("panicked: {message}")
                 } else if let Some(signal) = signal {
-                    eprintln!("terminated by signal {signal}");
-                } else if let Some(code) = exit_code {
-                    eprintln!("exited with code {code}");
-                }
-                if let Some(text) = stdout_text {
-                    print!("{text}");
+                    format!("terminated by signal {signal}")
                 } else {
-                    println!("stdout (bytes): {stdout:?}");
-                }
-                if let Some(text) = stderr_text {
-                    eprint!("{text}");
-                } else {
-                    eprintln!("stderr (bytes): {stderr:?}");
-                }
+                    format!("exited with code {}", exit_code.unwrap_or(-1))
+                };
+                println!("    {reason}");
+                let section = |name: &str, text: Option<&str>, bytes: &[u8]| {
+                    let text = match text {
+                        Some(text) => text.lines().filter(|l| panic_message.is_none() || !l.starts_with("panic: ")).collect::<Vec<_>>().join("\n"),
+                        None => format!("(bytes) {bytes:?}"),
+                    };
+                    if !text.trim().is_empty() {
+                        println!("    {name}:");
+                        for line in text.lines() {
+                            println!("      | {line}");
+                        }
+                    }
+                };
+                section("stdout", stdout_text, &stdout);
+                section("stderr", stderr_text, &stderr);
             }
         }
+    }
+    if completed == 0 && !options.json {
+        println!("no tests found; tests are `fn test_*()` in `*_test.tarn` files or in the file given to `tarn test`");
     }
     if options.json {
         println!(

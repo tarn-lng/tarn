@@ -57,7 +57,7 @@ fn reports_all_outcomes_filters_and_private_module_tests() {
     assert!(stdout.contains("\"passed\":2,\"failed\":3"));
     let output = Command::new(cli)
         .arg("test")
-        .arg(&entry)
+        .arg(&dir)
         .args(["--filter", "private"])
         .output()
         .unwrap();
@@ -106,7 +106,7 @@ fn rejects_signatures_and_keeps_ordinary_visibility() {
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tarn"))
         .arg("test")
-        .arg(&entry)
+        .arg(&dir)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -257,5 +257,56 @@ fn application_shadowing_cannot_turn_error_into_success() {
     );
     assert!(stdout.contains("must fail"), "{stdout}");
     assert!(stdout.contains("\"passed\":1,\"failed\":1"), "{stdout}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// ADR 0093: tests live anywhere in the package, imports resolve from the
+/// package root, and the target selects what runs.
+#[test]
+fn package_wide_discovery_and_target_selection() {
+    let dir = std::env::temp_dir().join(format!("tarn-cli-test-layout-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in ["gtk", "tests", ".build", "vendored"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+    write("tarn.toml", "[package]\nname = \"layout\"\nversion = \"0.1.0\"\n");
+    write("main.tarn", "import \"gtk/protocol\"\nfn main() { print(protocol.encode(1)) }\nfn test_entry() {}\n");
+    write("gtk/util.tarn", "pub fn twice(x i32) i32 { return x * 2 }\n");
+    write("gtk/protocol.tarn", "import \"gtk/util\"\npub fn encode(x i32) i32 { return util.twice(x) + 1 }\nfn test_inline() {}\n");
+    write("gtk/protocol_test.tarn", "import \"gtk/protocol\"\nfn test_encode() { if protocol.encode(2) != 5 { panic(\"bad\") } }\n");
+    write("tests/protocol_test.tarn", "import \"gtk/protocol\"\nfn test_same_stem() { if protocol.encode(0) != 1 { panic(\"bad\") } }\n");
+    write("tests/helpers_test.tarn", "pub fn helper() i32 { return 1 }\n");
+    write(".build/stale_test.tarn", "fn test_stale() { panic(\"hidden directories are not scanned\") }\n");
+    write("vendored/tarn.toml", "[package]\nname = \"vendored\"\nversion = \"0.1.0\"\n");
+    write("vendored/other_test.tarn", "fn test_nested() { panic(\"nested packages are not scanned\") }\n");
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tarn")).current_dir(&dir).arg("test").args(args).output().unwrap();
+        (output.status.code(), String::from_utf8_lossy(&output.stdout).into_owned(), String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+    let (code, stdout, stderr) = run(&[]);
+    assert_eq!(code, Some(0), "{stdout}{stderr}");
+    assert!(stderr.is_empty(), "no warnings about generated imports: {stderr}");
+    assert!(stdout.contains("4 passed; 0 failed"), "{stdout}");
+    for name in ["main.test_entry", "gtk/protocol_test.test_encode", "tests/protocol_test.test_same_stem"] {
+        assert!(stdout.contains(name), "{name}: {stdout}");
+    }
+    let (_, stdout, _) = run(&["gtk/protocol_test.tarn"]);
+    assert!(stdout.contains("1 passed") && stdout.contains("test_encode"), "{stdout}");
+    let (_, stdout, _) = run(&["gtk/protocol.tarn"]);
+    assert!(stdout.contains("2 passed") && stdout.contains("gtk/protocol.test_inline"), "{stdout}");
+    let (_, stdout, _) = run(&["tests"]);
+    assert!(stdout.contains("1 passed") && stdout.contains("test_same_stem"), "{stdout}");
+    let (_, stdout, _) = run(&["--filter", "same_stem"]);
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    write("gtk/protocol_test.tarn", "fn test_err() Result<void, i32> { return Err(7) }\nfn test_panic() {\n print(\"before\")\n panic(\"stop\")\n}\n");
+    let (code, stdout, _) = run(&["gtk"]);
+    assert_eq!(code, Some(1));
+    assert!(stdout.contains("    panicked: test returned Err(7)"), "{stdout}");
+    assert!(stdout.contains("    panicked: stop\n    stdout:\n      | before"), "{stdout}");
+    write("gtk/protocol_test.tarn", "fn helper() {}\n");
+    let (code, stdout, _) = run(&["gtk/protocol_test.tarn"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("no tests found"), "{stdout}");
     std::fs::remove_dir_all(dir).unwrap();
 }

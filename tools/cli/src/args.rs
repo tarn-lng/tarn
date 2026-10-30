@@ -81,7 +81,13 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
     }
     let default_entry = entry.is_none();
     let mut path = std::path::PathBuf::from(entry.unwrap_or_else(|| ".".into()));
-    if path.is_dir() || default_entry {
+    // `tarn test` keeps its target: a directory runs every test below it, a
+    // file only its own tests (ADR 0093). Omitted means the package root.
+    if command == "test" {
+        if default_entry {
+            path = tarn_packages::manifest::find(&path).unwrap_or(path);
+        }
+    } else if path.is_dir() || default_entry {
         let manifest = tarn_packages::manifest::find(&path).and_then(|root| tarn_packages::manifest::Manifest::read(&root).ok());
         path = match manifest {
             Some(manifest) => manifest.root.join(manifest.entry),
