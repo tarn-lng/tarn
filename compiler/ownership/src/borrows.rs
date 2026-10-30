@@ -948,6 +948,14 @@ impl<'a> Fx<'a> {
                     .secondary(ln.span, format!("`{name}` is captured by reference here"))
                     .note("captured references must remain valid for the entire returned closure lifetime")
                     .help("capture an owned value with `move fn`, or borrow from a parameter")
+            } else if ln.place.proj.is_empty() && matches!(self.f.local(ln.place.local).ty, Ty::Fn(tarn_types::CallMode::Shared | tarn_types::CallMode::Mutable, ..)) {
+                // Calling an owned callable borrows it; a `move fn` may return a
+                // reference into its own captured values, which die with it.
+                Diagnostic::error("E4201", "reference_escapes", format!("the result of calling `{name}` may borrow from `{name}`, which is dropped when this function returns"))
+                    .primary(span, "returned here")
+                    .secondary(ln.span, format!("`{name}` is called here"))
+                    .note(format!("the result type may hold a reference, and a `move fn` can return a reference into its own captured values"))
+                    .help(format!("take `{name}` as `once fn(...)` (the call consumes it), or as `&fn(...)` so the caller keeps it alive"))
             } else {
                 Diagnostic::error("E4201", "reference_escapes", format!("cannot return a reference to `{name}`"))
                     .primary(span, "returned here")

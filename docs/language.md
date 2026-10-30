@@ -271,7 +271,7 @@ the field holds a callable (`fn` type) or no method of that name exists
 Methods of a **generic type** name the type's parameters right after the type
 (ADR 0015); the names are binders, one per parameter, in order:
 
-```tarn sketch
+```tarn
 struct Pair<A, B> {
     first  A
     second B
@@ -281,10 +281,14 @@ fn Pair<A, B>.swap(self) Pair<B, A> {
     return Pair{first: self.second, second: self.first}
 }
 
-fn Pair<A, B>.map_first<C>(self, f fn(A) C) Pair<C, B> {   // own generics after the name
+fn Pair<A, B>.map_first<C>(self, f once fn(A) C) Pair<C, B> {   // own generics after the name
     return Pair{first: f(self.first), second: self.second}
 }
 ```
+
+`f` is `once fn`: calling it consumes it. A plain `fn(A) C` taken by value is
+rejected (E4201) when the result is returned, because `C` may be a reference
+into `f`'s own captured values, which die with `f`.
 
 Methods can only be declared in the module that declares the type.
 
