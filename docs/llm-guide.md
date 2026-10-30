@@ -3,6 +3,8 @@
 Use the installed compiler as the source of truth. Start with:
 
 ```sh
+tarn syntax                 # keywords and these rules, from this compiler
+tarn explain E3083          # what a diagnostic code means
 tarn stdlib --json
 tarn stdlib string --json
 tarn stdlib core --json
@@ -18,9 +20,27 @@ claim inferred provenance or thread capabilities.
 
 - Declare with `x := value` (immutable) or `var x: Type = value` (mutable).
   `var x := value` is invalid. Parameters use `x Type`.
-- `if` and `match` are statements. Return explicitly from each branch.
+- `if` is a statement. `match` is also an expression: `x := match o {` with
+  `Some(v) => v` arms; an arm block must `return`, `break`, `continue` or panic.
+- Module constants: `const PAGE u32 = 0`, `pub const NAME string = "x"`.
+  Values are literals, other constants, arithmetic/bitwise/boolean operators
+  and integer conversions (`u32(OTHER)`), checked at compile time. Constants
+  are not patterns; use a guard: `v if v == PAGE =>`.
+- Integers have `to_string()`: `code.to_string()`.
+- Raw pointers: `*mut T` passes where `*T` is expected; `p == q` compares
+  addresses; `ffi.offset(p, n)`/`ffi.offset_mut(p, n)` move by `n` elements;
+  `ffi.vec_mut(&mut v)` points at a Vec's first element. Reads and writes
+  still need `unsafe { ffi.read(p) }`.
+- C libraries go in tarn.toml, not in source: `[native]` then
+  `links = ["gtk-4", "gio-2.0"]`. A linker error names the likely library.
+- Tests: `fn test_x(t &mut testing.T)` in any `*_test.tarn` (or inside the
+  module). `t.eq(a, b)`, `t.check(cond, &"msg")`, `t.some(&o)`, `t.ok(&r)`,
+  `t.require(...)`, `t.skip(&"why")`. Imports in tests use package paths.
+  Run all with `tarn test`, a directory or a single file with `tarn test path`.
+- Panics print `at path:line:column`; `unwrap`/`expect` point at the caller.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
-  `Result.map_err(callback)` converts errors explicitly. `unwrap_or`, `map`,
+  `Result.map_err(callback)` converts errors explicitly. `unwrap`, `expect(msg)`,
+  `unwrap_or`, `map`,
   `and_then`, `is_some` and `is_ok` already exist; inspect core for exact types.
 - Generic arguments in expressions are unsupported. Let the expected type
   infer them: `var counts: collections.Map<string, u64> = collections.Map.new()`.
@@ -49,5 +69,6 @@ CSV-to-JSON command. `evidence/status_device/collector.tarn` demonstrates
 Linux proc parsing, counter resets and process identity.
 
 Unknown-member spelling suggestions already exist. A suggestion is guidance,
-not proof that the proposed API has the intended semantics. Structured fixes,
-semantic queries, explain and MCP remain milestones in phase-34-plan.md.
+not proof that the proposed API has the intended semantics. `tarn explain`
+covers registered codes; structured fixes, semantic queries and MCP remain
+milestones in phase-34-plan.md.

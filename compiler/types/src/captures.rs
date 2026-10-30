@@ -122,6 +122,15 @@ pub(crate) fn mutated_symbols(body: &Block, uses: &HashMap<NodeId, tarn_resolve:
                     }
                 }
                 ExprKind::Closure { owned: false, body, .. } => self.stmts(&body.stmts),
+                ExprKind::Match(m) => {
+                    self.expr(&m.scrutinee);
+                    for a in &m.arms {
+                        if let Some(g) = &a.guard {
+                            self.expr(g);
+                        }
+                        self.stmt(&a.body);
+                    }
+                }
                 ExprKind::Range { start, end, .. } => {
                     for x in [start, end].into_iter().flatten() {
                         self.expr(x);
@@ -231,6 +240,18 @@ pub(crate) fn consumed_symbols(body: &Block, uses: &HashMap<NodeId, tarn_resolve
                 ExprKind::Range { start, end, .. } => {
                     for e in [start, end].into_iter().flatten() {
                         self.expr(e, true);
+                    }
+                }
+                ExprKind::Match(m) => {
+                    self.expr(&m.scrutinee, m.arms.iter().any(|a| self.pattern_moves(&a.pattern)));
+                    for a in &m.arms {
+                        if let Some(g) = &a.guard {
+                            self.expr(g, true);
+                        }
+                        match &a.body.kind {
+                            StmtKind::Expr(v) => self.expr(v, moving),
+                            _ => self.stmt(&a.body),
+                        }
                     }
                 }
                 _ => {}

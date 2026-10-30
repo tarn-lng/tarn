@@ -1,0 +1,12 @@
+const BIG u8 = 300
+const LOOP_A i32 = LOOP_B + 1
+const LOOP_B i32 = LOOP_A
+const ZERO i32 = 1 / 0
+const MIX u32 = SMALL
+const SMALL u8 = 1
+const CALL i32 = f()
+const VEC Vec<i32> = 0
+fn f() i32 { return 1 }
+fn main() {
+}
+const DOWN u8 = BIG + 1

@@ -2,7 +2,7 @@ error[E1013]: expected item, found identifier `x`
  --> tests/parser/fail/E1013_statement_at_top_level.tarn:1:1
   |
 1 | x := 1
-  | ^ expected `fn`, `struct`, `enum`, `interface`, `impl` or `import`
+  | ^ expected `fn`, `const`, `struct`, `enum`, `interface`, `impl` or `import`
   |
   = note: statements must be inside a function body
 

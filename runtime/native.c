@@ -113,6 +113,11 @@ void tarn_rt_print_string(const TarnString *s) { fwrite(s->bytes, 1, s->len, std
 _Noreturn void tarn_rt_panic(const TarnString *s) {
     fputs("panic: ", stderr); fwrite(s->bytes, 1, s->len, stderr); fputc('\n', stderr); fflush(NULL); abort();
 }
+/* `panic` with its call site: "panic: <message>" then "    at <path:line:col>". */
+_Noreturn void tarn_rt_panic_at(const TarnString *s, const TarnString *at) {
+    fputs("panic: ", stderr); fwrite(s->bytes, 1, s->len, stderr);
+    fputs("\n    at ", stderr); fwrite(at->bytes, 1, at->len, stderr); fputc('\n', stderr); fflush(NULL); abort();
+}
 /* `tarn test --bench` (Phase 30): the runner asks for this process's CPU time
  * and peak memory, all threads included, reported once at normal exit. */
 static void tarn_bench_report(void) {

@@ -141,7 +141,7 @@ impl Parser {
             }
             TokenKind::If => StmtKind::If(self.parse_if()),
             TokenKind::For => self.parse_for(),
-            TokenKind::Match => self.parse_match(),
+            TokenKind::Match => StmtKind::Match(self.parse_match()),
             TokenKind::LBrace => StmtKind::Block(self.parse_block()),
             TokenKind::Unsafe => {
                 self.bump();
@@ -309,13 +309,13 @@ impl Parser {
         StmtKind::For(ForStmt { kind, body: self.parse_block() })
     }
 
-    fn parse_match(&mut self) -> StmtKind {
+    pub(crate) fn parse_match(&mut self) -> MatchStmt {
         self.bump();
         let scrutinee = self.parse_cond();
         let mut arms = Vec::new();
         let open = self.span();
         if !self.expect(&TokenKind::LBrace) {
-            return StmtKind::Match(MatchStmt { scrutinee, arms });
+            return MatchStmt { scrutinee, arms };
         }
         self.with_mode(false, |p| {
             loop {
@@ -351,7 +351,7 @@ impl Parser {
                 }
             }
         });
-        StmtKind::Match(MatchStmt { scrutinee, arms })
+        MatchStmt { scrutinee, arms }
     }
 }
 

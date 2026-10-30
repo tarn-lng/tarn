@@ -142,11 +142,60 @@ fn linker_message(stderr: &str, libraries: &[String]) -> String {
         return format!("native linker cannot find library {}; install it or pass the exact file, e.g. `--link :libname.so.0`", missing.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", "));
     }
     if !symbols.is_empty() {
-        let hint = if libraries.is_empty() { "declare the library with `--link <name>`" } else { "check the extern \"C\" names and the `--link` libraries" };
+        let mut suggested: Vec<&str> = symbols.iter().filter_map(|s| likely_library(s)).filter(|l| !libraries.iter().any(|x| x == l)).collect();
+        suggested.sort_unstable();
+        suggested.dedup();
+        let hint = if !suggested.is_empty() {
+            format!(
+                "these usually come from {}; add {} to `[native] links` in tarn.toml (or pass `--link`)",
+                suggested.iter().map(|l| format!("`{l}`")).collect::<Vec<_>>().join(", "),
+                if suggested.len() == 1 { "it" } else { "them" }
+            )
+        } else if libraries.is_empty() {
+            "declare the library in `[native] links` in tarn.toml or with `--link <name>`".to_string()
+        } else {
+            "check the extern \"C\" names and the linked libraries".to_string()
+        };
         return format!("native linker found no definition for extern \"C\" {}; {hint}", symbols.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", "));
     }
     format!("native linker failed: {stderr}")
 }
+/// The system library that usually defines a C symbol, by well-known
+/// prefixes. Only a hint for the linker message; never linked implicitly.
+fn likely_library(symbol: &str) -> Option<&'static str> {
+    const PREFIXES: &[(&str, &str)] = &[
+        ("gtk_", "gtk-4"),
+        ("gdk_", "gtk-4"),
+        ("gsk_", "gtk-4"),
+        ("adw_", "adwaita-1"),
+        ("g_application_", "gio-2.0"),
+        ("g_list_model_", "gio-2.0"),
+        ("g_list_store_", "gio-2.0"),
+        ("g_file_", "gio-2.0"),
+        ("g_settings_", "gio-2.0"),
+        ("g_dbus_", "gio-2.0"),
+        ("g_menu_", "gio-2.0"),
+        ("g_action_", "gio-2.0"),
+        ("g_simple_action_", "gio-2.0"),
+        ("g_notification_", "gio-2.0"),
+        ("g_icon_", "gio-2.0"),
+        ("g_object_", "gobject-2.0"),
+        ("g_signal_", "gobject-2.0"),
+        ("g_type_", "gobject-2.0"),
+        ("g_value_", "gobject-2.0"),
+        ("g_closure_", "gobject-2.0"),
+        ("g_param_spec_", "gobject-2.0"),
+        ("g_", "glib-2.0"),
+        ("pango_", "pango-1.0"),
+        ("cairo_", "cairo"),
+        ("sqlite3_", "sqlite3"),
+        ("curl_", "curl"),
+        ("SSL_", "ssl"),
+        ("EVP_", "crypto"),
+    ];
+    PREFIXES.iter().find(|(prefix, _)| symbol.starts_with(prefix)).map(|(_, lib)| *lib)
+}
+
 /// Flags for the embedded runtime and the final link, shared by both paths.
 const RUNTIME_FLAGS: [&str; 5] = ["-std=c11", "-O2", "-fno-strict-aliasing", "-no-pie", "-pthread"];
 
@@ -220,5 +269,16 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod linker_tests {
+    #[test]
+    fn missing_symbols_suggest_their_library() {
+        let stderr = "main.o: in function `main':\n(.text+0x1): undefined reference to `g_list_model_get_n_items'\n(.text+0x2): undefined reference to `gtk_window_new'\n";
+        let message = super::linker_message(stderr, &["gtk-4".into()]);
+        assert!(message.contains("`gio-2.0`") && !message.contains("`gtk-4`;"), "{message}");
+        assert!(super::linker_message("undefined reference to `my_own_symbol'\n", &[]).contains("[native] links"));
     }
 }

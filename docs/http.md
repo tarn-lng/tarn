@@ -44,7 +44,7 @@ Each complete request requires a response before another read. Take the await
 result into a binding before handling an error and calling reject: statement
 cleanup then releases the read future's mutable loan.
 
-```tarn
+```tarn sketch
 received := await conn.read_request(owner)
 match received {
     Ok(result) => match result {
@@ -79,7 +79,7 @@ it may mutably capture application state:
 The following fragment assumes application-defined `Store` and `route` and
 imports of `http` and `io`; it is not a standalone program.
 
-```tarn
+```tarn sketch
 fn main() Result<void, io.Error> {
     var store = Store.load(&"items.json")
     return http.serve(&"127.0.0.1:8080", fn(request &http.Request) Result<http.Response, http.Error> {

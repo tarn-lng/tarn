@@ -1,0 +1,10 @@
+struct Pair<A, B> {
+    first A
+    second B
+}
+fn Pair<A, B>.map_first<C>(self, f once fn(A) C) Pair<C, B> {
+    return Pair{first: f(self.first), second: self.second}
+}
+fn apply<A, C>(f &fn(A) C, a A) C {
+    return f(a)
+}

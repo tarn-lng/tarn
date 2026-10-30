@@ -1,0 +1,6 @@
+error[E3001]: expected `*mut i64`, found `*i64`
+ --> tests/types/fail/E3001_shared_pointer_to_mut.tarn:5:23
+  |
+5 |     var q: *mut i64 = p
+  |                       ^ this is `*i64`
+

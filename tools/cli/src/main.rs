@@ -2,6 +2,7 @@
 
 mod args;
 mod stdlib;
+mod reference;
 mod watch;
 mod process;
 mod testing;
@@ -46,6 +47,8 @@ usage:
                                      run under callgrind and list the costliest
                                      Tarn functions (requires valgrind)
     tarn stdlib [module] [--json]     discover embedded public APIs
+    tarn syntax [--json]              keywords and language rules for this compiler
+    tarn explain <code> [--json]      explain a diagnostic code, e.g. E3083
     tarn version                     print the compiler version
 
 Entry uses the nearest tarn.toml package.entry; otherwise ./main.tarn.
@@ -64,6 +67,18 @@ pub(crate) fn tool_args(args: &[String]) -> &[String] {
 /// the existing lock and cache only: it never resolves, fetches or rewrites.
 pub(crate) fn package_set(entry: &std::path::Path) -> Result<Option<tarn_driver::PackageSet>, String> {
     tarn_packages::graph::package_set(entry)
+}
+
+/// The package's `[native] links` (ADR 0091) followed by any `--link`
+/// libraries, without repeats. Only the entry's own manifest grants links.
+pub(crate) fn linked_libraries(entry: &std::path::Path, mut extra: Vec<String>) -> Result<Vec<String>, String> {
+    let mut libraries = match tarn_packages::manifest::find(entry) {
+        Some(root) => tarn_packages::manifest::Manifest::read(&root)?.links,
+        None => Vec::new(),
+    };
+    extra.retain(|l| !libraries.contains(l));
+    libraries.append(&mut extra);
+    Ok(libraries)
 }
 
 /// Check a program together with its verified package dependencies.
@@ -92,6 +107,8 @@ fn run() -> ExitCode {
     }
     match args.first().map(String::as_str) {
         Some("stdlib") => stdlib::run(&args[1..]),
+        Some("syntax") => reference::syntax(&args[1..]),
+        Some("explain") => reference::explain(&args[1..]),
         Some("lex") => cmd_lex(&args[1..]),
         Some("ast") => cmd_ast(&args[1..]),
         Some("check") => cmd_check(&args[1..], false),
@@ -308,6 +325,9 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
             _ => unreachable!("validated native option"),
         }
     }
+    let libraries = match linked_libraries(std::path::Path::new(path), libraries) {
+        Ok(l) => l, Err(e) => { native_error(json, "manifest", &e); return ExitCode::from(1); }
+    };
     let res = match check_project(std::path::Path::new(path)) {
         Ok(r) => r, Err(e) => { native_error(json, "load", &e.to_string()); return ExitCode::from(1); }
     };
@@ -365,6 +385,10 @@ fn cmd_profile(args: &[String]) -> ExitCode {
             _ => {}
         }
     }
+    let libraries = match linked_libraries(path, libraries) {
+        Ok(l) => l,
+        Err(e) => { eprintln!("error: {e}"); return ExitCode::from(1); }
+    };
     let res = match check_project(path) {
         Ok(r) => r,
         Err(e) => { eprintln!("error: {e}"); return ExitCode::from(1); }

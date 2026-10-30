@@ -21,7 +21,7 @@ tarn add greeting --registry /tmp/tarn-registry
 
 Use the package without a version in its import:
 
-```tarn
+```tarn sketch
 import "greeting"
 
 fn main() {

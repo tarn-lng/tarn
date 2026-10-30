@@ -1,0 +1,9 @@
+fn main() {
+    k: Option<i32> := Some(1)
+    b := match k {
+        Some(v) => v
+        None => {
+            print("x")
+        }
+    }
+}

@@ -1,0 +1,10 @@
+error[E4201]: the result of calling `f` may borrow from `f`, which is dropped when this function returns
+ --> tests/borrows/fail/E4201_callable_result_may_borrow_callable.tarn:2:5
+  |
+2 |     return f()
+  |     ^^^^^^^^^^ returned here
+  |            - `f` is called here
+  |
+  = note: the result type may hold a reference, and a `move fn` can return a reference into its own captured values
+  = help: take `f` as `once fn(...)` (the call consumes it), or as `&fn(...)` so the caller keeps it alive
+

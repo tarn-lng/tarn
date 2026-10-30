@@ -1,0 +1,8 @@
+const PAGE u32 = 0
+fn main() {
+    k: u32 := 0
+    match k {
+        PAGE => { print("page") }
+        _ => { print("other") }
+    }
+}

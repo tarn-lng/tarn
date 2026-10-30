@@ -1,0 +1,25 @@
+const PAGE u32 = 0
+const SLOTS usize = 8
+const SLOT_BYTES usize = 4
+const BLOCK_SIZE usize = SLOTS * SLOT_BYTES + 8
+const MASK u8 = 0xF0 | 0x0F
+const NEG i64 = -(1 << 40)
+const WIDE i64 = i64(BLOCK_SIZE)
+const NAME string = "tarn-ui-action"
+const ENABLED bool = !false && true
+const RATIO f64 = -0.25
+const LIMIT u32 = u32(SLOTS) * 2
+
+fn main() {
+    print(PAGE)
+    print(BLOCK_SIZE)
+    print(MASK)
+    print(NEG)
+    print(WIDE + 1)
+    print(NAME)
+    if ENABLED { print("enabled") }
+    print(RATIO)
+    x := LIMIT
+    var arr = [4]u32{PAGE, LIMIT, 0, 0}
+    print(arr[1] + x)
+}

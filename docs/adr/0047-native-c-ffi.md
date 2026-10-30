@@ -99,7 +99,7 @@ magic surface (contrary to ADR 0020).
   that a `sqlite` package written in Tarn hides them entirely.
 - Explicit close without destructors is ceremony relative to Go. Measure it
   in the CRUD port before designing foreign-resource destruction.
-- A `--link` flag is a temporary interface until `tarn.toml` exists.
+- A `--link` flag is a temporary interface until `tarn.toml` exists (done: ADR 0091 adds `[native] links`).
 
 ## Evidence that would change this
 

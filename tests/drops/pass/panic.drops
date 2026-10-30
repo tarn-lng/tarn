@@ -27,7 +27,7 @@ fn main [post-drop] {
     _3 = move _2
     switch copy _1 [0 => bb3, _ => bb2]
   bb2:
-    _4 = call builtin panic("abort") -> !
+    _4 = call builtin panic("abort", "../../tests/drops/pass/panic.tarn:24:9") -> !
   bb3:
     goto bb4
   bb4:

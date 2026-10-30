@@ -1,0 +1,6 @@
+import "ffi"
+fn main() {
+    var x: i64 = 1
+    p := ffi.of(&x)
+    if p < p { print("never") }
+}

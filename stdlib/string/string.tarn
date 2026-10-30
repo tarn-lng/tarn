@@ -180,47 +180,8 @@ pub fn parse_i64(value &string) Option<i64> {
 }
 
 /// Decimal formatting, including the complete unsigned range.
-pub fn from_u64(value u64) string {
-    var digits = [20]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-    var start: usize = 20
-    var number = value
-    for {
-        start = start - 1
-        digits[start] = u8(number % 10) + 48
-        number = number / 10
-        if number == 0 { break }
-    }
-    match from_utf8(&digits[start..]) {
-        Some(text) => { return text }
-        None => { panic("internal decimal encoding invariant") }
-    }
-}
-pub fn from_i64(value i64) string {
-    if value >= 0 { return from_u64(u64(value)) }
-    return negative_decimal(value)
-}
-// Keep the signed dispatch small so positive formatting retains its inline
-// fast path; only negative values need this sign-and-magnitude encoder.
-fn negative_decimal(value i64) string {
-    // Avoid negating the minimum signed value.
-    var number = u64(-(value + 1)) + 1
-    // Encode the sign and magnitude together, avoiding an intermediate owned
-    // magnitude string and a second allocation/copy for concatenation.
-    var digits = [21]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-    var start: usize = 21
-    for {
-        start = start - 1
-        digits[start] = u8(number % 10) + 48
-        number = number / 10
-        if number == 0 { break }
-    }
-    start = start - 1
-    digits[start] = 45
-    match from_utf8(&digits[start..]) {
-        Some(text) => { return text }
-        None => { panic("internal signed decimal encoding invariant") }
-    }
-}
+pub fn from_u64(value u64) string { return value.to_string() }
+pub fn from_i64(value i64) string { return value.to_string() }
 
 /// Owned remainder after an exact byte prefix; None when it does not match.
 pub fn strip_prefix(value &string, prefix &string) Option<string> {

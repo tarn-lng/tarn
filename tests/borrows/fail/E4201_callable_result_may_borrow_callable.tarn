@@ -1,0 +1,3 @@
+fn keep(f fn() &string) &string {
+    return f()
+}

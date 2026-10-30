@@ -46,7 +46,16 @@ pub enum ItemKind {
     Enum(EnumDecl),
     Interface(InterfaceDecl),
     Impl(ImplDecl),
+    Const(ConstDecl),
     Error,
+}
+
+/// `const NAME T = value` (ADR 0090): a named compile-time scalar or string.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstDecl {
+    pub name: Ident,
+    pub ty: Type,
+    pub value: Expr,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -412,6 +421,9 @@ pub enum ExprKind {
         ret: Option<Type>,
         body: Block,
     },
+    /// `match e { P => value }` in expression position (ADR 0089). Each arm
+    /// body is `StmtKind::Expr` (the arm's value) or a diverging block.
+    Match(Box<MatchStmt>),
     Error,
 }
 

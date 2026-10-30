@@ -7,6 +7,10 @@ pub fn binary_operators(module: &Module, tokens: &[&Token], out: &mut HashSet<u3
     for item in &module.items {
         match &item.kind {
             ItemKind::Fn(f) => function(f, tokens, out),
+            ItemKind::Const(c) => {
+                ty(&c.ty, tokens, out);
+                expr(&c.value, tokens, out);
+            }
             ItemKind::Struct(s) => {
                 for field in &s.fields {
                     ty(&field.ty, tokens, out);
@@ -199,6 +203,16 @@ fn expr(e: &Expr, tokens: &[&Token], out: &mut HashSet<u32>) {
             ty(t, tokens, out);
             for e in elems {
                 expr(e, tokens, out);
+            }
+        }
+        ExprKind::Match(m) => {
+            expr(&m.scrutinee, tokens, out);
+            for arm in &m.arms {
+                pattern(&arm.pattern, tokens, out);
+                if let Some(e) = &arm.guard {
+                    expr(e, tokens, out);
+                }
+                stmt(&arm.body, tokens, out);
             }
         }
         ExprKind::Closure {

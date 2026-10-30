@@ -538,6 +538,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
         ("tarn_rt_print_bool", vec![types::I8], vec![]),
         ("tarn_rt_print_string", vec![types::I64], vec![]),
         ("tarn_rt_panic", vec![types::I64], vec![]),
+        ("tarn_rt_panic_at", vec![types::I64, types::I64], vec![]),
         ("tarn_rt_fault", vec![], vec![]),
     ] {
         let mut sig = module.make_signature();
@@ -1625,6 +1626,7 @@ impl Cx<'_, '_> {
                 ),
                 _ => return Err(Error::unsupported("floating-point remainder/bit operation")),
             },
+            Ty::Ptr(..) if matches!(op, BinOp::Eq | BinOp::Ne) => self.b.ins().icmp(if op == BinOp::Eq { IntCC::Equal } else { IntCC::NotEqual }, x, y),
             Ty::Int(_) | Ty::Bool => {
                 let signed = matches!(a.ty,Ty::Int(i) if i.signed());
                 if cmp {
@@ -2044,15 +2046,19 @@ impl Cx<'_, '_> {
                         Val { value: None, ty: Ty::Void }
                     }
                     Callee::Builtin(Builtin::Panic) => {
-                        if args.len() != 1 {
+                        if !matches!(args.len(), 1 | 2) {
                             return Err(Error::bug("panic arity"));
                         }
-                        let v = match &args[0].ty {
-                            Ty::Str => args[0].value.unwrap(),
-                            Ty::Ref(_, x) if **x == Ty::Str => self.b.ins().load(types::I64, cl::MemFlags::new(), args[0].value.unwrap(), 0),
-                            _ => return Err(Error::unsupported("panic nonstring")),
-                        };
-                        self.runtime("tarn_rt_panic", &[v]);
+                        let mut texts = Vec::new();
+                        for arg in &args {
+                            texts.push(match &arg.ty {
+                                Ty::Str => arg.value.unwrap(),
+                                Ty::Ref(_, x) if **x == Ty::Str => self.b.ins().load(types::I64, cl::MemFlags::new(), arg.value.unwrap(), 0),
+                                _ => return Err(Error::unsupported("panic nonstring")),
+                            });
+                        }
+                        // The optional second text is the call site (ADR 0094).
+                        self.runtime(if texts.len() == 2 { "tarn_rt_panic_at" } else { "tarn_rt_panic" }, &texts);
                         self.b.ins().trap(cl::TrapCode::user(1).unwrap());
                         return Ok(());
                     }

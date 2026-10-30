@@ -1,0 +1,2 @@
+Pair.map_first -> borrows from {self, f}
+apply -> borrows from {f, a}

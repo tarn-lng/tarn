@@ -74,7 +74,7 @@ default), `Stdio.Null` (/dev/null) or `Stdio.Piped`. `output()` keeps its
 
 `Piped` requires `start_child()`, which returns:
 
-```tarn
+```tarn sketch
 pub struct Child {
     pub stdin Option<ChildStdin>
     pub stdout Option<ChildStdout>
@@ -119,7 +119,7 @@ launches, on success or failure, even if the Launch was kept in a variable.
 The peer sees end of stream once the child exits. Using a Launch twice is a
 use-after-move error (E4001). More than 64 handoffs are InvalidInput.
 
-```tarn
+```tarn sketch
 pair := try net.UnixStream.pair()
 var channel = pair.first
 var child = try process.Command.new("server").arg("--fd=3").stdout(process.Stdio.Null).pass(pair.second).start()

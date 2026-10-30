@@ -1,0 +1,37 @@
+struct Native {
+    window i64
+}
+fn Native.window(&self) i64 {
+    return self.window + 1
+}
+fn run_native() {
+    n := Native{window: 41}
+    print(n.window)
+    print(n.window())
+}
+struct Handler {
+    run fn(i64) i64
+    count i64
+}
+fn Handler.count(&self) i64 {
+    return self.count * 10
+}
+struct Box<T> {
+    value T
+}
+fn Box<T>.value(&self) &T {
+    return &self.value
+}
+fn double(x i64) i64 { return x * 2 }
+fn show(h &Handler) {
+    print(h.run(5))
+    print(h.count())
+    print(h.count)
+}
+fn main() {
+    run_native()
+    h := Handler{run: double, count: 3}
+    show(&h)
+    b := Box{value: 7}
+    print(*b.value())
+}

@@ -1,0 +1,5 @@
+import "string"
+fn name(x string) string { return x }
+fn main() {
+    print(name("a"))
+}

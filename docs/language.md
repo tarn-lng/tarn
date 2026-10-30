@@ -67,7 +67,7 @@ keep in sync). See ADR 0004.
 
 This example assumes a local `app/config.tarn` exporting `load`:
 
-```tarn
+```tarn sketch
 import "fs"
 import "process"
 import "app/config"     // local module app/config.tarn
@@ -196,7 +196,7 @@ fn log(message string) {        // returns void
 
 ## 6. Control flow
 
-```tarn
+```tarn sketch
 if x > 0 {
     print("positive")
 } else if x < 0 {
@@ -220,9 +220,9 @@ for { }                  // infinite
   yet yielded, once and in order, and frees the storage. There is no extra pass
   over the elements ([ADR 0086](adr/0086-consuming-vector-iteration.md)).
 - Braces are mandatory; parentheses around conditions are not used.
-- `if`, `for` and `match` are statements; they do not produce values. A
-  value-dependent result is written with a mutable binding or a `return`
-  from each branch (provisional; see open questions in the roadmap).
+- `if` and `for` are statements; they do not produce values. `match` is a
+  statement at the start of a line and an expression anywhere a value is
+  expected (`x := match ...`, `return match ...`, arguments; ADR 0089).
 - Struct literals are not allowed directly in `if`/`for`/`match` heads; wrap
   them in parentheses (avoids the `if x == P{...} {` ambiguity).
 
@@ -263,6 +263,11 @@ copy types.
 The declaration mirrors the call site: `User.new("ana")`, `u.greet()`.
 There is no `impl` block for inherent methods.
 
+A method may share a field's name: `n.window` reads the field and
+`n.window()` calls the method. A call `x.name(...)` uses the field only when
+the field holds a callable (`fn` type) or no method of that name exists
+(ADR 0092).
+
 Methods of a **generic type** name the type's parameters right after the type
 (ADR 0015); the names are binders, one per parameter, in order:
 
@@ -276,15 +281,36 @@ fn Pair<A, B>.swap(self) Pair<B, A> {
     return Pair{first: self.second, second: self.first}
 }
 
-fn Pair<A, B>.map_first<C>(self, f fn(A) C) Pair<C, B> {   // own generics after the name
+fn Pair<A, B>.map_first<C>(self, f once fn(A) C) Pair<C, B> {   // own generics after the name
     return Pair{first: f(self.first), second: self.second}
 }
 ```
+
+`f` is `once fn`: calling it consumes it. A plain `fn(A) C` taken by value is
+rejected (E4201) when the result is returned, because `C` may be a reference
+into `f`'s own captured values, which die with `f`.
 
 Methods can only be declared in the module that declares the type.
 
 Struct literal: `User{name: "ana", age: 30}`. All fields must be given.
 Field shorthand `User{name, age}` is allowed when a local of the same name exists.
+
+## Constants
+
+```tarn
+const SLOTS usize = 8
+pub const BLOCK_SIZE usize = SLOTS * 4 + 8
+const NAME string = "tarn-ui-action"
+```
+
+- `const NAME Type = value` at module level; `pub` exports it. The type is
+  required and must be an integer, float, `bool` or `string`.
+- The value is evaluated at compile time from literals, other constants,
+  arithmetic, bitwise and boolean operators, and integer conversions such as
+  `u32(SLOTS)`. Overflow, division by zero, values that do not fit and cycles
+  are compile errors (E3084).
+- A use is the value itself; a constant cannot be assigned. Constants are not
+  patterns yet: write `v if v == SLOTS =>`.
 
 ## 8. Enums and pattern matching
 
@@ -310,6 +336,16 @@ fn area(s &Shape) f64 {
   available unqualified.
 - `match` must be exhaustive. `_` is the wildcard.
 - Arms are `pattern => statement` or `pattern => { block }`, one per line.
+- In a `match` expression each arm is `pattern => value`, or a block that
+  never reaches its end (`return`, `break`, `continue`, `panic`). There is no
+  implicit last-expression value:
+
+  ```tarn sketch
+  ui := match native.create(config) {
+      Ok(value) => value
+      Err(error) => { return Err(error) }
+  }
+  ```
 - In patterns, a **capitalized** name (`Empty`, `Circle(r)`) is a variant and
   a lowercase name (`n`) is a new binding (ADR 0014). Variant names must
   start with an uppercase letter.
@@ -357,7 +393,7 @@ Summary (full rules in `ownership.md`):
 
 ## 11. Generics
 
-```tarn
+```tarn sketch
 fn identity<T>(value T) T {
     return value
 }
@@ -373,7 +409,7 @@ No explicit turbofish; this keeps `<` unambiguous for the parser.
 
 ## 12. Interfaces
 
-```tarn
+```tarn sketch
 interface Writer {
     fn write(&mut self, data &[]u8) Result<usize, Error>
 }
@@ -449,7 +485,7 @@ See [ADR 0033](adr/0033-safe-native-tasks.md), accepted for Phase 11, and
 
 ## 13c. Async functions (Phase 13)
 
-```tarn
+```tarn sketch
 async fn handle(stream &mut net.TcpStream) Result<usize, io.Error> {
     var bytes = [16]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
     count := try await stream.read_async(&mut bytes)
@@ -473,7 +509,7 @@ current state owns. A completed computation must not be polled again (abort).
 
 Computations run on the Phase-12C executor model. Drive one explicitly:
 
-```tarn
+```tarn sketch
 execution := try runtime.Execution.new()
 var app = runtime.Operation.new(&execution, handle(&mut stream))
 count := try try execution.block_on(&mut app)

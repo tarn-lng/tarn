@@ -150,7 +150,7 @@
         },
         {
           "name": "keyword.other.tarn",
-          "match": "\\b(async|fn|struct|enum|interface|impl|copy|var|mut|pub|import|unsafe|extern)\\b"
+          "match": "\\b(async|fn|const|struct|enum|interface|impl|copy|var|mut|pub|import|unsafe|extern)\\b"
         },
         {
           "name": "constant.language.boolean.tarn",

@@ -1,0 +1,26 @@
+import "ffi"
+
+fn first(values *i64) i64 {
+    unsafe { return ffi.read(values) }
+}
+fn main() {
+    var data = [3]i64{5, 9, 11}
+    p := ffi.of_mut(&mut data[0])
+    last := ffi.offset_mut(p, 2)
+    unsafe { ffi.write(last, 12) }
+    print(first(p))
+    print(first(ffi.offset(p, 2)))
+    if p != last { print("distinct") }
+    if ffi.offset_mut(p, 2) == last { print("same") }
+    if !ffi.is_null(p) { print("live") }
+    var v: Vec<u32> = Vec.new()
+    v.push(1)
+    v.push(2)
+    unsafe { ffi.write(ffi.offset_mut(ffi.vec_mut(&mut v), 1), 20) }
+    unsafe { print(ffi.read(ffi.offset(ffi.vec(&v), 1)).to_string()) }
+    print(Some(3).unwrap())
+    var r: Result<i32, string> = Ok(4)
+    print(r.expect("present"))
+    var n: i32 = -17
+    print(n.to_string())
+}

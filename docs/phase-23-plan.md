@@ -73,7 +73,7 @@ when called incorrectly), native tests passing constructors to
 
 Rewrite both CRUDs with 23A+23B, for example:
 
-```tarn
+```tarn sketch
 try store.save().map_err(http.Error.Io)
 ```
 

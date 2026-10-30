@@ -218,7 +218,7 @@ fn test_watch_observes_added_removed_and_changed_test_files() {
     std::fs::create_dir_all(&dir).unwrap();
     let entry = dir.join("main.tarn");
     std::fs::write(&entry, "fn main() {}\nfn test_first() {}\n").unwrap();
-    let session = Session::start_command(&entry, false, "test");
+    let session = Session::start_command(&dir, false, "test");
     let summary = |expected: &str| {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {

@@ -34,6 +34,20 @@ pub fn Option<T>.unwrap_or(self, fallback T) T {
         None => { return fallback }
     }
 }
+/// The value; panics when empty, reporting the caller's line.
+pub fn Option<T>.unwrap(self, at Location) T {
+    match self {
+        Some(value) => { return value }
+        None => { panic("called `unwrap` on `None`", &at) }
+    }
+}
+/// The value; panics with `message` when empty, reporting the caller's line.
+pub fn Option<T>.expect(self, message string, at Location) T {
+    match self {
+        Some(value) => { return value }
+        None => { panic(message, &at) }
+    }
+}
 /// `Ok(value)`, or `Err(error)` when empty.
 pub fn Option<T>.ok_or<E>(self, error E) Result<T, E> {
     match self {
@@ -59,6 +73,21 @@ pub fn Result<T, E>.ok(self) Option<T> {
     match self {
         Ok(value) => { return Some(value) }
         Err(error) => { return None }
+    }
+}
+/// The success value; panics on an error, which is destroyed, reporting the
+/// caller's line.
+pub fn Result<T, E>.unwrap(self, at Location) T {
+    match self {
+        Ok(value) => { return value }
+        Err(error) => { panic("called `unwrap` on `Err`", &at) }
+    }
+}
+/// The success value; panics with `message` on an error.
+pub fn Result<T, E>.expect(self, message string, at Location) T {
+    match self {
+        Ok(value) => { return value }
+        Err(error) => { panic(message, &at) }
     }
 }
 pub fn Result<T, E>.unwrap_or(self, fallback T) T {
@@ -468,6 +497,57 @@ pub extern "intrinsic" fn string.copy_range(&self, start usize, end usize) strin
 /// Validate UTF-8 and copy the bytes into a new owner; invalid input is None.
 pub extern "intrinsic" fn string_from_utf8(data &[]u8) Option<string>
 
+/// Decimal formatting, including the complete unsigned range.
+pub fn u64.to_string(self) string {
+    var digits = [20]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+    var start: usize = 20
+    var number = self
+    for {
+        start = start - 1
+        digits[start] = u8(number % 10) + 48
+        number = number / 10
+        if number == 0 { break }
+    }
+    match string_from_utf8(&digits[start..]) {
+        Some(text) => { return text }
+        None => { panic("internal decimal encoding invariant") }
+    }
+}
+pub fn i64.to_string(self) string {
+    if self >= 0 { return u64(self).to_string() }
+    return _negative_decimal(self)
+}
+// Keep the signed dispatch small so positive formatting retains its inline
+// fast path; only negative values need this sign-and-magnitude encoder.
+fn _negative_decimal(value i64) string {
+    // Avoid negating the minimum signed value.
+    var number = u64(-(value + 1)) + 1
+    // Encode the sign and magnitude together, avoiding an intermediate owned
+    // magnitude string and a second allocation/copy for concatenation.
+    var digits = [21]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+    var start: usize = 21
+    for {
+        start = start - 1
+        digits[start] = u8(number % 10) + 48
+        number = number / 10
+        if number == 0 { break }
+    }
+    start = start - 1
+    digits[start] = 45
+    match string_from_utf8(&digits[start..]) {
+        Some(text) => { return text }
+        None => { panic("internal signed decimal encoding invariant") }
+    }
+}
+pub fn i8.to_string(self) string { return i64(self).to_string() }
+pub fn i16.to_string(self) string { return i64(self).to_string() }
+pub fn i32.to_string(self) string { return i64(self).to_string() }
+pub fn isize.to_string(self) string { return i64(self).to_string() }
+pub fn u8.to_string(self) string { return u64(self).to_string() }
+pub fn u16.to_string(self) string { return u64(self).to_string() }
+pub fn u32.to_string(self) string { return u64(self).to_string() }
+pub fn usize.to_string(self) string { return u64(self).to_string() }
+
 // ------------------------------------------------ text building (ADR 0077)
 /// Linear-time owned text accumulation. Only complete strings and checked
 /// scalar ranges are appended, so the result is valid UTF-8 by construction;
@@ -547,3 +627,12 @@ impl Display for u64 { fn display(&self, out &mut Builder) { out.push_u64(*self)
 impl Display for usize { fn display(&self, out &mut Builder) { out.push_u64(u64(*self)) } }
 impl Display for bool { fn display(&self, out &mut Builder) { out.push_bool(*self) } }
 impl Display for string { fn display(&self, out &mut Builder) { out.push(self) } }
+
+/// A source position, `path:line:column`. A function whose last parameter is
+/// a `Location` may be called without it: the compiler passes the call site,
+/// so helpers report the caller's line (ADR 0094).
+pub struct Location {
+    text string
+}
+pub fn Location.text(&self) &string { return &self.text }
+impl Display for Location { fn display(&self, out &mut Builder) { out.push(&self.text) } }

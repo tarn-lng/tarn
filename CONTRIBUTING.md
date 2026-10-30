@@ -62,3 +62,21 @@ See [CONTRIBUTORS.md](CONTRIBUTORS.md) for everyone who has contributed, and how
 Unless you explicitly state otherwise, any contribution you intentionally submit
 for inclusion in Tarn is dual-licensed under the MIT and Apache-2.0 licenses,
 without any additional terms or conditions.
+
+## Keeping the CLI reference and docs in sync
+
+Agents learn Tarn from the compiler (`tarn syntax`, `tarn explain`, `tarn stdlib`).
+Most of it updates itself from the sources compiled into the binary:
+
+- `tarn stdlib` and the stdlib index in `tarn syntax` are read from `stdlib/`.
+  Adding or renaming a public item, or editing its doc comment, needs no other change.
+- The keywords in `tarn syntax` come from the lexer's `KEYWORDS` table.
+- `docs/llm-guide.md` and `docs/errors.md` are embedded, so `cargo build` picks up edits.
+
+The test suite guards the remaining hand-written parts:
+
+- `every_emitted_code_is_explained` fails when the compiler emits a code that
+  `docs/errors.md` (and so `tarn explain`) does not document.
+- `documentation_examples_match_the_compiler` checks every ```` ```tarn ```` block
+  in `docs/*.md`. Mark illustrative fragments ```` ```tarn sketch ````, and
+  examples that must be rejected ```` ```tarn error=E1234 ````.

@@ -353,6 +353,7 @@ impl Parser {
     fn parse_primary(&mut self) -> Expr {
         let start = self.span();
         let kind = match self.peek().clone() {
+            TokenKind::Match => ExprKind::Match(Box::new(self.parse_match())),
             TokenKind::Int(v) => {
                 self.bump();
                 ExprKind::Int(v)

@@ -1,0 +1,8 @@
+warning[W2003]: unused import `string`
+ --> tests/resolve/pass/unused_import_type_spelling.tarn:1:8
+  |
+1 | import "string"
+  |        ^^^^^^^^
+  |
+  = help: remove the import
+

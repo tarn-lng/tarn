@@ -18,6 +18,7 @@ const ORDINARY_STDLIB: &[(&str, &str)] = &[
     ("json", include_str!("../../../stdlib/json/json.tarn")),
     ("os", include_str!("../../../stdlib/os/os.tarn")),
     ("console", include_str!("../../../stdlib/console/console.tarn")),
+    ("testing", include_str!("../../../stdlib/testing/testing.tarn")),
     ("https", include_str!("../../../stdlib/https/https.tarn")),
     ("collections", include_str!("../../../stdlib/collections/collections.tarn")),
     ("csv", include_str!("../../../stdlib/csv/csv.tarn")),
@@ -180,7 +181,7 @@ fn load_editor_sources(entry: &Path, overlays: &std::collections::HashMap<PathBu
     load_sources(entry, None, overlays, editor, packages)
 }
 
-fn load_sources(entry: &Path, module_root: Option<&Path>, overlays: &std::collections::HashMap<PathBuf, String>, editor: bool, packages: Option<&PackageSet>) -> Result<(Program, Vec<Diagnostic>), String> {
+pub(crate) fn load_sources(entry: &Path, module_root: Option<&Path>, overlays: &std::collections::HashMap<PathBuf, String>, editor: bool, packages: Option<&PackageSet>) -> Result<(Program, Vec<Diagnostic>), String> {
     let official_entry = if editor {
         entry.canonicalize().ok().and_then(|entry| stdlib_modules().into_iter().find(|name|
             official_stdlib_path(name).canonicalize().ok().as_ref() == Some(&entry)))
@@ -333,7 +334,7 @@ pub fn check_editor_in_root(entry: &Path, root: &Path, overlays: &std::collectio
     check_loaded(load_sources(entry, Some(root), overlays, true, packages)?)
 }
 
-fn check_loaded(loaded: (Program, Vec<Diagnostic>)) -> Result<CheckResult, String> {
+pub(crate) fn check_loaded(loaded: (Program, Vec<Diagnostic>)) -> Result<CheckResult, String> {
     check_loaded_with_bindings(loaded, &std::collections::HashMap::new())
 }
 
@@ -365,7 +366,7 @@ pub fn with_compiler_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
     })
 }
 
-fn check_loaded_with_bindings(loaded: (Program, Vec<Diagnostic>), generated_starts: &std::collections::HashMap<PathBuf, usize>) -> Result<CheckResult, String> {
+pub(crate) fn check_loaded_with_bindings(loaded: (Program, Vec<Diagnostic>), generated_starts: &std::collections::HashMap<PathBuf, usize>) -> Result<CheckResult, String> {
     with_compiler_stack(move || check_loaded_on_stack(loaded, generated_starts))
 }
 
@@ -387,7 +388,7 @@ fn check_loaded_on_stack((program, mut diagnostics): (Program, Vec<Diagnostic>),
             let (t, d) = tarn_types::check(&inputs, &r);
             diagnostics.extend(d);
             if !errors(&diagnostics) {
-                let (mut p, d) = tarn_ir::lower_program(&inputs, &r, &t);
+                let (mut p, d) = tarn_ir::lower_program_located(&inputs, &r, &t, Some(&program.sources));
                 tarn_ir::prove_arithmetic(&mut p);
                 diagnostics.extend(d);
                 diagnostics.extend(tarn_ir::check_instantiation_cycles(&p, &t, &r));

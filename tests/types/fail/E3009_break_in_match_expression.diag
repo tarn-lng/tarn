@@ -1,0 +1,10 @@
+error[E3009]: function `f` may end without returning `i32`
+ --> tests/types/fail/E3009_break_in_match_expression.tarn:9:1
+  |
+1 | fn f(a i32) i32 {
+  |             --- returns `i32`
+9 | }
+  | ^ can reach the end here
+  |
+  = help: add a `return` on every path, or end with `panic(...)`
+

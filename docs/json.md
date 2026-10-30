@@ -7,7 +7,7 @@ local `json.tarn` overrides it. Design: [ADR 0048](adr/0048-application-ergonomi
 
 Types opt in explicitly; there is no reflection or derive.
 
-```tarn
+```tarn sketch
 impl json.Encode for Item {
     fn encode(&self, out &mut json.Writer) {
         out.begin_object()

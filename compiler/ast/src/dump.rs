@@ -43,6 +43,13 @@ impl Dumper {
                 let _ = write!(self.out, "(import {:?})", i.path);
             }
             ItemKind::Fn(f) => self.func(f, p, ind),
+            ItemKind::Const(c) => {
+                let _ = write!(self.out, "({p}const {} ", c.name.name);
+                self.ty(&c.ty);
+                self.s(" ");
+                self.expr(&c.value, ind);
+                self.s(")");
+            }
             ItemKind::Struct(s) => {
                 let _ = write!(self.out, "({p}{}struct {}", if s.is_copy { "copy " } else { "" }, s.name.name);
                 self.generics(&s.generics);
@@ -249,6 +256,24 @@ impl Dumper {
         self.s(")");
     }
 
+    fn match_(&mut self, m: &MatchStmt, ind: usize) {
+        self.s("(match ");
+        self.expr(&m.scrutinee, ind);
+        for arm in &m.arms {
+            self.nl(ind + 1);
+            self.s("(");
+            self.pattern(&arm.pattern);
+            if let Some(g) = &arm.guard {
+                self.s(" if ");
+                self.expr(g, ind + 1);
+            }
+            self.s(" => ");
+            self.stmt(&arm.body, ind + 1);
+            self.s(")");
+        }
+        self.s(")");
+    }
+
     fn stmt(&mut self, st: &Stmt, ind: usize) {
         match &st.kind {
             StmtKind::Let { mutable, name, ty, value } => {
@@ -302,23 +327,7 @@ impl Dumper {
                 self.block(&f.body, ind + 1);
                 self.s(")");
             }
-            StmtKind::Match(m) => {
-                self.s("(match ");
-                self.expr(&m.scrutinee, ind);
-                for arm in &m.arms {
-                    self.nl(ind + 1);
-                    self.s("(");
-                    self.pattern(&arm.pattern);
-                    if let Some(g) = &arm.guard {
-                        self.s(" if ");
-                        self.expr(g, ind + 1);
-                    }
-                    self.s(" => ");
-                    self.stmt(&arm.body, ind + 1);
-                    self.s(")");
-                }
-                self.s(")");
-            }
+            StmtKind::Match(m) => self.match_(m, ind),
             StmtKind::Block(b) => self.block(b, ind),
             StmtKind::Unsafe(b) => {
                 self.s("(unsafe ");
@@ -471,6 +480,7 @@ impl Dumper {
                 self.exprs(elems, ind);
                 self.s(")");
             }
+            ExprKind::Match(m) => self.match_(m, ind),
             ExprKind::Closure { owned, params, ret, body } => {
                 self.s(if *owned { "(move-closure (" } else { "(closure (" });
                 for (i, p) in params.iter().enumerate() {

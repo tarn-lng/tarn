@@ -1,0 +1,6 @@
+import "ffi"
+fn main() {
+    var x: i64 = 1
+    p := ffi.of(&x)
+    var q: *mut i64 = p
+}

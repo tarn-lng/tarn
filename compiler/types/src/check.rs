@@ -143,7 +143,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
     }
 
     /// `actual` is used where `expected` is required. Applies the implicit
-    /// coercions: `&mut T → &T`, `&[N]T → &[]T`, `&T → &any I`.
+    /// coercions: `&mut T → &T`, `*mut T → *T`, `&[N]T → &[]T`, `&T → &any I`.
     /// Records the coercion applied to `node` (for IR lowering).
     fn coerce(&mut self, actual: &Ty, expected: &Ty, span: Span, node: Option<NodeId>) -> bool {
         let (a, x) = (self.infer.shallow(actual), self.infer.shallow(expected));
@@ -181,6 +181,16 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 }
                 return true;
             }
+        }
+        // `*mut T → *T`: the same address with fewer permissions, as
+        // `ffi.to_const` does; never the reverse direction.
+        if let (Ty::Ptr(true, ai), Ty::Ptr(false, xi)) = (&a, &x)
+            && self.infer.unify(ai, xi)
+        {
+            if let Some(n) = node {
+                self.tables.coercions.insert(n, Coercion { mut_to_shared: true, kind: CoercionKind::None });
+            }
+            return true;
         }
         if let (Ty::Async(output), Ty::Fn(tarn_ast::CallMode::Mutable, params, ret)) = (&a, &x)
             && let [Ty::Ref(false, waker)] = params.as_slice()
@@ -730,6 +740,66 @@ impl<'e, 'a> FnCx<'e, 'a> {
         self.exhaustive(m, &st);
     }
 
+    /// `match` in expression position (ADR 0089): every arm is a value of one
+    /// type, or a block that never finishes (`return`, `panic`, ...).
+    fn match_expr(&mut self, m: &MatchStmt, expected: Option<&Ty>) -> Ty {
+        let st = self.expr(&m.scrutinee, None);
+        let mut result: Option<Ty> = expected.cloned();
+        let mut failed = false;
+        for arm in &m.arms {
+            self.pattern(&arm.pattern, &st);
+            if let Some(g) = &arm.guard {
+                self.cond(g);
+            }
+            match &arm.body.kind {
+                StmtKind::Expr(value) => {
+                    let t = self.expr(value, result.as_ref());
+                    match &result {
+                        Some(r) => {
+                            let r = r.clone();
+                            self.coerce(&t, &r, value.span, Some(value.id));
+                        }
+                        None if !matches!(self.infer.shallow(&t), Ty::Never) => result = Some(t),
+                        None => {}
+                    }
+                }
+                StmtKind::Block(b) => {
+                    self.stmts(&b.stmts);
+                    if !self.leaves(&b.stmts) {
+                        failed = true;
+                        self.err(
+                            Diagnostic::error("E3083", "match_arm_without_value", "this arm of a `match` expression produces no value")
+                                .primary(arm.body.span, "control reaches the end of this block")
+                                .help("write the value after `=>`, or end the block with `return`, `break`, `continue` or `panic`"),
+                        );
+                    }
+                }
+                _ => {
+                    self.stmt(&arm.body);
+                    if self.leaves(std::slice::from_ref(arm.body.as_ref())) {
+                        continue;
+                    }
+                    failed = true;
+                    self.err(
+                        Diagnostic::error("E3083", "match_arm_without_value", "this arm of a `match` expression produces no value")
+                            .primary(arm.body.span, "a statement, not a value")
+                            .help("write the value after `=>`, or use a `match` statement"),
+                    );
+                }
+            }
+        }
+        self.exhaustive(m, &st);
+        // An arm already reported as valueless must not make the whole match
+        // `Never`: that would turn every later use into a false error.
+        result.unwrap_or(if failed { Ty::Error } else { Ty::Never })
+    }
+
+    /// Whether control never reaches the end of `stmts`, counting a direct
+    /// `break` or `continue` of the enclosing loop.
+    fn leaves(&self, stmts: &[Stmt]) -> bool {
+        self.diverges(stmts) || stmts.iter().any(|s| matches!(s.kind, StmtKind::Break | StmtKind::Continue))
+    }
+
     fn pattern(&mut self, p: &Pattern, t: &Ty) {
         let z = self.infer.zonk(t);
         let (inner, through) = peel(&z);
@@ -823,11 +893,15 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
             other => {
                 let shown = self.show(other);
-                self.err(
-                    Diagnostic::error("E3020", "pattern_mismatch", format!("a variant pattern cannot match a value of type `{shown}`"))
-                        .primary(p.span, "")
-                        .note("only enum values have variants"),
-                );
+                let mut d = Diagnostic::error("E3020", "pattern_mismatch", format!("a variant pattern cannot match a value of type `{shown}`"))
+                    .primary(p.span, "")
+                    .note("only enum values have variants");
+                if let (Res::ScrutineeVariant(name), PatternKind::Ident(_)) = (r, &p.kind)
+                    && matches!(other, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Str)
+                {
+                    d = d.help(format!("constants are not patterns; compare with a guard: `value if value == {name} =>`"));
+                }
+                self.err(d);
                 return;
             }
         };
@@ -1111,6 +1185,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 Ty::Array(Box::new(elem), elems.len() as u64)
             }
             ExprKind::Closure { params, ret, body, .. } => self.closure(e, params, ret.as_ref(), body, expected),
+            ExprKind::Match(m) => self.match_expr(m, expected),
         }
     }
 
@@ -1164,6 +1239,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
             Some(Res::ScrutineeVariant(_)) | None => Ty::Error,
             Some(Res::Symbol(s)) => match self.kind(s).clone() {
+                SymbolKind::Const => self.env.decls.consts.get(&s).map_or(Ty::Error, |c| c.ty.clone()),
                 SymbolKind::Local { .. } | SymbolKind::Param | SymbolKind::SelfParam | SymbolKind::PatternBinding | SymbolKind::LoopBinding | SymbolKind::ClosureParam => {
                     self.locals.get(&s).cloned().unwrap_or(Ty::Error)
                 }
@@ -1530,7 +1606,8 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 let (inner, _) = peel(&z);
                 let ok = match &inner {
                     Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Opaque | Ty::Error => true,
-                    Ty::Bool => matches!(op, Eq | Ne),
+                    // Raw pointers compare by address; nothing is accessed.
+                    Ty::Bool | Ty::Ptr(..) => matches!(op, Eq | Ne),
                     Ty::Var(v) => self.infer.kind(*v) != VarKind::General,
                     _ => false,
                 };
@@ -1813,7 +1890,14 @@ impl<'e, 'a> FnCx<'e, 'a> {
                 ExprKind::Field { base, name } => {
                     let bt = self.expr(base, None);
                     let (inner, _) = peel(&self.infer.shallow(&bt));
-                    let field = if let Ty::Adt(s, _) = inner { self.env.decls.structs.get(&s).is_some_and(|d| d.fields.iter().any(|f| f.name == name.name)) } else { false };
+                    // `x.name(...)` calls a field only when the field holds a
+                    // callable; otherwise it is a method call, so a method may
+                    // share a data field's name (`window` and `window()`).
+                    let field = if let Ty::Adt(s, targs) = &inner {
+                        self.env.decls.structs.get(s).and_then(|d| d.fields.iter().find(|f| f.name == name.name)).is_some_and(|f| matches!(f.ty, Ty::Fn(..)) || self.lookup_method(*s, targs, &name.name).is_none())
+                    } else {
+                        false
+                    };
                     // Reuse the base type: checking `base` again would double the
                     // work at every link of a call chain (exponential time).
                     if field {
@@ -1873,6 +1957,15 @@ impl<'e, 'a> FnCx<'e, 'a> {
     }
 
     fn args(&mut self, e: &Expr, what: &str, params: &[Ty], args: &[Expr]) {
+        // A trailing `Location` parameter may be omitted: the compiler passes
+        // the call site, so helpers report where they were called (ADR 0094).
+        let params = match params.last() {
+            Some(Ty::Adt(s, _)) if params.len() == args.len() + 1 && Some(*s) == self.env.decls.location => {
+                self.tables.caller_locations.insert(e.id);
+                &params[..args.len()]
+            }
+            _ => params,
+        };
         if params.len() != args.len() {
             self.err(
                 Diagnostic::error(
@@ -2197,7 +2290,11 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
             Ty::Void
         } else if s == p.panic {
-            self.args(e, "`panic`", &[Ty::Str], args);
+            // `panic(message, &at)` reports `at` instead of the call site.
+            match self.env.decls.location {
+                Some(location) if args.len() == 2 => self.args(e, "`panic`", &[Ty::Str, Ty::Ref(false, Box::new(Ty::Adt(location, Vec::new())))], args),
+                _ => self.args(e, "`panic`", &[Ty::Str], args),
+            }
             Ty::Never
         } else if s == p.channel_fn {
             self.err(
@@ -2256,9 +2353,27 @@ fn has_break(stmts: &[Stmt]) -> bool {
         StmtKind::If(i) => if_has_break(i),
         StmtKind::Match(m) => m.arms.iter().any(|a| has_break(std::slice::from_ref(&a.body))),
         StmtKind::Block(b) | StmtKind::Unsafe(b) | StmtKind::Scope(b) => has_break(&b.stmts),
+        StmtKind::Expr(e) | StmtKind::Spawn(e) | StmtKind::Return(Some(e)) | StmtKind::Let { value: Some(e), .. } => expr_has_break(e),
+        StmtKind::Assign { target, value } => expr_has_break(target) || expr_has_break(value),
         // `break` inside a nested loop belongs to that loop.
         _ => false,
     })
+}
+
+/// A `break` of the enclosing loop inside an arm of a `match` expression.
+fn expr_has_break(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Match(m) => expr_has_break(&m.scrutinee) || m.arms.iter().any(|a| a.guard.as_ref().is_some_and(expr_has_break) || has_break(std::slice::from_ref(&a.body))),
+        ExprKind::Paren(x) | ExprKind::Try(x) | ExprKind::Await(x) | ExprKind::Field { base: x, .. } | ExprKind::Unary { operand: x, .. } => expr_has_break(x),
+        ExprKind::Call { callee, args } => expr_has_break(callee) || args.iter().any(expr_has_break),
+        ExprKind::Index { base, index } => expr_has_break(base) || expr_has_break(index),
+        ExprKind::Binary { lhs, rhs, .. } => expr_has_break(lhs) || expr_has_break(rhs),
+        ExprKind::Range { start, end, .. } => start.as_deref().is_some_and(expr_has_break) || end.as_deref().is_some_and(expr_has_break),
+        ExprKind::StructLit { fields, .. } => fields.iter().filter_map(|f| f.value.as_ref()).any(expr_has_break),
+        ExprKind::ArrayLit { elems, .. } => elems.iter().any(expr_has_break),
+        // A closure body cannot leave the loop around it.
+        _ => false,
+    }
 }
 
 fn if_has_break(i: &IfStmt) -> bool {

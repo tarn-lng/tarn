@@ -154,6 +154,11 @@ pub struct Decls {
     pub structs: HashMap<SymbolId, StructDef>,
     pub enums: HashMap<SymbolId, EnumDef>,
     pub fns: HashMap<SymbolId, FnSig>,
+    /// `core.Location`: a trailing parameter of this type is filled with the
+    /// call site when omitted (ADR 0094).
+    pub location: Option<SymbolId>,
+    /// Evaluated `const` items (ADR 0090).
+    pub consts: HashMap<SymbolId, crate::consts::ConstDef>,
     pub bounds: HashMap<ParamId, Vec<SymbolId>>,
     pub param_names: HashMap<ParamId, String>,
     /// The `Copy` capability from `core`, if loaded.
@@ -197,7 +202,7 @@ impl<'a> Env<'a> {
             panic: get("panic"),
             channel_fn: get("channel"),
         };
-        let decls = Decls { task: ps.get("Task"), eq: ps.get("Eq"), transfer: ps.get("Transfer"), share: ps.get("Share"), copy: prelude.copy, ..Decls::default() };
+        let decls = Decls { location: ps.get("Location"), task: ps.get("Task"), eq: ps.get("Eq"), transfer: ps.get("Transfer"), share: ps.get("Share"), copy: prelude.copy, ..Decls::default() };
         let mut decls = decls;
         decls.result = ps.get("Result");
         decls.mutex = ps.get("Mutex");
@@ -245,6 +250,7 @@ impl<'a> Env<'a> {
             }
         }
         env.collect();
+        crate::consts::evaluate(&mut env);
         if let Some((_, io)) = stdlib("io") {
             env.decls.net_error = io.get("Error");
         }
@@ -428,7 +434,7 @@ impl<'a> Env<'a> {
                             self.fn_sig(m, f, &binders, self_ty.clone(), None);
                         }
                     }
-                    ItemKind::Import(_) | ItemKind::Error => {}
+                    ItemKind::Import(_) | ItemKind::Const(_) | ItemKind::Error => {}
                 }
             }
         }

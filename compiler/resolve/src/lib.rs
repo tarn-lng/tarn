@@ -80,6 +80,8 @@ pub enum SymbolKind {
     // Module level.
     Module(ModuleTarget),
     Function,
+    /// `const NAME T = value` (ADR 0090).
+    Const,
     Struct,
     Enum,
     Interface,
