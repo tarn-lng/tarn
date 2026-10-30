@@ -18,7 +18,7 @@ Download the installer, inspect it, then run it:
 ```sh
 curl --fail --proto '=https' https://tarn-lng.github.io/website/install.sh -o install-tarn.sh
 sh install-tarn.sh                    # newest release
-sh install-tarn.sh --version 0.1.1    # or a specific one
+sh install-tarn.sh --version 0.2.0    # or a specific one
 ```
 
 The default directory is `$HOME/.local/bin`. Use `--prefix /absolute/directory`
