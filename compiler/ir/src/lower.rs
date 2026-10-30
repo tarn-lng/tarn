@@ -1208,6 +1208,11 @@ impl<'a, 'l> Builder<'a, 'l> {
     }
 
     fn operand_raw(&mut self, e: &Expr) -> Operand {
+        if matches!(e.kind, ExprKind::Ident(_) | ExprKind::Field { .. })
+            && let Some(c) = self.constant(e)
+        {
+            return Operand::Const(c);
+        }
         let ty = self.ty(e);
         match &e.kind {
             ExprKind::Int(v) => Operand::Const(int_const(*v as i128, &ty)),
@@ -1226,7 +1231,6 @@ impl<'a, 'l> Builder<'a, 'l> {
                 Operand::Const(int_const(-(v as i128), &ty))
             }
             ExprKind::Paren(inner) => self.operand(inner),
-            ExprKind::Ident(_) | ExprKind::Field { .. } if let Some(c) = self.constant(e) => Operand::Const(c),
             _ if self.is_place(e) => {
                 let p = self.place(e);
                 self.read(p, &ty)
