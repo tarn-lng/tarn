@@ -67,7 +67,7 @@ keep in sync). See ADR 0004.
 
 This example assumes a local `app/config.tarn` exporting `load`:
 
-```tarn
+```tarn sketch
 import "fs"
 import "process"
 import "app/config"     // local module app/config.tarn
@@ -196,7 +196,7 @@ fn log(message string) {        // returns void
 
 ## 6. Control flow
 
-```tarn
+```tarn sketch
 if x > 0 {
     print("positive")
 } else if x < 0 {
@@ -271,7 +271,7 @@ the field holds a callable (`fn` type) or no method of that name exists
 Methods of a **generic type** name the type's parameters right after the type
 (ADR 0015); the names are binders, one per parameter, in order:
 
-```tarn
+```tarn sketch
 struct Pair<A, B> {
     first  A
     second B
@@ -336,7 +336,7 @@ fn area(s &Shape) f64 {
   never reaches its end (`return`, `break`, `continue`, `panic`). There is no
   implicit last-expression value:
 
-  ```tarn
+  ```tarn sketch
   ui := match native.create(config) {
       Ok(value) => value
       Err(error) => { return Err(error) }
@@ -389,7 +389,7 @@ Summary (full rules in `ownership.md`):
 
 ## 11. Generics
 
-```tarn
+```tarn sketch
 fn identity<T>(value T) T {
     return value
 }
@@ -405,7 +405,7 @@ No explicit turbofish; this keeps `<` unambiguous for the parser.
 
 ## 12. Interfaces
 
-```tarn
+```tarn sketch
 interface Writer {
     fn write(&mut self, data &[]u8) Result<usize, Error>
 }
@@ -481,7 +481,7 @@ See [ADR 0033](adr/0033-safe-native-tasks.md), accepted for Phase 11, and
 
 ## 13c. Async functions (Phase 13)
 
-```tarn
+```tarn sketch
 async fn handle(stream &mut net.TcpStream) Result<usize, io.Error> {
     var bytes = [16]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
     count := try await stream.read_async(&mut bytes)
@@ -505,7 +505,7 @@ current state owns. A completed computation must not be polled again (abort).
 
 Computations run on the Phase-12C executor model. Drive one explicitly:
 
-```tarn
+```tarn sketch
 execution := try runtime.Execution.new()
 var app = runtime.Operation.new(&execution, handle(&mut stream))
 count := try try execution.block_on(&mut app)

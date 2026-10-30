@@ -82,6 +82,8 @@ with a different string is safe if validated but may select different content.
 Keep cursor inputs unchanged throughout traversal for meaningful results.
 
 ```tarn
+import "string"
+
 fn first_bytes(text &string) &[]u8 {
     var cursor: usize = 0
     match string.next_field(text, &mut cursor) {

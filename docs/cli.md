@@ -72,7 +72,7 @@ Tests may take `t &mut testing.T` (ADR 0094). Checks report the test's own
 line and continue after a failure; `require` stops the test and `skip` marks it
 skipped (for example without a display):
 
-```tarn
+```tarn sketch
 import "testing"
 import "gtk/protocol"
 
