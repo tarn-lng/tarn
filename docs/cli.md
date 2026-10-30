@@ -68,13 +68,33 @@ that name. `--timeout` is a positive integer in milliseconds, default 10000.
 No selected tests is a successful run that says `no tests found`. Panic, Err
 and timeout fail that test and execution proceeds to the next.
 
+Tests may take `t &mut testing.T` (ADR 0094). Checks report the test's own
+line and continue after a failure; `require` stops the test and `skip` marks it
+skipped (for example without a display):
+
+```tarn
+import "testing"
+import "gtk/protocol"
+
+fn test_encode(t &mut testing.T) {
+    t.eq(protocol.encode(2), 5)
+    t.check(protocol.encode(0) == 1, &"zero encodes to one")
+    t.some(&protocol.find(1))
+    if !has_display() { t.skip(&"no display") }
+}
+```
+
+Available: `eq`, `ne`, `check`, `some`, `none`, `ok`, `err`, `fail`,
+`require`, `skip`. `collections.to_vec(&slice)` copies a slice.
+
 A failure is reported as one block: the reason (`panicked: <message>`,
 `panicked: test returned Err(Kind.Refused(3))`, `timeout after N ms`,
 `exited with code N`), then the test's stdout and stderr.
 
 Output is captured concurrently from both streams. Failed text reports show
 the captured output; JSON test records include `name`, `status` (`ok`, `FAILED`,
-`timeout`), `duration_ms`, `message` (the panic message, or null), `stdout`, `stderr`, and nullable `exit_code`/`signal` fields. A final `test_summary` object
+`timeout`, `skipped`), `duration_ms`, `message` (the panic message, or null),
+`location`, `checks` (failed check reports), `skip_reason`, `stdout`, `stderr`, and nullable `exit_code`/`signal` fields. A final `test_summary` object
 contains `total`, `passed` and `failed`. Output is decoded strictly: an invalid
 UTF-8 stream has a null text field and a lossless `stdout_bytes` or `stderr_bytes`
 array. The byte fields are null for valid text. Failed human reports show invalid

@@ -224,19 +224,32 @@ fn check_harness(target: &Path, packages: Option<&PackageSet>, prefix: &str) -> 
                 .ok_or("missing test symbol")?;
             let signature = &typed.decls.fns[symbol];
             let name = format!("{module_name}.{}", function.name.name);
-            if function.is_async || function.is_unsafe || function.abi.is_some() || !signature.generics.is_empty() || !signature.params.is_empty() || function.receiver.is_some() {
-                return Err(format!("{kind} `{name}` must be a safe, synchronous, non-generic function with no parameters"));
+            // `fn test_x(t &mut testing.T)` gets a fresh `T` (ADR 0094).
+            let takes_t = match signature.params.as_slice() {
+                [Ty::Ref(true, inner)] => matches!(inner.as_ref(), Ty::Adt(id, _) if {
+                    let symbol = &resolved.symbols[id.0 as usize];
+                    symbol.name == "T" && symbol.module.is_some_and(|m| initial.program.modules[m.0 as usize].0 == "testing")
+                }),
+                _ => false,
+            };
+            if function.is_async || function.is_unsafe || function.abi.is_some() || !signature.generics.is_empty() || !(signature.params.is_empty() || takes_t) || function.receiver.is_some() {
+                return Err(format!("{kind} `{name}` must be a safe, synchronous, non-generic function with no parameters or one `t &mut testing.T`"));
             }
+            let (call, finish) = if takes_t {
+                (format!("{}(&mut __tarn_t)", function.name.name), "__tarn_t.finish()\n")
+            } else {
+                (format!("{}()", function.name.name), "")
+            };
+            let setup = if takes_t { "var __tarn_t = testing.T.new()\n" } else { "" };
             let index = cases.len();
             let body = if signature.ret == Ty::Void {
-                format!("{}()\n", function.name.name)
+                format!("{setup}{call}\n{finish}")
             } else if let Ty::Adt(id, args) = &signature.ret {
                 if Some(*id) != typed.decls.result || args.len() != 2 || args[0] != Ty::Void {
                     return Err(format!("{kind} `{name}` must return void or Result<void, E>"));
                 }
                 format!(
-                    "match {}() {{\nOk(_) => {{}}\nErr(error) => {{\n{}}}\n}}\n",
-                    function.name.name,
+                    "{setup}match {call} {{\nOk(_) => {{}}\nErr(error) => {{\n{}}}\n}}\n{finish}",
                     err_report(typed, resolved, function, &args[1], module_index)?
                 )
             } else {

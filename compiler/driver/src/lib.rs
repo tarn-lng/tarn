@@ -18,6 +18,7 @@ const ORDINARY_STDLIB: &[(&str, &str)] = &[
     ("json", include_str!("../../../stdlib/json/json.tarn")),
     ("os", include_str!("../../../stdlib/os/os.tarn")),
     ("console", include_str!("../../../stdlib/console/console.tarn")),
+    ("testing", include_str!("../../../stdlib/testing/testing.tarn")),
     ("https", include_str!("../../../stdlib/https/https.tarn")),
     ("collections", include_str!("../../../stdlib/collections/collections.tarn")),
     ("csv", include_str!("../../../stdlib/csv/csv.tarn")),
@@ -387,7 +388,7 @@ fn check_loaded_on_stack((program, mut diagnostics): (Program, Vec<Diagnostic>),
             let (t, d) = tarn_types::check(&inputs, &r);
             diagnostics.extend(d);
             if !errors(&diagnostics) {
-                let (mut p, d) = tarn_ir::lower_program(&inputs, &r, &t);
+                let (mut p, d) = tarn_ir::lower_program_located(&inputs, &r, &t, Some(&program.sources));
                 tarn_ir::prove_arithmetic(&mut p);
                 diagnostics.extend(d);
                 diagnostics.extend(tarn_ir::check_instantiation_cycles(&p, &t, &r));

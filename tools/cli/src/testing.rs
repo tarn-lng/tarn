@@ -144,6 +144,7 @@ pub fn run_with_sources(
     }
     let mut failed = 0;
     let mut completed = 0;
+    let mut skipped_count = 0;
     for case in selected {
         if super::process::stopping() {
             break;
@@ -185,31 +186,38 @@ pub fn run_with_sources(
         let stderr = stderr.join().unwrap_or_default();
         let stdout_text = std::str::from_utf8(&stdout).ok();
         let stderr_text = std::str::from_utf8(&stderr).ok();
-        let ok = status.is_some_and(|status| status.success());
+        use std::os::unix::process::ExitStatusExt;
+        let exit_code = status.and_then(|status| status.code());
+        let signal = status.and_then(|status| status.signal());
+        let outcome = Outcome::parse(stderr_text.unwrap_or(""));
+        let skipped = !timed_out && outcome.skip.is_some();
+        let ok = !skipped && outcome.checks.is_empty() && status.is_some_and(|status| status.success());
         completed += 1;
-        if !ok {
+        if skipped {
+            skipped_count += 1;
+        } else if !ok {
             failed += 1;
         }
-        let label = if ok {
+        let label = if skipped {
+            "skipped"
+        } else if ok {
             "ok"
         } else if timed_out {
             "timeout"
         } else {
             "FAILED"
         };
-        use std::os::unix::process::ExitStatusExt;
-        let exit_code = status.and_then(|status| status.code());
-        let signal = status.and_then(|status| status.signal());
-        // A panic aborts (signal 6) after the runtime writes `panic: <message>`
-        // to stderr; report it as the reason instead of as a raw signal.
-        let panic_message = stderr_text.and_then(|text| text.lines().rev().find_map(|l| l.strip_prefix("panic: ")).map(str::to_string));
         if options.json {
+            let checks: Vec<String> = outcome.checks.iter().map(|c| quoted(c)).collect();
             println!(
-                "{{\"kind\":\"test\",\"name\":{},\"status\":{},\"duration_ms\":{},\"message\":{},\"stdout\":{},\"stderr\":{},\"exit_code\":{},\"signal\":{},\"stdout_bytes\":{},\"stderr_bytes\":{}}}",
+                "{{\"kind\":\"test\",\"name\":{},\"status\":{},\"duration_ms\":{},\"message\":{},\"location\":{},\"checks\":[{}],\"skip_reason\":{},\"stdout\":{},\"stderr\":{},\"exit_code\":{},\"signal\":{},\"stdout_bytes\":{},\"stderr_bytes\":{}}}",
                 quoted(&case.name),
                 quoted(label),
                 started.elapsed().as_millis(),
-                panic_message.as_deref().map_or_else(|| "null".into(), quoted),
+                outcome.panic.as_deref().map_or_else(|| "null".into(), quoted),
+                outcome.panic_at.as_deref().map_or_else(|| "null".into(), quoted),
+                checks.join(","),
+                outcome.skip.as_deref().map_or_else(|| "null".into(), quoted),
                 stdout_text.map_or_else(|| "null".into(), quoted),
                 stderr_text.map_or_else(|| "null".into(), quoted),
                 exit_code.map_or_else(|| "null".into(), |value| value.to_string()),
@@ -219,23 +227,32 @@ pub fn run_with_sources(
             );
         } else {
             println!("{} ... {label}", case.name);
-            if !ok {
-                // One block per failure, on one stream, so it reads in order.
-                let reason = if timed_out {
-                    format!("timeout after {} ms", options.timeout.as_millis())
-                } else if let Some(message) = &panic_message {
-                    format!("panicked: {message}")
-                } else if let Some(signal) = signal {
-                    format!("terminated by signal {signal}")
-                } else {
-                    format!("exited with code {}", exit_code.unwrap_or(-1))
-                };
+            if let Some(reason) = outcome.skip.as_deref().filter(|_| skipped) {
                 println!("    {reason}");
+            } else if !ok {
+                // One block per failure, on one stream, so it reads in order.
+                if !outcome.checks.is_empty() {
+                    let n = outcome.checks.len();
+                    println!("    {n} failed check{}", if n == 1 { "" } else { "s" });
+                    for check in &outcome.checks {
+                        for (k, line) in check.lines().enumerate() {
+                            println!("    {}{line}", if k == 0 { "- " } else { "  " });
+                        }
+                    }
+                } else if timed_out {
+                    println!("    timeout after {} ms", options.timeout.as_millis());
+                } else if let Some(message) = &outcome.panic {
+                    match &outcome.panic_at {
+                        Some(at) => println!("    panicked at {at}: {message}"),
+                        None => println!("    panicked: {message}"),
+                    }
+                } else if let Some(signal) = signal {
+                    println!("    terminated by signal {signal}");
+                } else {
+                    println!("    exited with code {}", exit_code.unwrap_or(-1));
+                }
                 let section = |name: &str, text: Option<&str>, bytes: &[u8]| {
-                    let text = match text {
-                        Some(text) => text.lines().filter(|l| panic_message.is_none() || !l.starts_with("panic: ")).collect::<Vec<_>>().join("\n"),
-                        None => format!("(bytes) {bytes:?}"),
-                    };
+                    let text = text.map_or_else(|| format!("(bytes) {bytes:?}"), str::to_string);
                     if !text.trim().is_empty() {
                         println!("    {name}:");
                         for line in text.lines() {
@@ -244,7 +261,11 @@ pub fn run_with_sources(
                     }
                 };
                 section("stdout", stdout_text, &stdout);
-                section("stderr", stderr_text, &stderr);
+                if stderr_text.is_some() {
+                    section("stderr", Some(&outcome.rest), &stderr);
+                } else {
+                    section("stderr", None, &stderr);
+                }
             }
         }
     }
@@ -253,14 +274,12 @@ pub fn run_with_sources(
     }
     if options.json {
         println!(
-            "{{\"kind\":\"test_summary\",\"total\":{completed},\"passed\":{},\"failed\":{failed}}}",
-            completed - failed
+            "{{\"kind\":\"test_summary\",\"total\":{completed},\"passed\":{},\"failed\":{failed},\"skipped\":{skipped_count}}}",
+            completed - failed - skipped_count
         );
     } else {
-        println!(
-            "test result: {} passed; {failed} failed",
-            completed - failed
-        );
+        let skipped = if skipped_count > 0 { format!("; {skipped_count} skipped") } else { String::new() };
+        println!("test result: {} passed; {failed} failed{skipped}", completed - failed - skipped_count);
     }
     (
         if failed == 0 && !super::process::stopping() {
@@ -270,6 +289,52 @@ pub fn run_with_sources(
         },
         paths,
     )
+}
+
+/// What a test process reported on stderr: the runtime's `panic:` line and
+/// its `    at` location, `testing` check failures and skips (ADR 0094), and
+/// everything else, in order.
+#[derive(Default)]
+struct Outcome {
+    panic: Option<String>,
+    panic_at: Option<String>,
+    skip: Option<String>,
+    checks: Vec<String>,
+    rest: String,
+}
+
+impl Outcome {
+    fn parse(stderr: &str) -> Self {
+        let mut outcome = Outcome::default();
+        let mut lines = stderr.lines().peekable();
+        while let Some(line) = lines.next() {
+            if let Some(message) = line.strip_prefix("panic: ") {
+                outcome.panic = Some(message.to_string());
+                if let Some(at) = lines.peek().and_then(|l| l.strip_prefix("    at ")) {
+                    outcome.panic_at = Some(at.to_string());
+                    lines.next();
+                }
+            } else if let Some(reason) = line.strip_prefix("tarn-test-skip: ") {
+                outcome.skip = Some(reason.to_string());
+            } else if let Some(check) = line.strip_prefix("tarn-test-fail: ") {
+                let mut text = check.to_string();
+                while let Some(more) = lines.next_if(|l| l.starts_with("  ")) {
+                    text.push('\n');
+                    text.push_str(more.trim_start());
+                }
+                outcome.checks.push(text);
+            } else {
+                outcome.rest.push_str(line);
+                outcome.rest.push('\n');
+            }
+        }
+        // The harness raises these from generated code: its location would
+        // name a line that is not in the user's file.
+        if outcome.panic.as_deref().is_some_and(|m| m.starts_with("test returned Err(") || m == "test had failed checks") {
+            outcome.panic_at = None;
+        }
+        outcome
+    }
 }
 
 /// One measured benchmark process: wall time from the runner, CPU time and

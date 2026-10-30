@@ -303,10 +303,39 @@ fn package_wide_discovery_and_target_selection() {
     let (code, stdout, _) = run(&["gtk"]);
     assert_eq!(code, Some(1));
     assert!(stdout.contains("    panicked: test returned Err(7)"), "{stdout}");
-    assert!(stdout.contains("    panicked: stop\n    stdout:\n      | before"), "{stdout}");
+    assert!(stdout.contains("    panicked at gtk/protocol_test.tarn:4:2: stop\n    stdout:\n      | before"), "{stdout}");
     write("gtk/protocol_test.tarn", "fn helper() {}\n");
     let (code, stdout, _) = run(&["gtk/protocol_test.tarn"]);
     assert_eq!(code, Some(0));
     assert!(stdout.contains("no tests found"), "{stdout}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// ADR 0094: `t &mut testing.T` checks continue and report the test's line;
+/// `require` stops, `skip` is neither passed nor failed; panics carry `at`.
+#[test]
+fn testing_library_reports_checks_skips_and_locations() {
+    let dir = std::env::temp_dir().join(format!("tarn-cli-test-library-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("lib_test.tarn"),
+        "import \"testing\"\nfn test_checks(t &mut testing.T) {\n    t.eq(1 + 1, 3)\n    t.eq(\"a\", \"b\")\n    t.check(true, &\"fine\")\n}\nfn test_require(t &mut testing.T) {\n    t.require(false, &\"needs service\")\n    t.fail(&\"not reached\")\n}\nfn test_skip(t &mut testing.T) {\n    t.skip(&\"no display\")\n}\nfn test_pass(t &mut testing.T) {\n    t.eq(2, 2)\n    t.ne(1, 2)\n}\nfn test_unwrap() {\n    missing: Option<i32> := None\n    missing.unwrap()\n}\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tarn")).current_dir(&dir).arg("test").arg(".").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("test_checks ... FAILED\n    2 failed checks\n    - lib_test.tarn:3:5: expected left == right\n      left: 2\n      right: 3\n    - lib_test.tarn:4:5:"), "{stdout}");
+    assert!(stdout.contains("test_require ... FAILED\n    1 failed check\n    - lib_test.tarn:8:5: needs service\n"), "{stdout}");
+    assert!(!stdout.contains("not reached"), "{stdout}");
+    assert!(stdout.contains("test_skip ... skipped\n    no display"), "{stdout}");
+    assert!(stdout.contains("test_unwrap ... FAILED\n    panicked at lib_test.tarn:20:5: called `unwrap` on `None`"), "{stdout}");
+    assert!(stdout.contains("1 passed; 3 failed; 1 skipped"), "{stdout}");
+    let output = Command::new(env!("CARGO_BIN_EXE_tarn")).current_dir(&dir).args(["test", ".", "--json", "--filter", "skip"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("\"status\":\"skipped\"") && stdout.contains("\"skip_reason\":\"no display\""), "{stdout}");
+    assert!(stdout.contains("\"skipped\":1"), "{stdout}");
     std::fs::remove_dir_all(dir).unwrap();
 }

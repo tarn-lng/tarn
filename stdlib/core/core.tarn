@@ -34,18 +34,18 @@ pub fn Option<T>.unwrap_or(self, fallback T) T {
         None => { return fallback }
     }
 }
-/// The value; panics when empty.
-pub fn Option<T>.unwrap(self) T {
+/// The value; panics when empty, reporting the caller's line.
+pub fn Option<T>.unwrap(self, at Location) T {
     match self {
         Some(value) => { return value }
-        None => { panic("called `unwrap` on `None`") }
+        None => { panic("called `unwrap` on `None`", &at) }
     }
 }
-/// The value; panics with `message` when empty.
-pub fn Option<T>.expect(self, message string) T {
+/// The value; panics with `message` when empty, reporting the caller's line.
+pub fn Option<T>.expect(self, message string, at Location) T {
     match self {
         Some(value) => { return value }
-        None => { panic(message) }
+        None => { panic(message, &at) }
     }
 }
 /// `Ok(value)`, or `Err(error)` when empty.
@@ -75,18 +75,19 @@ pub fn Result<T, E>.ok(self) Option<T> {
         Err(error) => { return None }
     }
 }
-/// The success value; panics on an error, which is destroyed.
-pub fn Result<T, E>.unwrap(self) T {
+/// The success value; panics on an error, which is destroyed, reporting the
+/// caller's line.
+pub fn Result<T, E>.unwrap(self, at Location) T {
     match self {
         Ok(value) => { return value }
-        Err(error) => { panic("called `unwrap` on `Err`") }
+        Err(error) => { panic("called `unwrap` on `Err`", &at) }
     }
 }
 /// The success value; panics with `message` on an error.
-pub fn Result<T, E>.expect(self, message string) T {
+pub fn Result<T, E>.expect(self, message string, at Location) T {
     match self {
         Ok(value) => { return value }
-        Err(error) => { panic(message) }
+        Err(error) => { panic(message, &at) }
     }
 }
 pub fn Result<T, E>.unwrap_or(self, fallback T) T {
@@ -626,3 +627,12 @@ impl Display for u64 { fn display(&self, out &mut Builder) { out.push_u64(*self)
 impl Display for usize { fn display(&self, out &mut Builder) { out.push_u64(u64(*self)) } }
 impl Display for bool { fn display(&self, out &mut Builder) { out.push_bool(*self) } }
 impl Display for string { fn display(&self, out &mut Builder) { out.push(self) } }
+
+/// A source position, `path:line:column`. A function whose last parameter is
+/// a `Location` may be called without it: the compiler passes the call site,
+/// so helpers report the caller's line (ADR 0094).
+pub struct Location {
+    text string
+}
+pub fn Location.text(&self) &string { return &self.text }
+impl Display for Location { fn display(&self, out &mut Builder) { out.push(&self.text) } }

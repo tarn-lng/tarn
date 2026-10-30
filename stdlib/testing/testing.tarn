@@ -1,0 +1,91 @@
+// Test helpers for `tarn test` (ADR 0094). A test may take `t &mut testing.T`;
+// the runner creates it, and every failed check reports the test's own line.
+// Checks continue after a failure; `require` and `skip` stop the test.
+import "console"
+
+/// The state of one running test.
+pub struct T {
+    failures u32
+}
+
+/// Created by the test runner for each test that takes `t &mut testing.T`.
+pub fn T.new() T { return T{failures: 0} }
+
+/// Number of failed checks so far.
+pub fn T.failures(&self) u32 { return self.failures }
+
+/// Records a failure at the caller's line and continues the test.
+pub fn T.fail(&mut self, message &string, at Location) {
+    self.failures = self.failures + 1
+    _report(f"tarn-test-fail: {at}: {message}\n")
+}
+
+/// Fails, at the caller's line, unless `condition` holds.
+pub fn T.check(&mut self, condition bool, message &string, at Location) {
+    if !condition { self.fail(message, at) }
+}
+
+/// Fails unless `left == right`, showing both values.
+pub fn T.eq<V: Eq + Display>(&mut self, left V, right V, at Location) {
+    if left != right {
+        self.failures = self.failures + 1
+        _report(f"tarn-test-fail: {at}: expected left == right\n     left: {left}\n    right: {right}\n")
+    }
+}
+
+/// Fails if `left == right`.
+pub fn T.ne<V: Eq + Display>(&mut self, left V, right V, at Location) {
+    if left == right {
+        self.failures = self.failures + 1
+        _report(f"tarn-test-fail: {at}: expected left != right\n     both: {left}\n")
+    }
+}
+
+/// Fails unless `value` is `Some`.
+pub fn T.some<V>(&mut self, value &Option<V>, at Location) {
+    if value.is_none() { self.fail(&"expected Some, found None", at) }
+}
+
+/// Fails unless `value` is `None`.
+pub fn T.none<V>(&mut self, value &Option<V>, at Location) {
+    if value.is_some() { self.fail(&"expected None, found Some", at) }
+}
+
+/// Fails unless `value` is `Ok`.
+pub fn T.ok<V, E>(&mut self, value &Result<V, E>, at Location) {
+    if value.is_err() { self.fail(&"expected Ok, found Err", at) }
+}
+
+/// Fails unless `value` is `Err`.
+pub fn T.err<V, E>(&mut self, value &Result<V, E>, at Location) {
+    if value.is_ok() { self.fail(&"expected Err, found Ok", at) }
+}
+
+/// Stops the test with a failure unless `condition` holds; later code may
+/// rely on it.
+pub fn T.require(&mut self, condition bool, message &string, at Location) {
+    if !condition {
+        self.fail(message, at)
+        panic("test stopped by a failed requirement")
+    }
+}
+
+/// Stops the test and reports it as skipped, not failed: for tests whose
+/// environment is missing, such as a display or a service.
+pub fn T.skip(&mut self, reason &string) {
+    _report(f"tarn-test-skip: {reason}\n")
+    panic("test skipped")
+}
+
+/// Called by the runner after the test returns: fails if any check failed.
+pub fn T.finish(self) {
+    if self.failures > 0 { panic("test had failed checks") }
+}
+
+fn _report(text string) {
+    var out = console.stderr()
+    match out.write_text(&text) {
+        Ok(_) => {}
+        Err(error) => {}
+    }
+}

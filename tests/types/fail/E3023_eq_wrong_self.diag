@@ -3,8 +3,8 @@ error[E3023]: method `eq` does not match its declaration in `Eq`
     |
   9 |     fn eq(&self, other &Feet) bool { return self.value == other.value }
     |        ^^
-   ::: stdlib/core/core.tarn:116:8
-116 |     fn eq(&self, other &Self) bool
+   ::: stdlib/core/core.tarn:117:8
+117 |     fn eq(&self, other &Self) bool
     |        -- declared here
     |
     = note: parameter 1 is `&Feet`, the interface declares `&Meters`

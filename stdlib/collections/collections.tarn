@@ -264,3 +264,10 @@ pub fn Map<K, V>.next_slot(&self, cursor &mut usize) Option<usize> {
     }
     return None
 }
+
+/// A new vector holding a copy of `items`: a slice's `to_vec`.
+pub fn to_vec<T: Copy>(items &[]T) Vec<T> {
+    var out: Vec<T> = Vec.new()
+    out.extend_from_slice(items)
+    return out
+}

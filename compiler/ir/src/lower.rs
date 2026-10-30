@@ -22,9 +22,29 @@ struct Lx<'a> {
     next_id: Cell<u32>,
     /// Closures lowered while lowering their parents.
     extra: RefCell<Vec<Function>>,
+    /// Source positions for `panic` and caller locations (ADR 0094).
+    sources: Option<&'a tarn_diagnostics::SourceMap>,
+}
+
+impl Lx<'_> {
+    /// `path:line:column` of `span`, relative to the working directory.
+    fn location(&self, span: Span) -> String {
+        let Some(sources) = self.sources else { return "<unknown>".into() };
+        let name = &sources.file(span.file).name;
+        let cwd = std::env::current_dir().ok();
+        let shown = cwd.as_ref().and_then(|c| std::path::Path::new(name).strip_prefix(c).ok()).map_or_else(|| name.clone(), |p| p.display().to_string());
+        let at = sources.line_col(span);
+        format!("{shown}:{}:{}", at.line, at.column)
+    }
 }
 
 pub fn lower_program(inputs: &[ModuleInput], r: &Resolved, t: &Typed) -> (Program, Vec<Diagnostic>) {
+    lower_program_located(inputs, r, t, None)
+}
+
+/// `lower_program` that also records source locations: `panic` reports where
+/// it was called, and omitted `Location` arguments are filled (ADR 0094).
+pub fn lower_program_located(inputs: &[ModuleInput], r: &Resolved, t: &Typed, sources: Option<&tarn_diagnostics::SourceMap>) -> (Program, Vec<Diagnostic>) {
     // 1. Assign an id to every function, method and impl method.
     let mut decls: Vec<(ModuleId, &ast::FnDecl, String)> = Vec::new();
     for (mi, input) in inputs.iter().enumerate() {
@@ -66,7 +86,7 @@ pub fn lower_program(inputs: &[ModuleInput], r: &Resolved, t: &Typed) -> (Progra
         }
         ids.push(id);
     }
-    let lx = Lx { r, t, by_symbol, kinds, next_id: Cell::new(decls.len() as u32), extra: RefCell::new(Vec::new()) };
+    let lx = Lx { r, t, by_symbol, kinds, next_id: Cell::new(decls.len() as u32), extra: RefCell::new(Vec::new()), sources };
 
     // 2. Lower bodies.
     let mut functions = Vec::new();
@@ -1177,6 +1197,16 @@ impl<'a, 'l> Builder<'a, 'l> {
         })
     }
 
+    /// A `core.Location` value naming `span`, for an omitted argument.
+    fn caller_location(&mut self, span: Span) -> Operand {
+        let Some(location) = self.lx.t.decls.location else { return Operand::Const(Const::Opaque) };
+        let ty = Ty::Adt(location, Vec::new());
+        let t = self.new_local(ty.clone(), LocalKind::Temp, None, None, false, span);
+        let text = Operand::Const(Const::Str(self.lx.location(span)));
+        self.assign(Place::local(t), Rvalue::Aggregate(Aggregate::Struct(location, Vec::new()), vec![text]), span);
+        self.read(Place::local(t), &ty)
+    }
+
     fn operand_raw(&mut self, e: &Expr) -> Operand {
         let ty = self.ty(e);
         match &e.kind {
@@ -1585,7 +1615,7 @@ impl<'a, 'l> Builder<'a, 'l> {
                         };
                         // `print` borrows its argument (printing never consumes a
                         // value); copy values are passed directly.
-                        let ops = args
+                        let mut ops: Vec<Operand> = args
                             .iter()
                             .map(|a| {
                                 let t = self.ty(a);
@@ -1597,7 +1627,17 @@ impl<'a, 'l> Builder<'a, 'l> {
                                 }
                             })
                             .collect();
-                        self.finish_call(Callee::Builtin(b), ops, spans_of(args), dest, diverges, spawn, span);
+                        let mut spans = spans_of(args);
+                        // `panic` also reports where it was called, or the
+                        // `&Location` it was given (ADR 0094).
+                        if b == Builtin::Panic && args.len() == 2 {
+                            let at = self.place(&args[1]).project(Proj::Deref).project(Proj::Field(0));
+                            ops[1] = self.ref_temp(false, at, &Ty::Str, args[1].span);
+                        } else if b == Builtin::Panic && self.lx.sources.is_some() {
+                            ops.push(Operand::Const(Const::Str(self.lx.location(span))));
+                            spans.push(span);
+                        }
+                        self.finish_call(Callee::Builtin(b), ops, spans, dest, diverges, spawn, span);
                     }
                     SymbolKind::Primitive => {
                         let o = args.first().map(|a| self.operand(a)).unwrap_or(Operand::Const(Const::Opaque));
@@ -1625,13 +1665,18 @@ impl<'a, 'l> Builder<'a, 'l> {
                         if self.async_primitive(s, args, dest.clone(), span) {
                             return;
                         }
-                        let ops = args.iter().map(|a| self.arg(a)).collect();
+                        let mut ops: Vec<Operand> = args.iter().map(|a| self.arg(a)).collect();
+                        let mut spans = spans_of(args);
+                        if self.tables().caller_locations.contains(&e.id) {
+                            ops.push(self.caller_location(span));
+                            spans.push(span);
+                        }
                         if self.is_async_fn(s) {
                             self.async_construct(s, type_args, ops, dest, span);
                             return;
                         }
                         let c = self.fn_callee(s, type_args);
-                        self.finish_call(c, ops, spans_of(args), dest, false, spawn, span);
+                        self.finish_call(c, ops, spans, dest, false, spawn, span);
                     }
                     _ => {
                         // A local holding a function or closure.
@@ -1792,12 +1837,16 @@ impl<'a, 'l> Builder<'a, 'l> {
                 };
                 let mut ops = vec![recv_op];
                 ops.extend(arg_ops);
+                let mut spans: Vec<Span> = std::iter::once(base.span).chain(args.iter().map(|a| a.span)).collect();
+                if self.tables().caller_locations.contains(&e.id) {
+                    ops.push(self.caller_location(span));
+                    spans.push(span);
+                }
                 if self.is_async_fn(m) {
                     self.async_construct(m, type_args, ops, dest, span);
                     return;
                 }
                 let c = self.fn_callee(m, type_args);
-                let spans = std::iter::once(base.span).chain(args.iter().map(|a| a.span)).collect();
                 self.finish_call(c, ops, spans, dest, false, spawn, span);
             }
             _ => {

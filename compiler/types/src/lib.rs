@@ -110,6 +110,9 @@ pub struct TypeTables {
     pub pattern_variants: HashMap<NodeId, SymbolId>,
     /// Expression → coercion applied to its value.
     pub coercions: HashMap<NodeId, Coercion>,
+    /// Calls whose omitted trailing `Location` argument the compiler supplies
+    /// with the call site (ADR 0094).
+    pub caller_locations: std::collections::HashSet<NodeId>,
     /// Call (or generic function used as a value) → type arguments, in the
     /// order of the callee's generic parameters.
     pub type_args: HashMap<NodeId, Vec<Ty>>,
@@ -178,6 +181,7 @@ pub fn check(inputs: &[ModuleInput], r: &Resolved) -> (Typed, Vec<Diagnostic>) {
             t.pattern_variants.extend(cx.tables.pattern_variants);
             t.receivers.extend(cx.tables.receivers);
             t.coercions.extend(cx.tables.coercions);
+            t.caller_locations.extend(cx.tables.caller_locations);
             t.type_args.extend(cx.tables.type_args);
             t.binding_modes.extend(cx.tables.binding_modes);
         }

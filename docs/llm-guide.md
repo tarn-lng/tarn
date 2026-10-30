@@ -33,6 +33,11 @@ claim inferred provenance or thread capabilities.
   still need `unsafe { ffi.read(p) }`.
 - C libraries go in tarn.toml, not in source: `[native]` then
   `links = ["gtk-4", "gio-2.0"]`. A linker error names the likely library.
+- Tests: `fn test_x(t &mut testing.T)` in any `*_test.tarn` (or inside the
+  module). `t.eq(a, b)`, `t.check(cond, &"msg")`, `t.some(&o)`, `t.ok(&r)`,
+  `t.require(...)`, `t.skip(&"why")`. Imports in tests use package paths.
+  Run all with `tarn test`, a directory or a single file with `tarn test path`.
+- Panics print `at path:line:column`; `unwrap`/`expect` point at the caller.
 - Propagate Result with prefix `try`. `Option.ok_or(error)` produces Result;
   `Result.map_err(callback)` converts errors explicitly. `unwrap`, `expect(msg)`,
   `unwrap_or`, `map`,

@@ -1957,6 +1957,15 @@ impl<'e, 'a> FnCx<'e, 'a> {
     }
 
     fn args(&mut self, e: &Expr, what: &str, params: &[Ty], args: &[Expr]) {
+        // A trailing `Location` parameter may be omitted: the compiler passes
+        // the call site, so helpers report where they were called (ADR 0094).
+        let params = match params.last() {
+            Some(Ty::Adt(s, _)) if params.len() == args.len() + 1 && Some(*s) == self.env.decls.location => {
+                self.tables.caller_locations.insert(e.id);
+                &params[..args.len()]
+            }
+            _ => params,
+        };
         if params.len() != args.len() {
             self.err(
                 Diagnostic::error(
@@ -2281,7 +2290,11 @@ impl<'e, 'a> FnCx<'e, 'a> {
             }
             Ty::Void
         } else if s == p.panic {
-            self.args(e, "`panic`", &[Ty::Str], args);
+            // `panic(message, &at)` reports `at` instead of the call site.
+            match self.env.decls.location {
+                Some(location) if args.len() == 2 => self.args(e, "`panic`", &[Ty::Str, Ty::Ref(false, Box::new(Ty::Adt(location, Vec::new())))], args),
+                _ => self.args(e, "`panic`", &[Ty::Str], args),
+            }
             Ty::Never
         } else if s == p.channel_fn {
             self.err(
