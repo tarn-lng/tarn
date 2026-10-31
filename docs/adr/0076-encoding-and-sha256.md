@@ -38,3 +38,15 @@ encoder and SHA-1 inside `websocket`, but no public decoder or SHA-256.
 Streaming hashes, HMAC, ciphers, secure random bytes and constant-time
 comparison: none was required by the evidence. `websocket` keeps its private
 helpers for now; switching it to `encoding` is a separate cleanup.
+
+## Registry-driven extension: HMAC-SHA-256 and byte comparison
+
+The registry webhook receiver and PostgreSQL SCRAM both require HMAC.
+`crypto.hmac_sha256(key, message)` implements RFC 2104 over SHA-256 and
+`crypto.equal_bytes(a, b)` accumulates byte differences without data-dependent
+early returns for equal-length input. Length remains public. These remain
+ordinary Tarn functions with no new authority or native dependency. The source
+loop does not constitute a formal machine-code constant-time guarantee; key
+handling, compiler output auditing and streaming APIs remain separate work.
+Focused tests cover a known HMAC-SHA-256 vector and byte comparison; registry tests
+verify raw-byte webhook signatures and tampering rejection.

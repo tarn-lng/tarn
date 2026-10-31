@@ -1,0 +1,44 @@
+import "net"
+import "os"
+import "io"
+import "string"
+fn must_fail(authority &string, options &net.TlsOptions) {
+    match net.TlsStream.connect_postgres(authority, options) {
+        Ok(s) => { panic("unverified or refused TLS connection accepted") }
+        Err(e) => {}
+    }
+}
+fn main() Result<void, io.Error> {
+    args := try os.args()
+    if args.len() != 7 { print("PostgreSQL TLS fixture")
+        return Ok(()) }
+    var options = net.TlsOptions.new()
+    options.ca_file = args.get(2).clone()
+    options.timeout_millis = 1000
+    var stream = try net.TlsStream.connect_postgres(args.get(1), &options)
+    try stream.write_all("encrypted startup".bytes())
+    var bytes = [17]u8{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+    var used = usize(0)
+    for used < bytes.len() {
+        count := try stream.read(&mut bytes[used..])
+        if count == 0 { panic("unexpected EOF") }
+        used = used + count
+    }
+    match string.from_utf8(&bytes) {
+        Some(text) => { if text != "encrypted startup" { panic("TLS echo differs") } }
+        None => { panic("invalid echo") }
+    }
+    try stream.close()
+    must_fail(args.get(3), &options) // wrong hostname
+    var untrusted = net.TlsOptions.new()
+    untrusted.timeout_millis = 1000
+    must_fail(args.get(1), &untrusted)
+    must_fail(args.get(4), &options) // TLS refusal
+    must_fail(args.get(5), &options) // unexpected preface
+    options.timeout_millis = 150
+    must_fail(args.get(6), &options) // silent peer
+    must_fail(&"localhost:5432/path", &options)
+    must_fail(&"user@localhost:5432", &options)
+    print("PostgreSQL TLS fixture passed")
+    return Ok(())
+}

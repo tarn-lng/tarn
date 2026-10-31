@@ -72,7 +72,7 @@ a new release/version rather than replacing a published version tag.
 Example application build:
 
 ```dockerfile
-FROM ghcr.io/tarn-lng/tarn:0.0.6 AS builder
+FROM ghcr.io/tarn-lng/tarn:0.3.0 AS builder
 WORKDIR /app
 COPY . .
 RUN mkdir -p /out && tarn fetch && tarn test && tarn build -o /out/app

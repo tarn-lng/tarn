@@ -88,3 +88,21 @@ fn websocket_client_frames_fragments_closes_and_rejects_violations() {
     assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     std::fs::remove_dir_all(fixture.parent().unwrap()).unwrap();
 }
+
+#[test]
+fn hmac_sha256_matches_known_vector_and_compares_bytes() {
+    let fixture = build(&root().join("tests/native/pass/crypto_hmac_fixture.tarn"), "crypto-hmac");
+    let output = Command::new(&fixture).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout, b"f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8\ntrue\nfalse\n");
+    std::fs::remove_dir_all(fixture.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn postgres_tls_negotiates_before_verified_handshake_and_fails_closed() {
+    let fixture = build(&root().join("tests/native/pass/postgres_tls_fixture.tarn"), "postgres-tls");
+    let output = Command::new("python3").arg(root().join("tests/integration/postgres_tls_fixture.py"))
+        .arg(&fixture).output().unwrap();
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    std::fs::remove_dir_all(fixture.parent().unwrap()).unwrap();
+}
