@@ -1,5 +1,5 @@
 // Cryptographic digests (ADR 0076). Ordinary Tarn with no intrinsic
-// authority; FIPS 180-4 SHA-256 only. No HMAC, ciphers or streaming yet.
+// authority; FIPS 180-4 SHA-256 and RFC 2104 HMAC-SHA-256. No ciphers or streaming yet.
 
 fn _rotr(value u32, count u32) u32 { return (value >> count) | (value << (32 - count)) }
 
@@ -91,4 +91,27 @@ pub fn sha256(data &[]u8) [32]u8 {
         word = word + 1
     }
     return digest
+}
+
+// RFC 2104. Keys longer than the block size are hashed before padding.
+pub fn hmac_sha256(key &[]u8, message &[]u8) [32]u8 {
+    var block = [64]u8{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+    if key.len() > 64 {
+        digest := sha256(key)
+        for i in 0..32 { block[i] = digest[i] }
+    } else { for i in 0..key.len() { block[i] = key[i] } }
+    var inner: Vec<u8> = Vec.new()
+    var outer: Vec<u8> = Vec.new()
+    for b in block { inner.push(b ^ 54)
+    outer.push(b ^ 92) }
+    inner.extend_from_slice(message)
+    digest := sha256(inner.as_slice())
+    outer.extend_from_slice(&digest)
+    return sha256(outer.as_slice())
+}
+pub fn equal_bytes(a &[]u8, b &[]u8) bool {
+    if a.len() != b.len() { return false }
+    var difference = u8(0)
+    for i in 0..a.len() { difference = difference | (a[i] ^ b[i]) }
+    return difference == 0
 }

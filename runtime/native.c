@@ -1398,11 +1398,91 @@ static int tls_text(const TarnString *text, char **out) {
     memcpy(*out, text->bytes, text->len); (*out)[text->len] = 0;
     return 1;
 }
+/* libcurl's stable opensocket ABI (curl/curl.h). The callback completes the
+ * PostgreSQL SSLRequest preface before curl starts its verified TLS handshake.
+ * curl owns a returned descriptor, including all subsequent failure paths. */
+struct tarn_curl_sockaddr {
+    int family, socktype, protocol;
+    unsigned int addrlen;
+    struct sockaddr addr;
+};
+struct tarn_pg_connect { int64_t deadline; int error; };
+static int64_t tls_millis(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) return -1;
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+static int pg_wait(int fd, short events, struct tarn_pg_connect *ctx) {
+    for (;;) {
+        int64_t now = tls_millis();
+        int64_t left = ctx->deadline - now;
+        if (now < 0 || left <= 0) { ctx->error = 28; return 0; }
+        struct pollfd pfd = {fd, events, 0};
+        int count = poll(&pfd, 1, left > INT_MAX ? INT_MAX : (int)left);
+        if (count > 0) return 1;
+        if (count == 0) { ctx->error = 28; return 0; }
+        if (errno != EINTR) { ctx->error = 7; return 0; }
+    }
+}
+static int pg_open(void *context, int purpose, struct tarn_curl_sockaddr *target) {
+    struct tarn_pg_connect *ctx = context;
+    if (purpose != 0 || (target->family != AF_INET && target->family != AF_INET6)
+        || (target->socktype & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != SOCK_STREAM) { ctx->error = -3; return -1; }
+    int fd = socket(target->family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, target->protocol);
+    if (fd < 0) { ctx->error = 7; return -1; }
+    if (connect(fd, &target->addr, target->addrlen) < 0) {
+        if (errno != EINPROGRESS || !pg_wait(fd, POLLOUT, ctx)) goto failure;
+        int error = 0; socklen_t len = sizeof(error);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error) goto failure;
+    }
+    static const uint8_t request[8] = {0, 0, 0, 8, 4, 210, 22, 47};
+    size_t sent = 0;
+    while (sent < sizeof(request)) {
+        ssize_t n = send(fd, request + sent, sizeof(request) - sent, MSG_NOSIGNAL);
+        if (n > 0) { sent += (size_t)n; continue; }
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && pg_wait(fd, POLLOUT, ctx)) continue;
+        goto failure;
+    }
+    uint8_t response;
+    for (;;) {
+        ssize_t n = recv(fd, &response, 1, 0);
+        if (n == 1) break;
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && pg_wait(fd, POLLIN, ctx)) continue;
+        goto failure;
+    }
+    if (response != 'S') { ctx->error = 35; goto failure; }
+    ctx->error = 0;
+    return fd;
+failure:
+    if (!ctx->error) ctx->error = 7;
+    close(fd);
+    return -1;
+}
+static int pg_connected(void *context, int fd, int purpose) {
+    (void)context; (void)fd;
+    return purpose == 0 ? 2 : 1; /* CURL_SOCKOPT_ALREADY_CONNECTED */
+}
+
 void tarn_rt_net_tls_connect(TarnNetRaw *out, const TarnString *url, const TarnString *ca, int64_t timeout) {
     net_init(out); out->domain = 5;
     char *address = NULL, *trust = NULL;
-    if (timeout <= 0 || timeout > LONG_MAX || url->len < 9 || memcmp(url->bytes, "https://", 8)
+    int postgres = url->len > 13 && !memcmp(url->bytes, "postgresql://", 13);
+    if (timeout <= 0 || timeout > LONG_MAX || url->len < 9
+        || (!postgres && memcmp(url->bytes, "https://", 8))
         || !tls_text(url, &address) || !tls_text(ca, &trust)) { out->code = -3; free(address); return; }
+    if (postgres) {
+        /* Only an authority is accepted: never credentials, path or query. */
+        if (!address[13] || strpbrk(address + 13, "/?#@\\")) {
+            out->code = -3; free(address); free(trust); return;
+        }
+        memmove(address + 8, address + 13, strlen(address + 13) + 1);
+        memcpy(address, "https://", 8);
+    }
+    int64_t started = tls_millis();
+    if (started < 0 || timeout > INT64_MAX - started) { out->code = -3; free(address); free(trust); return; }
+    struct tarn_pg_connect pg = {started + timeout, 0};
     pthread_once(&tarn_curl_once, tarn_curl_load);
     if (!tarn_curl.ready || !tarn_curl.send || !tarn_curl.recv) { out->code = -1; free(address); free(trust); return; }
     void *handle = tarn_curl.init();
@@ -1419,9 +1499,16 @@ void tarn_rt_net_tls_connect(TarnNetRaw *out, const TarnString *url, const TarnS
      * default for https offers h2 and servers like api.openai.com pick it,
      * which breaks any HTTP/1.1 upgrade sent on the raw stream. */
     SET(84, 2L);
+    if (postgres) {
+        SET(226, 0L); /* SSL_ENABLE_ALPN: PostgreSQL preface, no HTTP ALPN. */
+        SET(20163, pg_open); SET(10164, &pg);
+        SET(20148, pg_connected);
+        SET(155, (long)timeout); /* DNS + preface + verified handshake total. */
+    }
     if (*trust) SET(10065, trust);
 #undef SET
     if (!code) code = tarn_curl.perform(handle);
+    if (code && pg.error) code = pg.error;
     if (!code) code = tarn_curl.getinfo(handle, 0x50002C, &socket); /* ACTIVESOCKET */
     if (!code && socket < 0) code = 2;
     free(address); free(trust);

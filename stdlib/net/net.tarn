@@ -800,8 +800,22 @@ pub fn TlsOptions.new() TlsOptions { return TlsOptions{timeout_millis: 30000, ca
 /// `https://host:port` only. Certificate and hostname verification are always
 /// on. DNS, TCP and the handshake block the current native task.
 pub fn TlsStream.connect(url &string, options &TlsOptions) Result<TlsStream, io.Error> {
+    prefix := "https://"
+    if url.len() < prefix.len() { return Err(io._fail(io.ErrorKind.InvalidInput)) }
+    for i in 0..prefix.len() {
+        if url.bytes()[i] != prefix.bytes()[i] { return Err(io._fail(io.ErrorKind.InvalidInput)) }
+    }
     if options.timeout_millis == 0 || options.timeout_millis > 9223372036854775807 { return Err(io._fail(io.ErrorKind.InvalidInput)) }
     raw := try io._check(_tls_connect(url, &options.ca_file, i64(options.timeout_millis)))
+    return Ok(TlsStream{native: usize(raw.value), nonblocking: false})
+}
+/// PostgreSQL SSLRequest followed by verified TLS on the same connection.
+/// `authority` is a DNS name (or bracketed IPv6) and port, with no credentials
+/// or path. A refusal of TLS is an error; this method never falls back to TCP.
+/// The timeout covers DNS, TCP, SSLRequest and TLS. Empty CA uses system trust.
+pub fn TlsStream.connect_postgres(authority &string, options &TlsOptions) Result<TlsStream, io.Error> {
+    if options.timeout_millis == 0 || options.timeout_millis > 9223372036854775807 { return Err(io._fail(io.ErrorKind.InvalidInput)) }
+    raw := try io._check(_tls_connect(&("postgresql://" + authority), &options.ca_file, i64(options.timeout_millis)))
     return Ok(TlsStream{native: usize(raw.value), nonblocking: false})
 }
 /// Mode is stream state, not descriptor state: libcurl keeps the descriptor

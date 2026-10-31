@@ -1,0 +1,9 @@
+import "crypto"
+import "encoding"
+
+fn main() {
+    digest := crypto.hmac_sha256("key".bytes(), "The quick brown fox jumps over the lazy dog".bytes())
+    print(encoding.hex(&digest))
+    print(crypto.equal_bytes("same".bytes(), "same".bytes()))
+    print(crypto.equal_bytes("same".bytes(), "samo".bytes()))
+}
