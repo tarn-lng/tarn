@@ -23,21 +23,21 @@ def main():
             executable = Path(directory) / name
             start = time.perf_counter()
             subprocess.run(
-                [compiler, "build", str(root / f"{name}.tarn"), "-o", str(executable)],
-                check=True, stdout=subprocess.DEVNULL,
+                [compiler, "build", str(root / "fixtures" / f"{name}.tarn"), "-o", str(executable)],
+                check=True,
+                capture_output=True,
             )
             build_ms = (time.perf_counter() - start) * 1000
-            samples = []
+            elf_bytes = executable.stat().st_size
+            runtimes = []
             for _ in range(5):
-                start = time.perf_counter()
+                run_start = time.perf_counter()
                 result = subprocess.run([str(executable)], capture_output=True, check=True)
-                samples.append((time.perf_counter() - start) * 1000)
+                runtimes.append((time.perf_counter() - run_start) * 1000)
                 if result.stdout != output:
-                    raise RuntimeError(f"{name}: unexpected output {result.stdout!r}")
-            print(
-                f"{name:12} {build_ms:10.3f} {executable.stat().st_size:12} "
-                f"{statistics.median(samples):20.3f}", flush=True,
-            )
+                    raise RuntimeError(f"Unexpected output for {name}: {result.stdout!r}")
+            runtime_median = statistics.median(runtimes)
+            print(f"{name:<12} {build_ms:<10.2f} {elf_bytes:<12} {runtime_median:<10.2f}", flush=True)
 
 
 if __name__ == "__main__":
