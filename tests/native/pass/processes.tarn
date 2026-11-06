@@ -1,13 +1,13 @@
 import "process"
 import "io"
 fn main() Result<void, io.Error> {
-    command := process.Command.new("/bin/printf").arg("%s").arg("owned child 日本")
+    command := process.Command.new("/usr/bin/printf").arg("%s").arg("owned child 日本")
     output := try command.output()
     print(try output.stdout_text())
     print(output.status.success())
     print(output.stderr.len())
-    print((try process.Command.new("/bin/false").status()).success())
-    child := try process.Command.new("/bin/true").start()
+    print((try process.Command.new("/usr/bin/false").status()).success())
+    child := try process.Command.new("/usr/bin/true").start()
     worker := spawn move fn() process.Process { return child }
     print((try worker.join().wait()).success())
     return Ok(())

@@ -1,11 +1,21 @@
 #include <assert.h>
 #include <dirent.h>
 static int descriptors(void) {
-    DIR *dir = opendir("/proc/self/fd"); assert(dir); int n = 0;
+    DIR *dir = opendir(
+#ifdef __APPLE__
+        "/dev/fd"
+#else
+        "/proc/self/fd"
+#endif
+    ); assert(dir); int n = 0;
     while (readdir(dir)) ++n;
     closedir(dir); return n;
 }
 int main(void) {
+#ifdef __APPLE__
+    /* The runtime's one private identity queue lives until exit; count from after it. */
+    pthread_once(&net_witness_once, net_witness_open);
+#endif
     int before = descriptors(); TarnNetRaw out;
     tarn_rt_net_poll_new(&out); assert(!out.code); TarnPoll *poll = (TarnPoll *)(uintptr_t)out.value;
     tarn_rt_net_exec_new(&out, poll); assert(!out.code); TarnExecution *owner = (TarnExecution *)(uintptr_t)out.value;

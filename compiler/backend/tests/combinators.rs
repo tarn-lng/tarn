@@ -92,6 +92,7 @@ fn main() {
 /// yet values made from them (moved, stored, cloned, concatenated) keep
 /// ordinary ownership and are each destroyed once.
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "counts mallocs through LD_PRELOAD, which dyld does not honor")]
 fn string_literals_do_not_allocate_per_evaluation() {
     let dir = std::env::temp_dir().join(format!("tarn-literal-alloc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

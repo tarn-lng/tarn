@@ -1,7 +1,13 @@
 /* Linked into the private runtime test, not a public Tarn API. */
 #include <assert.h>
 static int descriptors(void) {
-    DIR *dir = opendir("/proc/self/fd"); assert(dir); int n = 0;
+    DIR *dir = opendir(
+#ifdef __APPLE__
+        "/dev/fd"
+#else
+        "/proc/self/fd"
+#endif
+    ); assert(dir); int n = 0;
     while (readdir(dir)) ++n;
     closedir(dir); return n;
 }
@@ -30,7 +36,7 @@ int main(int argc, char **argv) {
     tarn_rt_process_wait(&out, pid); assert(!out.code && out.value == 0); reaped(pid);
     assert(fcntl(extra, F_GETFD) >= 0); close(extra);
     for (int i = 0; i < 64; ++i) {
-        spawn_raw(&out, "/bin/true", NULL, 0, 0); assert(!out.code); pid = (int)out.value;
+        spawn_raw(&out, "/usr/bin/true", NULL, 0, 0); assert(!out.code); pid = (int)out.value;
         tarn_rt_process_drop(pid); reaped(pid);
         spawn_raw(&out, "/missing-tarn-15d", NULL, 0, 1); assert(out.domain == 4 && out.code == ENOENT);
         assert(descriptors() == before);
@@ -40,14 +46,14 @@ int main(int argc, char **argv) {
     int saved0 = dup(0), saved1 = dup(1); assert(saved0 >= 3 && saved1 >= 3);
     close(0); close(1);
     const char *message[] = {"closed-stdio"};
-    spawn_raw(&out, "/bin/printf", message, 1, 1); assert(!out.code); pid = (int)out.value;
+    spawn_raw(&out, "/usr/bin/printf", message, 1, 1); assert(!out.code); pid = (int)out.value;
     int first = descriptor(&out, 0), second = descriptor(&out, 4); assert(first >= 3 && second >= 3);
     uint8_t buffer[32]; tarn_rt_process_read(&out, first, buffer, sizeof(buffer));
     assert(!out.code && out.value == 12 && !memcmp(buffer, "closed-stdio", 12));
     tarn_rt_process_pipe_drop(first); tarn_rt_process_pipe_drop(second);
     tarn_rt_process_wait(&out, pid); assert(!out.code); reaped(pid);
     assert(!setenv("TARN_PROCESS_DUP_FAIL", "1", 1));
-    spawn_raw(&out, "/bin/true", NULL, 0, 1); assert(out.domain == 4 && out.code == EMFILE);
+    spawn_raw(&out, "/usr/bin/true", NULL, 0, 1); assert(out.domain == 4 && out.code == EMFILE);
     assert(!unsetenv("TARN_PROCESS_DUP_FAIL"));
     assert(dup2(saved0, 0) == 0 && dup2(saved1, 1) == 1); close(saved0); close(saved1);
     assert(descriptors() == before);

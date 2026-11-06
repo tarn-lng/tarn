@@ -11,7 +11,8 @@ fn build_run_and_failure_paths() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let executable = source.with_extension("");
     let bytes = std::fs::read(&executable).unwrap();
-    assert_eq!(&bytes[..4], b"\x7fELF");
+    let magic: &[u8; 4] = if cfg!(target_os = "macos") { b"\xcf\xfa\xed\xfe" } else { b"\x7fELF" };
+    assert_eq!(&bytes[..4], magic);
     let output = Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");

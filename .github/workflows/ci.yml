@@ -66,3 +66,35 @@ jobs:
           python3 tools/release/container.py prepare "v$VERSION" target/dist target/container-context "$ARCH"
           docker build --build-arg "VERSION=$VERSION" --build-arg "REVISION=$GITHUB_SHA" --tag tarn-ci-builder target/container-context
           python3 tools/release/test-container.py tarn-ci-builder "$VERSION"
+  # macOS port (ADR 0098). Not a required check until the port is supported.
+  test-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-15-intel
+          - arch: aarch64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Put the macOS test helpers first on PATH
+        run: echo "$GITHUB_WORKSPACE/tools/ci/macos" >> "$GITHUB_PATH"
+      - run: cargo test --locked --release --workspace --no-fail-fast
+        env:
+          TARN_VERIFY_CODEGEN: '1'
+      - run: cargo build --locked --release -p tarn -p tarn-lsp
+      - name: Examples smoke (tarn check)
+        run: |
+          for example in examples/*.tarn; do
+            echo "::group::tarn check $example"
+            target/release/tarn check "$example"
+            echo "::endgroup::"
+          done
+      - name: Examples output (tarn run)
+        run: tools/ci/run-examples.sh target/release/tarn

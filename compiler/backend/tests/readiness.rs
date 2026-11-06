@@ -212,9 +212,9 @@ fn fault_binary(src: &str, tag: &str) -> PathBuf {
     std::fs::write(&object, tarn_backend::emit_object(res.drops.as_ref().unwrap(), res.typed.as_ref().unwrap()).unwrap()).unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let exe = dir.join("program");
-    let out = Command::new("cc").args(["-std=c11", "-O0", "-pthread", "-no-pie"])
+    let out = Command::new("cc").args(["-std=c11", "-O0", "-pthread", if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" }])
         .arg(object).arg(root.join("../../runtime/native.c")).arg(root.join("tests/readiness_faults.c"))
-        .args(["-Wl,--wrap=epoll_wait", "-Wl,--wrap=clock_gettime", "-Wl,--wrap=send", "-Wl,--wrap=connect", "-lm", "-o"])
+        .args([if cfg!(target_os = "macos") { "-Wl,--wrap=kevent" } else { "-Wl,--wrap=epoll_wait" }, "-Wl,--wrap=clock_gettime", "-Wl,--wrap=send", "-Wl,--wrap=connect", "-lm", "-o"])
         .arg(&exe).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr)); exe
 }

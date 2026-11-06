@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+# Test-only `cc` for macOS. Apple's ld has no GNU `--wrap`, which the runtime
+# fault-injection tests rely on, so emulate it: `-Dsym=__wrap_sym` redirects
+# references while compiling, and an assembly trampoline defines `__real_sym`.
+# Every invocation without `-Wl,--wrap=` passes straight through.
+use strict;
+use warnings;
+use File::Temp qw(tempdir);
+
+my $real = '/usr/bin/cc';
+my @wraps = map { /^-Wl,--wrap=(.+)$/ ? $1 : () } @ARGV;
+if (!@wraps) { no warnings 'exec'; exec { $real } $real, @ARGV; die "cc: $!\n"; }
+
+my @defines = map { "-D$_=__wrap_$_" } @wraps;
+my $scratch = tempdir('tarn-wrap-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+my (@flags, @sources, @link);
+my @arguments = grep { !/^-Wl,--wrap=/ } @ARGV;
+while (defined(my $argument = shift @arguments)) {
+    if ($argument eq '-o') { push @link, $argument, shift @arguments }
+    elsif ($argument =~ /\.c$/) { push @sources, $argument }
+    elsif ($argument =~ /^-(l|L|Wl,)/ || $argument =~ /\.(o|a|dylib)$/) { push @link, $argument }
+    else { push @flags, $argument }
+}
+my @objects;
+for my $index (0 .. $#sources) {
+    my $object = "$scratch/source$index.o";
+    system($real, @flags, @defines, '-c', $sources[$index], '-o', $object) == 0 or exit 1;
+    push @objects, $object;
+}
+my $assembly = "$scratch/real.s";
+open my $out, '>', $assembly or die "cc: $!\n";
+print $out ".text\n";
+for my $name (@wraps) {
+    print $out ".globl ___real_$name\n.p2align 2\n___real_$name:\n";
+    if (`uname -m` =~ /arm64/) {
+        print $out "  adrp x16, _$name\@GOTPAGE\n  ldr x16, [x16, _$name\@GOTPAGEOFF]\n  br x16\n";
+    } else {
+        print $out "  jmpq *_$name\@GOTPCREL(%rip)\n";
+    }
+}
+close $out or die "cc: $!\n";
+system($real, '-c', $assembly, '-o', "$scratch/real.o") == 0 or exit 1;
+my $status = system($real, @flags, @objects, "$scratch/real.o", @link);
+exit($status == 0 ? 0 : 1);

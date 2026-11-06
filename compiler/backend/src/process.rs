@@ -44,7 +44,7 @@ impl Cx<'_, '_> {
         let operation = name
             .strip_prefix("process._")
             .ok_or_else(|| Error::bug("process operation"))?;
-        self.runtime(&format!("tarn_rt_process_{operation}"), &values);
+        self.runtime_raw(&format!("tarn_rt_process_{operation}"), &values, out);
         Ok(Some(Val {
             value: Some(out),
             ty: dest.clone(),

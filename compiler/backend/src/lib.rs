@@ -1,4 +1,4 @@
-//! Ahead-of-time Linux x86_64 and AArch64 backend. Ownership semantics come exclusively
+//! Ahead-of-time Linux and macOS, x86_64 and AArch64 backend. Ownership semantics come exclusively
 //! from post-drop IR. No move checker, loans or provenance enter this crate.
 mod codegen;
 pub mod layout;
@@ -46,8 +46,8 @@ pub fn emit_object(p: &post_drop::Program, t: &Typed) -> Result<Vec<u8>> {
 }
 
 fn emit_entry_object(p: &post_drop::Program, t: &Typed, entry: Option<tarn_ir::FunctionId>) -> Result<Vec<u8>> {
-    if !cfg!(all(target_os = "linux", target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"))) {
-        return Err(Error::unsupported("target must be little-endian Linux x86_64 or aarch64"));
+    if !cfg!(all(any(target_os = "linux", target_os = "macos"), target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"))) {
+        return Err(Error::unsupported("target must be little-endian Linux or macOS on x86_64 or aarch64"));
     }
     let bugs = post_drop::verify(p, t);
     if !bugs.is_empty() {
@@ -89,6 +89,13 @@ pub fn build_tests(p: &post_drop::Program, t: &Typed, output: &Path, libraries: 
 fn build_entry(p: &post_drop::Program, t: &Typed, output: &Path, libraries: &[String], entry: Option<tarn_ir::FunctionId>) -> Result<()> {
     if let Some(bad) = libraries.iter().find(|l| !valid_library(l)) {
         return Err(Error { message: format!("invalid library `{bad}`: use a name such as `sqlite3` or an exact file such as `:libsqlite3.so.0`") });
+    }
+    // `-l:file` is a GNU linker form; Apple's ld would only report a confusing
+    // "library not found" for it.
+    if cfg!(target_os = "macos") {
+        if let Some(exact) = libraries.iter().find(|l| l.starts_with(':')) {
+            return Err(Error { message: format!("exact-file library `{exact}` is not supported on macOS: use the library name, e.g. `sqlite3` for `libsqlite3.dylib`") });
+        }
     }
     let bytes = emit_entry_object(p, t, entry)?;
     let scratch = Scratch::new()?;
@@ -134,10 +141,16 @@ fn linker_message(stderr: &str, libraries: &[String]) -> String {
         .lines()
         .filter_map(|l| l.split("undefined reference to `").nth(1))
         .filter_map(|rest| rest.split('\'').next())
+        .chain(apple_undefined_symbols(stderr))
         .collect();
     symbols.sort_unstable();
     symbols.dedup();
-    let missing: Vec<&str> = stderr.lines().filter_map(|l| l.split("cannot find -l").nth(1)).map(|l| l.split(':').next().unwrap_or(l).trim()).collect();
+    let missing: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.split("cannot find -l").nth(1))
+        .map(|l| l.split(':').next().unwrap_or(l).trim())
+        .chain(stderr.lines().filter_map(|l| l.split("ld: library '").nth(1)).filter_map(|rest| rest.split('\'').next()))
+        .collect();
     if !missing.is_empty() {
         return format!("native linker cannot find library {}; install it or pass the exact file, e.g. `--link :libname.so.0`", missing.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", "));
     }
@@ -159,6 +172,11 @@ fn linker_message(stderr: &str, libraries: &[String]) -> String {
         return format!("native linker found no definition for extern \"C\" {}; {hint}", symbols.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", "));
     }
     format!("native linker failed: {stderr}")
+}
+/// Apple's ld lists undefined symbols as `  "_name", referenced from:` under one
+/// heading. Mach-O prefixes C names with `_`; report the source-level name.
+fn apple_undefined_symbols(stderr: &str) -> impl Iterator<Item = &str> {
+    stderr.lines().filter_map(|l| l.trim_start().strip_prefix("\"_")?.split_once("\", referenced from").map(|(name, _)| name))
 }
 /// The system library that usually defines a C symbol, by well-known
 /// prefixes. Only a hint for the linker message; never linked implicitly.
@@ -197,7 +215,11 @@ fn likely_library(symbol: &str) -> Option<&'static str> {
 }
 
 /// Flags for the embedded runtime and the final link, shared by both paths.
+/// macOS executables are always position independent (ADR 0098).
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_FLAGS: [&str; 5] = ["-std=c11", "-O2", "-fno-strict-aliasing", "-no-pie", "-pthread"];
+#[cfg(target_os = "macos")]
+const RUNTIME_FLAGS: [&str; 4] = ["-std=c11", "-O2", "-fno-strict-aliasing", "-pthread"];
 
 /// The embedded C runtime never changes for a given compiler, so its object
 /// is compiled once per (runtime source, flags, C compiler identity) and kept
@@ -280,5 +302,13 @@ mod linker_tests {
         let message = super::linker_message(stderr, &["gtk-4".into()]);
         assert!(message.contains("`gio-2.0`") && !message.contains("`gtk-4`;"), "{message}");
         assert!(super::linker_message("undefined reference to `my_own_symbol'\n", &[]).contains("[native] links"));
+    }
+    #[test]
+    fn apple_linker_output_uses_source_level_names() {
+        let stderr = "Undefined symbols for architecture arm64:\n  \"_sqlite3_open\", referenced from:\n      _tarn_fn_1 in program.o\nld: symbol(s) not found for architecture arm64\n";
+        let message = super::linker_message(stderr, &[]);
+        assert!(message.contains("`sqlite3_open`") && message.contains("`sqlite3`"), "{message}");
+        let message = super::linker_message("ld: library 'nosuchlib' not found\nclang: error: linker command failed\n", &[]);
+        assert!(message.contains("cannot find library `nosuchlib`"), "{message}");
     }
 }

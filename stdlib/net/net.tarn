@@ -1,6 +1,5 @@
 // Blocking and explicit nonblocking Linux networking. Opaque descriptors are owned, Transfer, not Share.
 import "io"
-import "ffi"
 // Blocking and explicit nonblocking Linux networking. Opaque descriptors are owned, Transfer, not Share.
 pub struct TcpListener { fd i32 }
 pub struct TcpStream { fd i32 }
@@ -75,19 +74,18 @@ pub fn TcpListener.bind_addr(address SocketAddr) Result<TcpListener, io.Error> {
     try _listening(listener.fd)
     return Ok(listener)
 }
-extern "C" fn setsockopt(fd i32, level i32, name i32, value *u8, length u32) i32
+extern "C" fn tarn_net_share_port(fd i32) i32
 /// A listener that shares its address with this process's other shared
 /// listeners (SO_REUSEPORT): the kernel spreads new connections across them,
 /// one accept queue per listener (Phase 30, ADR 0058). Linux limits sharing
-/// to the same effective user. Plain `bind` keeps rejecting a second listener.
+/// to the same effective user. macOS allows the shared bind but does not spread
+/// connections evenly (ADR 0098). Plain `bind` keeps rejecting a second listener.
 pub fn TcpListener.bind_shared(address &string) Result<TcpListener, io.Error> {
     target := try resolve(address)
     raw := try _open(target, false)
     listener := TcpListener{fd: i32(raw.value)}
-    one := [4]u8{1, 0, 0, 0}
     var result: i32 = 0
-    // SOL_SOCKET = 1, SO_REUSEPORT = 15 on Linux.
-    unsafe { result = setsockopt(listener.fd, 1, 15, ffi.slice(&one[0..4]), 4) }
+    unsafe { result = tarn_net_share_port(listener.fd) }
     if result != 0 { return Err(io.Error.new(io.ErrorKind.OtherOs)) }
     try _bound(listener.fd, target)
     try _listening(listener.fd)

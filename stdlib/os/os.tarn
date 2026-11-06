@@ -1,6 +1,6 @@
 // Process arguments and environment for applications (Phase 24A). Ordinary
-// Tarn over `fs` and `ffi`, with no compiler or runtime support: Linux exposes
-// the exact argv in /proc/self/cmdline and libc keeps the environment.
+// Tarn over `fs` and `ffi`: Linux exposes the exact argv in /proc/self/cmdline,
+// macOS through a runtime helper (ADR 0098), and libc keeps the environment.
 // Text is UTF-8; invalid bytes are reported, never replaced.
 import "fs"
 import "io"
@@ -11,13 +11,24 @@ extern "C" fn strlen(text *u8) usize
 extern "C" fn fflush(stream *mut u8) i32
 extern "C" fn _exit(status i32)
 extern "C" fn access(name *u8, mode i32) i32
-extern "C" fn statvfs(name *u8, out *mut u8) i32
+extern "C" fn tarn_os_disk_space(name *u8, out *mut u64) i32
+extern "C" fn tarn_os_args_block(length *mut u64) *u8
 extern "C" fn __errno_location() *u8
 
 /// The program's arguments; index 0 is the program path, as the OS provides
 /// it. Fails with InvalidData if an argument is not UTF-8.
 pub fn args() Result<Vec<string>, io.Error> {
-    data := try fs.read("/proc/self/cmdline")
+    var data: Vec<u8> = Vec.new()
+    var size = [1]u64{0}
+    var provided = false
+    unsafe {
+        block := tarn_os_args_block(ffi.slice_mut(&mut size))
+        if !ffi.is_null(block) {
+            data = ffi.copy_bytes(block, usize(size[0]))
+            provided = true
+        }
+    }
+    if !provided { data = try fs.read("/proc/self/cmdline") }
     var list: Vec<string> = Vec.new()
     var current: Vec<u8> = Vec.new()
     for byte in data.as_slice() {
@@ -115,33 +126,14 @@ pub copy struct DiskSpace {
     pub available u64
 }
 
-fn word(bytes &[]u8, at usize) u64 {
-    var value: u64 = 0
-    var i: usize = 8
-    for i > 0 {
-        i = i - 1
-        value = value * 256 + u64(bytes[at + i])
-    }
-    return value
-}
-
 pub fn disk_space(name &string) Result<DiskSpace, io.Error> {
     match ffi.CString.new(name) {
         Some(c) => {
-            // glibc x86_64 struct statvfs (112 bytes): f_bsize, f_frsize,
-            // f_blocks, f_bfree, f_bavail, ... as 64-bit unsigned longs.
-            var buffer: Vec<u8> = Vec.new()
-            var n = 0
-            for n < 112 {
-                buffer.push(0)
-                n = n + 1
-            }
+            var sizes = [3]u64{0, 0, 0}
             var result: i32 = -1
-            unsafe { result = statvfs(c.as_ptr(), ffi.slice_mut(buffer.as_mut_slice())) }
+            unsafe { result = tarn_os_disk_space(c.as_ptr(), ffi.slice_mut(&mut sizes)) }
             if result != 0 { return Err(last_error()) }
-            data := buffer.as_slice()
-            unit := word(data, 8)
-            return Ok(DiskSpace{total: word(data, 16) * unit, free: word(data, 24) * unit, available: word(data, 32) * unit})
+            return Ok(DiskSpace{total: sizes[0], free: sizes[1], available: sizes[2]})
         }
         None => { return Err(io.Error.new(io.ErrorKind.InvalidInput)) }
     }

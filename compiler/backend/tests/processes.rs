@@ -8,6 +8,8 @@ use std::{
 fn checked(src: &str, tag: &str) -> (PathBuf, tarn_driver::CheckResult) {
     let dir = std::env::temp_dir().join(format!("tarn-process-{}-{tag}", std::process::id()));
     std::fs::create_dir_all(dir.join("data")).unwrap();
+    // The children report getcwd, which resolves macOS's /var -> /private/var.
+    let dir = dir.canonicalize().unwrap();
     let helper = dir.join("child");
     let cc = Command::new("cc")
         .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
@@ -139,7 +141,7 @@ fn main() Result<void, io.Error> {
  reusable := process.Command.new("true")
  print((try reusable.status()).success())
  print((try reusable.status()).success())
- print((try process.Command.new("/bin/false").status()).success())
+ print((try process.Command.new("/usr/bin/false").status()).success())
  status := try process.Command.new("/bin/sh").arg("-c").arg("kill -TERM $$").status()
  match status.signal() { Some(value) => { print(value) }
  None => { panic("expected signal") } }
@@ -209,10 +211,10 @@ fn check(command process.Command) {
 fn main() {
  check(process.Command.new("/tarn-missing-process-15d"))
  check(process.Command.new(""))
- check(process.Command.new("/bin/true\0ignored"))
- check(process.Command.new("/bin/true").arg("bad\0arg"))
- check(process.Command.new("/bin/true").current_dir(""))
- check(process.Command.new("/bin/true").current_dir("ROOT/missing"))
+ check(process.Command.new("/usr/bin/true\0ignored"))
+ check(process.Command.new("/usr/bin/true").arg("bad\0arg"))
+ check(process.Command.new("/usr/bin/true").current_dir(""))
+ check(process.Command.new("/usr/bin/true").current_dir("ROOT/missing"))
  check(process.Command.new("ROOT/data/not-a-binary"))
  check(process.Command.new("ROOT/data/not-executable"))
 }
@@ -238,7 +240,7 @@ fn completion_on_all_normal_exits_and_task_transfer_is_exactly_once() {
         r#"import "process"
 import "io"
 fn child() process.Process {
- match process.Command.new("/bin/true").start() { Ok(value) => { return value }
+ match process.Command.new("/usr/bin/true").start() { Ok(value) => { return value }
   Err(error) => { panic("spawn failed") } }
 }
 fn early() { p := child()
@@ -311,7 +313,7 @@ fn main() {
 #[test]
 fn corrupted_resource_and_intrinsic_contracts_are_rejected() {
     let (dir, mut res) = checked(
-        "import \"process\"\nimport \"fs\"\nfn observe(f &fs.File) { f.metadata() }\nfn main() { process.Command.new(\"/bin/true\").status() }",
+        "import \"process\"\nimport \"fs\"\nfn observe(f &fs.File) { f.metadata() }\nfn main() { process.Command.new(\"/usr/bin/true\").status() }",
         "abi",
     );
     let drops = res.drops.as_ref().unwrap();
@@ -402,19 +404,19 @@ fn link_faults(dir: &std::path::Path, res: &tarn_driver::CheckResult) -> PathBuf
             "-Wextra",
             "-Werror",
             "-fno-strict-aliasing",
-            "-no-pie",
+            if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" },
             "-pthread",
         ])
         .arg(object)
         .arg(root.join("../../runtime/native.c"))
         .arg(root.join("tests/process_faults.c"))
         .args([
-            "-Wl,--wrap=pipe2",
+            if cfg!(target_os = "macos") { "-Wl,--wrap=pipe" } else { "-Wl,--wrap=pipe2" },
             "-Wl,--wrap=fcntl",
             "-Wl,--wrap=read",
             "-Wl,--wrap=waitpid",
             "-Wl,--wrap=close",
-            "-Wl,--wrap=posix_spawnp",
+            if cfg!(target_os = "macos") { "-Wl,--wrap=posix_spawn" } else { "-Wl,--wrap=posix_spawnp" },
             "-lm",
             "-o",
         ])
@@ -461,12 +463,12 @@ fn private_runtime_never_leaks_fds_or_inherits_unrelated_descriptors() {
         .arg(source)
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/process_faults.c"))
         .args([
-            "-Wl,--wrap=pipe2",
+            if cfg!(target_os = "macos") { "-Wl,--wrap=pipe" } else { "-Wl,--wrap=pipe2" },
             "-Wl,--wrap=fcntl",
             "-Wl,--wrap=read",
             "-Wl,--wrap=waitpid",
             "-Wl,--wrap=close",
-            "-Wl,--wrap=posix_spawnp",
+            if cfg!(target_os = "macos") { "-Wl,--wrap=posix_spawn" } else { "-Wl,--wrap=posix_spawnp" },
             "-lm",
             "-o",
         ])
@@ -639,7 +641,7 @@ import "net"
 import "process"
 fn main() Result<void, io.Error> {
     pair := try net.UnixStream.pair()
-    launch := process.Command.new("/bin/true").pass(pair.second)
+    launch := process.Command.new("/usr/bin/true").pass(pair.second)
     first := try launch.start()
     second := try launch.start()
     return Ok(())

@@ -49,7 +49,8 @@ impl Cx<'_, '_> {
         }
         let operation = tarn_types::stdlib_intrinsic_operation(name).ok_or_else(|| Error::bug("network intrinsic name"))?;
         let operation = if operation.starts_with("close_") && operation != "close_poll" && operation != "close_tls" { "close" } else { operation };
-        self.runtime(&format!("tarn_rt_net_{operation}"), &values);
+        let symbol = format!("tarn_rt_net_{operation}");
+        if wake_result { self.runtime(&symbol, &values); } else { self.runtime_raw(&symbol, &values, out); }
         Ok(Some(Val { value: Some(out), ty: dest.clone() }))
     }
 }

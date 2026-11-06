@@ -7,7 +7,7 @@ pub fn Duration.milliseconds(count u64) Duration { return Duration{millis: count
 /// Overflow aborts (checked arithmetic).
 pub fn Duration.seconds(count u64) Duration { return Duration{millis: count * 1000} }
 pub fn Duration.as_millis(self) u64 { return self.millis }
-/// One-shot monotonic timer: an owned Linux timerfd on the shared readiness
+/// One-shot monotonic timer: an owned pollable descriptor on the shared readiness
 /// Poll. Not Share; moving it moves the descriptor; destruction closes it once.
 pub struct Timer { fd i32 }
 extern "intrinsic" fn _timer_new(millis i64) io._Raw
@@ -43,9 +43,9 @@ pub async fn sleep(duration Duration) Result<void, io.Error> {
     return await timer.wait_async()
 }
 
-// Linux x86_64 timespec is two signed 64-bit fields (ADR 0060).
+// Two signed 64-bit fields: seconds, nanoseconds (ADRs 0060, 0098).
 import "ffi"
-extern "C" fn clock_gettime(clock i32, out *mut i64) i32
+extern "C" fn tarn_clock_read(clock i32, out *mut i64) i32
 extern "C" fn __errno_location() *u8
 pub copy struct Instant { seconds u64
  nanos u32 }
@@ -55,7 +55,7 @@ pub copy struct Timestamp { pub unix_seconds i64
 fn _clock(which i32) Result<Timestamp, io.Error> {
     var fields = [2]i64{0, 0}
     var result: i32 = 0
-    unsafe { result = clock_gettime(which, ffi.slice_mut(&mut fields)) }
+    unsafe { result = tarn_clock_read(which, ffi.slice_mut(&mut fields)) }
     if result != 0 {
         var bytes: Vec<u8> = Vec.new()
         unsafe { bytes = ffi.copy_bytes(__errno_location(), 4) }

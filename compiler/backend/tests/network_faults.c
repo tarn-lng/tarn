@@ -1,4 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE /* SO_NOSIGPIPE */
+#endif
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
@@ -18,7 +21,13 @@ ssize_t __real_send(int, const void*, size_t, int);
 ssize_t __wrap_send(int fd, const void *b, size_t n, int flags) {
     ONCE();
     if (getenv("TEST_ZERO")) return 0;
-    if (getenv("TEST_DROP_NOSIGNAL")) flags = 0;
+    if (getenv("TEST_DROP_NOSIGNAL")) {
+        flags = 0;
+#ifdef __APPLE__
+        /* The macOS runtime protects each socket with SO_NOSIGPIPE instead. */
+        int off = 0; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &off, sizeof(off));
+#endif
+    }
     if (getenv("TEST_PARTIAL") && n > 1) n = 1;
     return __real_send(fd,b,n,flags);
 }
@@ -38,7 +47,18 @@ int __wrap_getaddrinfo(const char *host, const char *port, const struct addrinfo
 int __real_bind(int, const struct sockaddr*, socklen_t);
 int __wrap_bind(int fd, const struct sockaddr *a, socklen_t n) {
     const char *code = getenv("TEST_ERRNO");
-    if (code) { errno = atoi(code); return -1; }
+    if (code) {
+        errno = atoi(code);
+#ifdef __APPLE__
+        /* Injected values are canonical (Linux) numbers; raise the native errno. */
+        switch (errno) {
+            case 98: errno = EADDRINUSE; break; case 111: errno = ECONNREFUSED; break;
+            case 104: errno = ECONNRESET; break; case 110: errno = ETIMEDOUT; break;
+            case 11: errno = EAGAIN; break;
+        }
+#endif
+        return -1;
+    }
     ONCE(); return __real_bind(fd,a,n);
 }
 int __real_close(int);
@@ -69,7 +89,13 @@ int __wrap_listen(int fd, int backlog) {
 #include <dirent.h>
 static int baseline_fds = -1;
 static int count_fds(void) {
-    DIR *dir = opendir("/proc/self/fd"); if (!dir) abort();
+    DIR *dir = opendir(
+#ifdef __APPLE__
+        "/dev/fd"
+#else
+        "/proc/self/fd"
+#endif
+    ); if (!dir) abort();
     int own = dirfd(dir), count = 0; struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9' && atoi(entry->d_name) != own) count++;
@@ -78,7 +104,15 @@ static int count_fds(void) {
 }
 __attribute__((constructor)) static void reset_sigpipe(void) {
     signal(SIGPIPE, SIG_DFL);
-    if (getenv("TEST_FD_AUDIT")) baseline_fds = count_fds();
+    if (getenv("TEST_FD_AUDIT")) {
+#ifdef __APPLE__
+        /* libSystem's resolver keeps its descriptors for the process after first
+         * use; open them before counting so every runtime descriptor still counts. */
+        struct addrinfo *found = NULL;
+        if (__real_getaddrinfo("localhost", "1", NULL, &found) == 0) freeaddrinfo(found);
+#endif
+        baseline_fds = count_fds();
+    }
 }
 __attribute__((destructor)) static void audit_fds(void) {
     if (baseline_fds >= 0 && count_fds() != baseline_fds) { fputs("test:fd-leak\n", stderr); abort(); }

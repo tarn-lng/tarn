@@ -1,9 +1,14 @@
+/* Tarn internal runtime ABI v0: little-endian Linux and macOS, x86_64/AArch64,
+ * native C ABI. macOS differences stay behind __APPLE__ (ADR 0098). */
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#else
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-/* Tarn internal runtime ABI v0: little-endian Linux x86_64/AArch64, native C ABI. */
 #define _POSIX_C_SOURCE 200809L
 #include <sys/timerfd.h>
+#endif
 #include <stdint.h>
 #include <limits.h>
 #include <stdio.h>
@@ -38,7 +43,7 @@ static void exec_trace(const char *kind, const char *event, uintptr_t storage) {
 }
 
 _Static_assert(sizeof(void *) == 8 && sizeof(long) == 8 && CHAR_BIT == 8,
-               "Tarn requires a 64-bit Linux LP64 runtime");
+               "Tarn requires a 64-bit LP64 runtime");
 typedef struct { uint64_t len; unsigned char bytes[]; } TarnString;
 /* Owned string pointers are unique. Literals allocate; moves transfer ownership. */
 TarnString *tarn_rt_string(const unsigned char *data, uint64_t len) {
@@ -91,11 +96,21 @@ int32_t tarn_rt_string_compare(const TarnString *a, const TarnString *b) {
 /* Static string literals (Phase 27): read-only TarnString images that the
  * linker gathers into the `tarn_strings` section and brackets with these
  * symbols (weak: absent when a program has no literal). */
+#ifdef __APPLE__
+/* Apple's ld synthesizes these names, and an empty range without literals. */
+extern const unsigned char __start_tarn_strings[] __asm("section$start$__TEXT$tarn_strings");
+extern const unsigned char __stop_tarn_strings[] __asm("section$end$__TEXT$tarn_strings");
+#else
 extern const unsigned char __start_tarn_strings[] __attribute__((weak));
 extern const unsigned char __stop_tarn_strings[] __attribute__((weak));
+#endif
 static int tarn_static_string(const TarnString *s) {
     const unsigned char *p = (const unsigned char *)s;
+#ifdef __APPLE__
+    return p >= __start_tarn_strings && p < __stop_tarn_strings;
+#else
     return __start_tarn_strings && p >= __start_tarn_strings && p < __stop_tarn_strings;
+#endif
 }
 void tarn_rt_drop_string(TarnString *s) {
     /* Opt-in compiler test observation, never a user destructor hook. A
@@ -283,6 +298,10 @@ TarnTask *tarn_rt_task_spawn(TarnTaskWorker worker, TarnTaskResultDrop drop_resu
     pthread_t thread;
     pthread_attr_t attributes;
     if (pthread_attr_init(&attributes) || pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED)
+#ifdef __APPLE__
+        /* macOS gives secondary threads 512 KiB; keep Linux's 8 MiB task budget. */
+        || pthread_attr_setstacksize(&attributes, 8u << 20)
+#endif
         || pthread_create(&thread, &attributes, tarn_pool_thread, task)) tarn_task_fault();
     pthread_attr_destroy(&attributes);
     return task;
@@ -426,9 +445,75 @@ void tarn_rt_atomic_destroy(void *a) { free(a); }
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#ifdef __APPLE__
+/* macOS has neither send flag nor atomic socket flags: SO_NOSIGPIPE on every
+ * descriptor replaces MSG_NOSIGNAL, and fcntl replaces SOCK_CLOEXEC. A spawn
+ * uses POSIX_SPAWN_CLOEXEC_DEFAULT, so the non-atomic window leaks nothing. */
+#include <fcntl.h>
+/* Newer SDKs define the flag, but older kernels may reject it. */
+#undef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+static int net_prepare(int fd, int nonblocking) {
+    if (fd < 0) return fd;
+    int one = 1, mode = fcntl(fd, F_GETFL);
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || mode < 0
+        || fcntl(fd, F_SETFL, nonblocking ? mode | O_NONBLOCK : mode & ~O_NONBLOCK) < 0
+        || setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) < 0) {
+        int code = errno; (void)close(fd); errno = code; return -1;
+    }
+    return fd;
+}
+static int net_socket_cloexec(int family, int type, int protocol) { return net_prepare(socket(family, type, protocol), 0); }
+static int net_socketpair_cloexec(int fds[2]) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) return -1;
+    if (net_prepare(fds[0], 0) < 0) { int code = errno; (void)close(fds[1]); errno = code; return -1; }
+    if (net_prepare(fds[1], 0) < 0) { int code = errno; (void)close(fds[0]); errno = code; return -1; }
+    return 0;
+}
+#else
+static int net_prepare(int fd, int nonblocking) { (void)nonblocking; return fd; }
+static int net_socket_cloexec(int family, int type, int protocol) { return socket(family, type | SOCK_CLOEXEC, protocol); }
+static int net_socketpair_cloexec(int fds[2]) { return socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds); }
+#endif
 typedef struct { uint8_t bytes[24]; } TarnNetAddr;
 typedef struct { int32_t domain, code; int64_t value; TarnNetAddr address; } TarnNetRaw;
 _Static_assert(sizeof(TarnNetRaw) == 40 && offsetof(TarnNetRaw, address) == 16, "network ABI");
+/* The stdlib classifies errors by Tarn's canonical errno numbering, which is
+ * Linux's. Darwin values are translated where a result re-enters Tarn; inside
+ * this runtime `errno` and E* constants stay native (ADR 0098). */
+static int32_t tarn_errno_canonical(int code) {
+#ifdef __APPLE__
+    switch (code) {
+        case EDEADLK: return 35; case EAGAIN: return 11; case EINPROGRESS: return 115;
+        case EALREADY: return 114; case ENOTSOCK: return 88; case EDESTADDRREQ: return 89;
+        case EMSGSIZE: return 90; case EPROTOTYPE: return 91; case ENOPROTOOPT: return 92;
+        case EPROTONOSUPPORT: return 93; case ESOCKTNOSUPPORT: return 94; case ENOTSUP: return 95; case EOPNOTSUPP: return 95;
+        case EPFNOSUPPORT: return 96; case EAFNOSUPPORT: return 97; case EADDRINUSE: return 98;
+        case EADDRNOTAVAIL: return 99; case ENETDOWN: return 100; case ENETUNREACH: return 101;
+        case ENETRESET: return 102; case ECONNABORTED: return 103; case ECONNRESET: return 104;
+        case ENOBUFS: return 105; case EISCONN: return 106; case ENOTCONN: return 107;
+        case ESHUTDOWN: return 108; case ETOOMANYREFS: return 109; case ETIMEDOUT: return 110;
+        case ECONNREFUSED: return 111; case ELOOP: return 40; case ENAMETOOLONG: return 36;
+        case EHOSTDOWN: return 112; case EHOSTUNREACH: return 113; case ENOTEMPTY: return 39;
+        case EUSERS: return 87; case EDQUOT: return 122; case ESTALE: return 116;
+        case EREMOTE: return 66; case ENOLCK: return 37; case ENOSYS: return 38;
+        case EOVERFLOW: return 75; case ECANCELED: return 125; case EIDRM: return 43;
+        case ENOMSG: return 42; case EILSEQ: return 84; case EBADMSG: return 74;
+        case EMULTIHOP: return 72; case ENODATA: return 61; case ENOLINK: return 67;
+        case ENOSR: return 63; case ENOSTR: return 60; case EPROTO: return 71; case ETIME: return 62;
+        case EOWNERDEAD: return 130; case ENOTRECOVERABLE: return 131;
+    }
+    /* 1-34 except EDEADLK agree; a Darwin-only value must not alias a Linux one. */
+    return code > 34 ? code + 1000 : code;
+#else
+    return code;
+#endif
+}
+/* Called by generated code on macOS after each raw intrinsic. Only OS-errno
+ * domains (network 0, filesystem 3, process 4) use this numbering. */
+void tarn_rt_raw_canonical(TarnNetRaw *raw) {
+    if (raw->domain == 0 || raw->domain == 3 || raw->domain == 4) raw->code = tarn_errno_canonical(raw->code);
+}
 static void net_init(TarnNetRaw *out) { memset(out, 0, sizeof(*out)); }
 static void net_status(TarnNetRaw *out, int64_t value) { out->value = value; if (value < 0) out->code = errno; }
 static void net_trace(const char *event, int fd) {
@@ -487,7 +572,7 @@ void tarn_rt_net_socket(TarnNetRaw *out, const TarnNetAddr *address, uint8_t udp
     net_init(out); struct sockaddr_storage sa; socklen_t len;
     int family = net_native(address, &sa, &len);
     if (family < 0) { out->code = errno; return; }
-    net_status(out, socket(family, udp ? SOCK_DGRAM : SOCK_STREAM, 0));
+    net_status(out, net_prepare(socket(family, udp ? SOCK_DGRAM : SOCK_STREAM, 0), 0));
     if (!out->code) net_trace("open", (int)out->value);
 }
 void tarn_rt_net_bind(TarnNetRaw *out, int32_t fd, const TarnNetAddr *address) {
@@ -501,7 +586,7 @@ void tarn_rt_net_bind(TarnNetRaw *out, int32_t fd, const TarnNetAddr *address) {
     net_status(out, bind(fd, (struct sockaddr *)&sa, len));
 }
 void tarn_rt_net_listen(TarnNetRaw *out, int32_t fd) { net_init(out); net_status(out, listen(fd, SOMAXCONN)); }
-void tarn_rt_net_accept(TarnNetRaw *out, int32_t fd) { net_init(out); net_status(out, accept(fd, NULL, NULL)); if (!out->code) net_trace("open", (int)out->value); }
+void tarn_rt_net_accept(TarnNetRaw *out, int32_t fd) { net_init(out); net_status(out, net_prepare(accept(fd, NULL, NULL), 0)); if (!out->code) net_trace("open", (int)out->value); }
 void tarn_rt_net_connect(TarnNetRaw *out, int32_t fd, const TarnNetAddr *address) {
     net_init(out); struct sockaddr_storage sa; socklen_t len;
     if (net_native(address, &sa, &len) < 0) { out->code = errno; return; }
@@ -515,7 +600,7 @@ void tarn_rt_net_connect_unix(TarnNetRaw *out, const TarnString *path) {
     net_init(out); struct sockaddr_un sa; memset(&sa, 0, sizeof(sa)); sa.sun_family = AF_UNIX;
     if (!path->len || path->len >= sizeof(sa.sun_path) || memchr(path->bytes, 0, path->len)) { out->domain = 2; out->code = EINVAL; return; }
     memcpy(sa.sun_path, path->bytes, path->len);
-    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    int fd = net_socket_cloexec(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) { out->code = errno; return; }
     if (connect(fd, (struct sockaddr *)&sa, (socklen_t)(offsetof(struct sockaddr_un, sun_path) + path->len + 1)) < 0) {
         out->code = errno; close(fd); return;
@@ -527,7 +612,7 @@ void tarn_rt_net_connect_unix(TarnNetRaw *out, const TarnString *path) {
  * an explicit process handoff makes one visible to a child. */
 void tarn_rt_net_pair_unix(TarnNetRaw *out) {
     net_init(out); int fds[2];
-    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) < 0) { out->code = errno; return; }
+    if (net_socketpair_cloexec(fds) < 0) { out->code = errno; return; }
     out->value = fds[0];
     for (int i = 0; i < 4; ++i) out->address.bytes[i] = (uint8_t)((uint32_t)fds[1] >> (i * 8));
     net_trace("open", fds[0]); net_trace("open", fds[1]);
@@ -538,6 +623,15 @@ void tarn_rt_net_read(TarnNetRaw *out, int32_t fd, uint8_t *bytes, uint64_t len)
 void tarn_rt_net_write(TarnNetRaw *out, int32_t fd, const uint8_t *bytes, uint64_t len) { net_init(out); net_status(out, send(fd, bytes, len, MSG_NOSIGNAL)); }
 void tarn_rt_net_recv(TarnNetRaw *out, int32_t fd, uint8_t *bytes, uint64_t len) {
     net_init(out); struct sockaddr_storage sa; socklen_t size = sizeof(sa);
+#ifdef __APPLE__
+    /* A zero-length receive leaves the datagram queued here; Linux discards it. */
+    if (!len) {
+        uint8_t discarded; ssize_t taken = recvfrom(fd, &discarded, 1, 0, (struct sockaddr *)&sa, &size);
+        net_status(out, taken < 0 ? taken : 0);
+        if (!out->code && net_address(&out->address, (struct sockaddr *)&sa) < 0) out->code = EAFNOSUPPORT;
+        return;
+    }
+#endif
     net_status(out, recvfrom(fd, bytes, len, 0, (struct sockaddr *)&sa, &size));
     if (!out->code && net_address(&out->address, (struct sockaddr *)&sa) < 0) out->code = EAFNOSUPPORT;
 }
@@ -551,7 +645,16 @@ void tarn_rt_net_addr(TarnNetRaw *out, int32_t fd, uint8_t peer) {
     net_status(out, peer ? getpeername(fd, (struct sockaddr *)&sa, &size) : getsockname(fd, (struct sockaddr *)&sa, &size));
     if (!out->code && net_address(&out->address, (struct sockaddr *)&sa) < 0) out->code = EAFNOSUPPORT;
 }
-void tarn_rt_net_shutdown(TarnNetRaw *out, int32_t fd, int32_t how) { net_init(out); net_status(out, shutdown(fd, how)); }
+void tarn_rt_net_shutdown(TarnNetRaw *out, int32_t fd, int32_t how) {
+    net_init(out); net_status(out, shutdown(fd, how));
+#ifdef __APPLE__
+    /* BSD reports ENOTCONN once the peer has fully disconnected, where Linux
+     * succeeds. Stream owners were connected by construction, so the half being
+     * shut is already gone. Datagram sockets keep the error, as on Linux. */
+    int type = 0; socklen_t size = sizeof(type);
+    if (out->code == ENOTCONN && getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &size) == 0 && type == SOCK_STREAM) { out->code = 0; out->value = 0; }
+#endif
+}
 static void net_timer_track(int32_t fd);
 static void net_timer_forget(int32_t fd);
 void tarn_rt_net_close(TarnNetRaw *out, int32_t fd) {
@@ -568,6 +671,39 @@ void tarn_rt_net_drop(int32_t fd) { TarnNetRaw out; tarn_rt_net_close(&out, fd);
 /* Phase 14B one-shot timer: a nonblocking CLOCK_MONOTONIC timerfd, readable once
  * it expires, so it shares the 12B Poll. No thread, no sleep. Zero fires at once
  * (a zero it_value would disarm instead). Closed like sockets by Timer's owner. */
+#ifdef __APPLE__
+/* A kqueue descriptor is itself pollable: readable while it holds an event, so
+ * a private queue stands in for timerfd/pidfd on the shared Poll (ADR 0098). */
+#include <sys/event.h>
+#include <fcntl.h>
+#include <time.h>
+static int net_kqueue(void) {
+    int fd = kqueue();
+    if (fd >= 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) { int code = errno; (void)close(fd); errno = code; return -1; }
+    return fd;
+}
+void tarn_rt_net_timer_new(TarnNetRaw *out, int64_t millis) {
+    net_init(out);
+    if (millis < 0) { out->code = EINVAL; return; }
+    int fd = net_kqueue();
+    if (fd < 0) { out->code = errno; return; }
+    /* Zero fires at once. NOTE_CRITICAL opts out of timer coalescing, which
+     * otherwise delays deadlines far beyond timerfd behavior. */
+    struct kevent change;
+    if (millis == 0) { EV_SET(&change, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_NSECONDS | NOTE_CRITICAL, 1, NULL); }
+    else { EV_SET(&change, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_CRITICAL, (intptr_t)millis, NULL); }
+    if (kevent(fd, &change, 1, NULL, 0, NULL) < 0) { out->code = errno; close(fd); return; }
+    net_timer_track(fd);
+    out->value = fd; net_trace("open", fd);
+}
+void tarn_rt_net_timer_read(TarnNetRaw *out, int32_t fd) {
+    net_init(out); struct kevent event; struct timespec zero = {0, 0};
+    int count = kevent(fd, NULL, 0, &event, 1, &zero);
+    if (count < 0) out->code = errno;
+    else if (!count) out->code = EAGAIN;
+    else out->value = 8; /* same result as reading a timerfd's expiration count */
+}
+#else
 void tarn_rt_net_timer_new(TarnNetRaw *out, int64_t millis) {
     net_init(out);
     if (millis < 0) { out->code = EINVAL; return; }
@@ -584,6 +720,7 @@ void tarn_rt_net_timer_new(TarnNetRaw *out, int64_t millis) {
 void tarn_rt_net_timer_read(TarnNetRaw *out, int32_t fd) {
     uint64_t expirations; net_init(out); net_status(out, read(fd, &expirations, sizeof(expirations)));
 }
+#endif
 
 void tarn_rt_net_main_error(uint32_t kind, int32_t code) {
     static const char *names[] = {"address in use", "connection refused", "connection reset", "broken pipe", "timed out", "would block", "invalid address", "DNS failure", "other OS error", "write made no progress", "unexpected EOF", "limit exceeded", "not found", "permission denied", "already exists", "invalid input", "invalid data", "not a directory", "is a directory", "directory not empty", "storage full"};
@@ -592,11 +729,13 @@ void tarn_rt_net_main_error(uint32_t kind, int32_t code) {
 }
 
 /* Phase 12B: no application pointers survive any of these calls. */
+#ifndef __APPLE__
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <time.h>
 #ifndef SO_COOKIE
 #define SO_COOKIE 57
+#endif
 #endif
 /* Poll bookkeeping does not own sockets. Cookie checks prevent fd reuse from
    turning an old token into modification/deletion authority over a new socket. */
@@ -632,7 +771,11 @@ void tarn_rt_net_now(TarnNetRaw *out) {
     else out->value = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 void tarn_rt_net_poll_new(TarnNetRaw *out) {
+#ifdef __APPLE__
+    net_init(out); int fd = net_kqueue();
+#else
     net_init(out); int fd = epoll_create1(EPOLL_CLOEXEC);
+#endif
     if (fd < 0) { out->code = errno; return; }
     TarnPoll *poll = malloc(sizeof(*poll));
     if (!poll) { int error = ENOMEM; close(fd); out->code = error; return; }
@@ -657,10 +800,46 @@ static void net_timer_forget(int32_t fd) {
         if ((*link)->fd == fd) { TarnTimerId *old = *link; *link = old->next; free(old); break; }
     pthread_mutex_unlock(&net_timer_lock);
 }
+#ifdef __APPLE__
+/* No SO_COOKIE. A disabled knote in a private queue witnesses each identified
+ * socket: the kernel deletes it when the descriptor closes, whoever closes it,
+ * so a recycled number can never inherit the old identity (ADR 0035, 0098). */
+static int net_witness = -1;
+static pthread_once_t net_witness_once = PTHREAD_ONCE_INIT;
+static void net_witness_open(void) { net_witness = net_kqueue(); }
+static int net_socket_identity(int32_t fd, uint64_t *cookie) {
+    pthread_once(&net_witness_once, net_witness_open);
+    if (net_witness < 0) return -1;
+    struct kevent change;
+    EV_SET(&change, fd, EVFILT_READ, EV_DISABLE, 0, 0, NULL);
+    int live = kevent(net_witness, &change, 1, NULL, 0, NULL) == 0;
+    if (live) {
+        int found = 0;
+        pthread_mutex_lock(&net_timer_lock);
+        for (TarnTimerId *t = net_timers; t; t = t->next) if (t->fd == fd) { *cookie = t->id; found = 1; break; }
+        pthread_mutex_unlock(&net_timer_lock);
+        if (found) return 0;
+    }
+    net_timer_forget(fd);
+    EV_SET(&change, fd, EVFILT_READ, EV_ADD | EV_DISABLE, 0, 0, NULL);
+    if (kevent(net_witness, &change, 1, NULL, 0, NULL) < 0) return -1;
+    net_timer_track(fd);
+    pthread_mutex_lock(&net_timer_lock);
+    for (TarnTimerId *t = net_timers; t; t = t->next) if (t->fd == fd) { *cookie = t->id; break; }
+    pthread_mutex_unlock(&net_timer_lock);
+    return 0;
+}
+#endif
 static int net_identity_of(int32_t fd, uint64_t *cookie) {
+#ifdef __APPLE__
+    int type; socklen_t size = sizeof(type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &size) == 0) return net_socket_identity(fd, cookie);
+    if (errno != ENOTSOCK) return -1;
+#else
     socklen_t n = sizeof(*cookie);
     if (getsockopt(fd, SOL_SOCKET, SO_COOKIE, cookie, &n) == 0) return 0;
     if (errno != ENOTSOCK) return -1;
+#endif
     int found = 0;
     pthread_mutex_lock(&net_timer_lock);
     for (TarnTimerId *t = net_timers; t; t = t->next) if (t->fd == fd) { *cookie = t->id; found = 1; break; }
@@ -688,11 +867,25 @@ void tarn_rt_net_poll_ctl(TarnNetRaw *out, TarnPoll *poll, int32_t fd, int32_t o
             if (atomic_compare_exchange_weak(&net_next_token, &token, token + 1)) break;
         }
     }
+#ifdef __APPLE__
+    /* Two filters per descriptor, level-triggered by default. Removing a filter
+     * that was never added is not an error; every other receipt is. */
+    struct kevent changes[2], receipts[2];
+    int add = operation == 2 ? 0 : interest, flags[2] = {(add & 1) ? EV_ADD : EV_DELETE, (add & 2) ? EV_ADD : EV_DELETE};
+    EV_SET(&changes[0], fd, EVFILT_READ, flags[0] | EV_RECEIPT, 0, 0, (void *)(uintptr_t)token);
+    EV_SET(&changes[1], fd, EVFILT_WRITE, flags[1] | EV_RECEIPT, 0, 0, (void *)(uintptr_t)token);
+    int done = kevent(poll->fd, changes, 2, receipts, 2, NULL);
+    if (done < 0) { out->code = errno; free(fresh); return; }
+    for (int i = 0; i < done; ++i) {
+        if ((receipts[i].flags & EV_ERROR) && receipts[i].data && receipts[i].data != ENOENT) { out->code = (int32_t)receipts[i].data; free(fresh); return; }
+    }
+#else
     struct epoll_event event = {0};
     event.events = EPOLLRDHUP | ((interest & 1) ? EPOLLIN : 0) | ((interest & 2) ? EPOLLOUT : 0);
     event.data.u64 = token;
     int op = operation == 0 ? EPOLL_CTL_ADD : operation == 1 ? EPOLL_CTL_MOD : EPOLL_CTL_DEL;
     if (epoll_ctl(poll->fd, op, fd, &event) < 0) { out->code = errno; free(fresh); return; }
+#endif
     if (!operation) {
         fresh->fd = fd; fresh->cookie = cookie; fresh->token = token;
         fresh->next = record ? record->next : NULL; *link = fresh; free(record);
@@ -702,6 +895,26 @@ void tarn_rt_net_poll_ctl(TarnNetRaw *out, TarnPoll *poll, int32_t fd, int32_t o
 void tarn_rt_net_poll_wait(TarnNetRaw *out, TarnPoll *poll, TarnEvent *events, uint64_t length, int32_t timeout) {
     net_init(out);
     if (!length || timeout < -1) { out->code = EINVAL; return; }
+#ifdef __APPLE__
+    /* Filters report separately; epoll reports one event per descriptor, so merge
+     * by token. Unreported filters stay level-triggered for the next wait. */
+    struct kevent native[64];
+    struct timespec limit = {timeout / 1000, (long)(timeout % 1000) * 1000000L};
+    int received = kevent(poll->fd, NULL, 0, native, length < 64 ? (int)length : 64, timeout < 0 ? NULL : &limit);
+    if (received < 0) { out->code = errno; return; }
+    int count = 0;
+    for (int i = 0; i < received; ++i) {
+        uint64_t token = (uint64_t)(uintptr_t)native[i].udata;
+        int slot = 0;
+        while (slot < count && events[slot].token != token) ++slot;
+        if (slot == count) { memset(&events[slot], 0, sizeof(events[slot])); events[slot].token = token; ++count; }
+        if (native[i].filter == EVFILT_READ) events[slot].readable = 1;
+        if (native[i].filter == EVFILT_WRITE) events[slot].writable = 1;
+        if (native[i].flags & EV_ERROR) events[slot].error = 1;
+        if (native[i].flags & EV_EOF) { events[slot].hangup = 1; if (native[i].fflags) events[slot].error = 1; }
+    }
+    out->value = count;
+#else
     struct epoll_event native[64];
     int count = epoll_wait(poll->fd, native, length < 64 ? (int)length : 64, timeout);
     if (count < 0) { out->code = errno; return; }
@@ -714,6 +927,7 @@ void tarn_rt_net_poll_wait(TarnNetRaw *out, TarnPoll *poll, TarnEvent *events, u
         events[i].hangup = !!(native[i].events & (EPOLLHUP | EPOLLRDHUP));
     }
     out->value = count;
+#endif
 }
 void tarn_rt_net_close_poll(TarnNetRaw *out, TarnPoll *poll) {
     tarn_rt_net_close(out, poll->fd);
@@ -998,7 +1212,9 @@ void tarn_rt_fs_dir_drop(DIR *directory) {
 #include <spawn.h>
 #include <signal.h>
 #include <sys/wait.h>
+#ifndef __APPLE__
 #include <sys/syscall.h>
+#endif
 #include <poll.h>
 extern char **environ;
 static void process_trace(const char *event, int id) {
@@ -1026,7 +1242,14 @@ static int process_fd(int fd) {
 }
 static int process_pipe(int fds[2]) {
     int pair[2];
+#ifdef __APPLE__
+    if (pipe(pair) < 0) return errno;
+    if (fcntl(pair[0], F_SETFD, FD_CLOEXEC) < 0 || fcntl(pair[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int code = errno; (void)close(pair[0]); (void)close(pair[1]); return code;
+    }
+#else
     if (pipe2(pair, O_CLOEXEC) < 0) return errno;
+#endif
     int first = process_fd(pair[0]);
     if (first < 0) { int code = errno; (void)close(pair[1]); return code; }
     int second = process_fd(pair[1]);
@@ -1064,6 +1287,32 @@ fail:
     for (uint64_t i = 0; i < used; ++i) free(envp[i]);
     free(envp); return NULL;
 }
+#ifdef __APPLE__
+/* posix_spawnp here reruns ENOEXEC files through /bin/sh, which would execute a
+ * data file as shell input. Search PATH like it, but never invoke a shell. */
+static int process_launch(pid_t *pid, const char *program, const posix_spawn_file_actions_t *actions,
+        const posix_spawnattr_t *attributes, char *const *argv, char *const *envp) {
+    if (strchr(program, '/')) return posix_spawn(pid, program, actions, attributes, argv, envp);
+    const char *path = getenv("PATH");
+    if (!path) path = "/usr/bin:/bin";
+    int found = ENOENT;
+    size_t name = strlen(program);
+    for (const char *entry = path;;) {
+        const char *end = strchr(entry, ':');
+        size_t length = end ? (size_t)(end - entry) : strlen(entry);
+        char *candidate = malloc(length + name + 2); if (!candidate) abort();
+        size_t used = 0;
+        if (length) { memcpy(candidate, entry, length); used = length; candidate[used++] = '/'; }
+        memcpy(candidate + used, program, name + 1);
+        int code = posix_spawn(pid, candidate, actions, attributes, argv, envp);
+        free(candidate);
+        if (code != ENOENT && code != ENOTDIR && code != EACCES) return code;
+        if (code == EACCES) found = EACCES;
+        if (!end) return found;
+        entry = end + 1;
+    }
+}
+#endif
 void tarn_rt_process_spawn(TarnNetRaw *out, const TarnString *program,
         const TarnString *const *arguments, uint64_t count,
         const TarnString *const *environment, uint64_t environment_count, const TarnString *directory,
@@ -1092,7 +1341,12 @@ void tarn_rt_process_spawn(TarnNetRaw *out, const TarnString *program,
     sigset_t empty, defaults; sigemptyset(&empty); sigemptyset(&defaults); sigaddset(&defaults, SIGPIPE);
     code = posix_spawnattr_setsigmask(&attributes, &empty); if (code) goto done;
     code = posix_spawnattr_setsigdefault(&attributes, &defaults); if (code) goto done;
+#ifdef __APPLE__
+    /* No closefrom action: close everything except explicit actions. */
+    code = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT); if (code) goto done;
+#else
     code = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF); if (code) goto done;
+#endif
     if (capture) {
         code = process_pipe(pipes); if (code) goto done;
         code = process_pipe(pipes + 2); if (code) goto done;
@@ -1125,14 +1379,35 @@ void tarn_rt_process_spawn(TarnNetRaw *out, const TarnString *program,
         process_trace("fd_open", handoff[i]);
         code = posix_spawn_file_actions_adddup2(&actions, handoff[i], 3 + (int)i); if (code) goto done;
     }
+#ifdef __APPLE__
+    /* The _np spelling works on every supported macOS; its replacement is 26+. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
     if (use_directory) { code = posix_spawn_file_actions_addchdir_np(&actions, cwd); if (code) goto done; }
+#ifdef __APPLE__
+#pragma clang diagnostic pop
+#endif
     /* Child never inherits other application/runtime descriptors. GNU libc
      * closefrom/chdir spawn actions avoid unsafe post-fork Tarn callbacks. */
+#ifdef __APPLE__
+    /* CLOEXEC_DEFAULT also closes stdio, so name each stream left unredirected.
+     * An inherited stream the parent itself has closed stays closed. */
+    for (int target = 0; target < 3 && !capture; ++target) {
+        if (((stdio >> (2 * target)) & 3) || fcntl(target, F_GETFD) < 0) continue;
+        code = posix_spawn_file_actions_addinherit_np(&actions, target); if (code) goto done;
+    }
+#else
     code = posix_spawn_file_actions_addclosefrom_np(&actions, 3 + (int)passed_count); if (code) goto done;
+#endif
     /* Runtime print buffering is hidden state, not a program-owned buffer:
      * flush it so an inheriting child cannot overtake earlier prints. */
     (void)fflush(stdout);
+#ifdef __APPLE__
+    code = process_launch(&pid, argv[0], &actions, &attributes, argv, envp);
+#else
     code = posix_spawnp(&pid, argv[0], &actions, &attributes, argv, envp);
+#endif
     if (!code) {
         net_init(out); out->value = pid; process_trace("spawn", pid);
         /* Parent ends pass to Tarn owners: stdout read, stderr read, stdin write. */
@@ -1158,6 +1433,29 @@ done:
     if (envp != environ) { for (char **e = envp; *e; ++e) free(*e); free(envp); }
     if (code) process_error(out, code);
 }
+#ifdef __APPLE__
+/* A private queue readable once `pid` has exited, standing in for a pidfd. A
+ * child that already exited cannot be attached (ESRCH), and the non-reaping
+ * check closes the window around registration: both trigger a user event. */
+static int process_exit_queue(int32_t pid) {
+    int fd = net_kqueue();
+    if (fd < 0) return -1;
+    struct kevent change;
+    EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+    int armed = kevent(fd, &change, 1, NULL, 0, NULL);
+    if (armed < 0 && errno != ESRCH) { int code = errno; (void)close(fd); errno = code; return -1; }
+    siginfo_t info; memset(&info, 0, sizeof(info));
+    int status;
+    do { status = waitid(P_PID, (id_t)pid, &info, WEXITED | WNOHANG | WNOWAIT); } while (status < 0 && errno == EINTR);
+    if (armed < 0 || status < 0 || info.si_pid != 0) {
+        struct kevent user[2];
+        EV_SET(&user[0], 2, EVFILT_USER, EV_ADD, 0, 0, NULL);
+        EV_SET(&user[1], 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
+        if (kevent(fd, user, 2, NULL, 0, NULL) < 0) { int code = errno; (void)close(fd); errno = code; return -1; }
+    }
+    return fd;
+}
+#endif
 void tarn_rt_process_wait(TarnNetRaw *out, int32_t pid) {
     process_trace("wait", pid); /* One completion attempt, even on an OS error. */
     net_init(out); if (pid <= 0) { process_error(out, EINVAL); return; }
@@ -1176,14 +1474,27 @@ void tarn_rt_process_wait(TarnNetRaw *out, int32_t pid) {
 void tarn_rt_process_poll_exit(TarnNetRaw *out, int32_t pid, int32_t timeout) {
     net_init(out);
     if (pid <= 0 || timeout < 0) { process_error(out, EINVAL); return; }
+#ifdef __APPLE__
+    int exited = 0;
+#endif
     if (timeout > 0) {
+#ifdef __APPLE__
+        int fd = process_exit_queue(pid);
+#else
         int fd = (int)syscall(SYS_pidfd_open, pid, 0);
+#endif
         if (fd < 0) { process_error(out, errno); return; }
         struct timespec start; clock_gettime(CLOCK_MONOTONIC, &start);
         int remaining = timeout;
         for (;;) {
+#ifdef __APPLE__
+            struct kevent event; struct timespec limit = {remaining / 1000, (long)(remaining % 1000) * 1000000L};
+            int seen = kevent(fd, NULL, 0, &event, 1, &limit);
+            if (seen >= 0) { exited = seen > 0; break; }
+#else
             struct pollfd entry = {fd, POLLIN, 0};
             if (poll(&entry, 1, remaining) >= 0) break;
+#endif
             if (errno != EINTR) { int code = errno; (void)close(fd); process_error(out, code); return; }
             struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
             int64_t spent = (int64_t)(now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
@@ -1192,7 +1503,17 @@ void tarn_rt_process_poll_exit(TarnNetRaw *out, int32_t pid, int32_t timeout) {
         (void)close(fd); /* pidfd is private to this call; never retried */
     }
     siginfo_t info; memset(&info, 0, sizeof(info)); int result;
+#ifdef __APPLE__
+    /* NOTE_EXIT can precede the zombie by moments, so an observed exit retries
+     * briefly instead of reporting a finished child as still running. */
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        do { result = waitid(P_PID, (id_t)pid, &info, WEXITED | WNOHANG | WNOWAIT); } while (result < 0 && errno == EINTR);
+        if (result < 0 || info.si_pid != 0 || !exited) break;
+        struct timespec pause = {0, 1000000L}; (void)nanosleep(&pause, NULL);
+    }
+#else
     do { result = waitid(P_PID, (id_t)pid, &info, WEXITED | WNOHANG | WNOWAIT); } while (result < 0 && errno == EINTR);
+#endif
     if (result < 0) { process_error(out, errno); return; }
     if (info.si_pid == 0) return;
     uint8_t *bytes = (uint8_t *)&out->address;
@@ -1203,7 +1524,11 @@ void tarn_rt_process_poll_exit(TarnNetRaw *out, int32_t pid, int32_t timeout) {
  * identity like piped ends and closes through the ordinary pipe owner. */
 void tarn_rt_process_pidfd(TarnNetRaw *out, int32_t pid) {
     net_init(out); if (pid <= 0) { process_error(out, EINVAL); return; }
+#ifdef __APPLE__
+    int fd = process_exit_queue(pid);
+#else
     int fd = (int)syscall(SYS_pidfd_open, pid, 0);
+#endif
     if (fd < 0) { process_error(out, errno); return; }
     fd = process_fd(fd); if (fd < 0) { process_error(out, errno); return; }
     net_timer_track(fd); out->value = fd;
@@ -1227,11 +1552,18 @@ void tarn_rt_process_kill(TarnNetRaw *out, int32_t pid) {
 }
 
 /* Private Phase-19 harness ABI; ordinary Tarn programs gain no argv API. */
+#ifndef __APPLE__
 #include <sys/prctl.h>
+#endif
 int32_t tarn_rt_test_select(int argc, char **argv) {
     /* Disable core collection after exec: piped Linux core handlers otherwise
      * delay abort completion and can turn a panic into a spurious timeout. */
+#ifdef __APPLE__
+    struct rlimit no_core = {0, 0};
+    if (setrlimit(RLIMIT_CORE, &no_core) != 0) abort();
+#else
     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) abort();
+#endif
     if (argc != 2 || !argv[1][0]) abort();
     uint64_t value = 0;
     for (const unsigned char *p = (unsigned char *)argv[1]; *p; ++p) {
@@ -1241,6 +1573,31 @@ int32_t tarn_rt_test_select(int argc, char **argv) {
     return (int32_t)value;
 }
 
+#ifdef __APPLE__
+/* XNU sends a pipe write's SIGPIPE to the process, not the writing thread, so
+ * the thread mask below would leave any other thread to take it and die. The
+ * per-descriptor flag suppresses the signal itself (ADR 0098). Parent-owned
+ * pipes keep it set. Standard streams may be shared with other processes, so
+ * they hold it only while a console write is running. */
+static pthread_mutex_t tarn_standard_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct { int users, prior; } tarn_standard_stream[3];
+static void tarn_pipe_quiet_enter(int fd) {
+    if (fd < 0) return;
+    if (fd > 2) { (void)fcntl(fd, F_SETNOSIGPIPE, 1); return; }
+    pthread_mutex_lock(&tarn_standard_lock);
+    if (!tarn_standard_stream[fd].users++) {
+        tarn_standard_stream[fd].prior = fcntl(fd, F_GETNOSIGPIPE);
+        if (tarn_standard_stream[fd].prior == 0) (void)fcntl(fd, F_SETNOSIGPIPE, 1);
+    }
+    pthread_mutex_unlock(&tarn_standard_lock);
+}
+static void tarn_pipe_quiet_leave(int fd) {
+    if (fd < 0 || fd > 2) return;
+    pthread_mutex_lock(&tarn_standard_lock);
+    if (!--tarn_standard_stream[fd].users && tarn_standard_stream[fd].prior == 0) (void)fcntl(fd, F_SETNOSIGPIPE, 0);
+    pthread_mutex_unlock(&tarn_standard_lock);
+}
+#endif
 /* Non-owning console writes: turn this call's SIGPIPE into an ordinary errno
  * without changing process-wide disposition or consuming a previously pending
  * signal. The mask is thread-local and restored before returning. */
@@ -1257,15 +1614,29 @@ static int64_t tarn_console_output(int32_t fd, const uint8_t *data, uint64_t cou
         return -1;
     }
     int already_pending = sigismember(&pending, SIGPIPE);
+#ifdef __APPLE__
+    /* A flush may reach both output streams. */
+    tarn_pipe_quiet_enter(flush ? 1 : fd);
+    if (flush) tarn_pipe_quiet_enter(2);
+#endif
     int64_t result = flush ? (int64_t)fflush(NULL) : (int64_t)write(fd, data, (size_t)count);
     int saved = errno;
+#ifdef __APPLE__
+    tarn_pipe_quiet_leave(flush ? 1 : fd);
+    if (flush) tarn_pipe_quiet_leave(2);
+#endif
     /* A pipe write that loses its reader midway returns a partial count and
      * still raises SIGPIPE, so consume any SIGPIPE this call generated, not
      * only the EPIPE case (ADR 0073 regression). */
     sigset_t after;
     if (!already_pending && !sigismember(&old, SIGPIPE) && sigpending(&after) == 0 && sigismember(&after, SIGPIPE)) {
+#ifdef __APPLE__
+        /* No sigtimedwait; the signal is known pending, so sigwait cannot block. */
+        int consumed; (void)sigwait(&blocked, &consumed);
+#else
         struct timespec zero = {0, 0};
         while (sigtimedwait(&blocked, NULL, &zero) < 0 && errno == EINTR) {}
+#endif
     }
     pthread_sigmask(SIG_SETMASK, &old, NULL);
     errno = saved;
@@ -1309,7 +1680,12 @@ struct tarn_curl_api {
 static struct tarn_curl_api tarn_curl;
 static pthread_once_t tarn_curl_once = PTHREAD_ONCE_INIT;
 static void tarn_curl_load(void) {
+#ifdef __APPLE__
+    tarn_curl.library = dlopen("libcurl.4.dylib", RTLD_NOW | RTLD_LOCAL);
+    if (!tarn_curl.library) tarn_curl.library = dlopen("/usr/lib/libcurl.4.dylib", RTLD_NOW | RTLD_LOCAL);
+#else
     tarn_curl.library = dlopen("libcurl.so.4", RTLD_NOW | RTLD_LOCAL);
+#endif
     if (!tarn_curl.library) return;
 #define LOAD(field, symbol) do { *(void **)(&tarn_curl.field) = dlsym(tarn_curl.library, symbol); if (!tarn_curl.field) return; } while (0)
     LOAD(init, "curl_easy_init"); LOAD(global_init, "curl_global_init");
@@ -1391,7 +1767,7 @@ done:
  * Errors use domain 5: positive libcurl codes, -1 unavailable, -3 invalid
  * input, -5 a stream that already failed. CURLE_AGAIN (81) is WouldBlock. */
 #include <poll.h>
-typedef struct { void *curl; int fd; int failed; } TarnTls;
+typedef struct { void *curl; int fd; int failed; uint8_t *pending; size_t pending_length; } TarnTls;
 static int tls_text(const TarnString *text, char **out) {
     if (text->len > 4096 || memchr(text->bytes, 0, text->len)) return 0;
     *out = malloc(text->len + 1); if (!*out) abort();
@@ -1426,9 +1802,15 @@ static int pg_wait(int fd, short events, struct tarn_pg_connect *ctx) {
 }
 static int pg_open(void *context, int purpose, struct tarn_curl_sockaddr *target) {
     struct tarn_pg_connect *ctx = context;
+#ifdef __APPLE__
+    if (purpose != 0 || (target->family != AF_INET && target->family != AF_INET6)
+        || target->socktype != SOCK_STREAM) { ctx->error = -3; return -1; }
+    int fd = net_prepare(socket(target->family, SOCK_STREAM, target->protocol), 1);
+#else
     if (purpose != 0 || (target->family != AF_INET && target->family != AF_INET6)
         || (target->socktype & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != SOCK_STREAM) { ctx->error = -3; return -1; }
     int fd = socket(target->family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, target->protocol);
+#endif
     if (fd < 0) { ctx->error = 7; return -1; }
     if (connect(fd, &target->addr, target->addrlen) < 0) {
         if (errno != EINPROGRESS || !pg_wait(fd, POLLOUT, ctx)) goto failure;
@@ -1514,10 +1896,15 @@ void tarn_rt_net_tls_connect(TarnNetRaw *out, const TarnString *url, const TarnS
     free(address); free(trust);
     if (code) { if (handle) tarn_curl.cleanup(handle); out->code = code; return; }
     TarnTls *tls = malloc(sizeof(*tls)); if (!tls) abort();
-    tls->curl = handle; tls->fd = socket; tls->failed = 0;
+    tls->curl = handle; tls->fd = socket; tls->failed = 0; tls->pending = NULL; tls->pending_length = 0;
     net_trace("open", tls->fd);
     out->domain = 0; out->value = (int64_t)(uintptr_t)tls;
 }
+/* A TLS write that returned CURLE_AGAIN must be retried from the same address,
+ * and a caller's queue may have grown and moved by then ("bad write retry"). No
+ * caller pointer survives a call, so each nonblocking attempt starts from a
+ * private buffer, which also bounds its size. */
+#define TLS_RETRY_LIMIT ((size_t)65536)
 /* One partial transfer. With `wait`, CURLE_AGAIN waits for the descriptor and
  * retries; plaintext already buffered by TLS is always attempted first. */
 static void tls_transfer(TarnNetRaw *out, uint64_t handle, uint8_t *bytes, uint64_t len, uint8_t wait, int writing) {
@@ -1525,12 +1912,28 @@ static void tls_transfer(TarnNetRaw *out, uint64_t handle, uint8_t *bytes, uint6
     net_init(out);
     if (tls->failed) { out->domain = 5; out->code = -5; return; }
     if (!len) return;
+    uint8_t *source = bytes; size_t attempt = (size_t)len;
+    if (writing && tls->pending_length) {
+        /* Those bytes are already committed to a TLS record: other data cannot replace them. */
+        if (len < tls->pending_length || memcmp(bytes, tls->pending, tls->pending_length)) {
+            tls->pending_length = 0; tls->failed = 1; out->domain = 5; out->code = -5; return;
+        }
+        source = tls->pending; attempt = tls->pending_length;
+    } else if (writing && !wait) {
+        if (!tls->pending) { tls->pending = malloc(TLS_RETRY_LIMIT); if (!tls->pending) abort(); }
+        if (attempt > TLS_RETRY_LIMIT) attempt = TLS_RETRY_LIMIT;
+        memcpy(tls->pending, bytes, attempt);
+        source = tls->pending;
+    }
     for (;;) {
         size_t moved = 0;
-        int code = writing ? tarn_curl.send(tls->curl, bytes, (size_t)len, &moved) : tarn_curl.recv(tls->curl, bytes, (size_t)len, &moved);
-        if (!code) { out->value = (int64_t)moved; return; }
-        if (code != 81) { tls->failed = 1; out->domain = 5; out->code = code; return; }
-        if (!wait) { out->domain = 5; out->code = 81; return; }
+        int code = writing ? tarn_curl.send(tls->curl, source, attempt, &moved) : tarn_curl.recv(tls->curl, source, attempt, &moved);
+        if (!code) { if (writing) tls->pending_length = 0; out->value = (int64_t)moved; return; }
+        if (code != 81) { tls->pending_length = 0; tls->failed = 1; out->domain = 5; out->code = code; return; }
+        if (!wait) {
+            if (writing) tls->pending_length = attempt;
+            out->domain = 5; out->code = 81; return;
+        }
         struct pollfd ready = { tls->fd, writing ? POLLOUT : POLLIN, 0 };
         if (poll(&ready, 1, -1) < 0 && errno != EINTR) { out->code = errno; return; }
     }
@@ -1543,6 +1946,7 @@ void tarn_rt_net_tls_drop(uint64_t handle) {
     TarnTls *tls = (TarnTls *)(uintptr_t)handle;
     net_trace("close", tls->fd);
     tarn_curl.cleanup(tls->curl);
+    free(tls->pending);
     free(tls);
 }
 void tarn_rt_net_close_tls(TarnNetRaw *out, uint64_t handle) { net_init(out); tarn_rt_net_tls_drop(handle); }
@@ -1550,6 +1954,9 @@ void tarn_rt_net_close_tls(TarnNetRaw *out, uint64_t handle) { net_init(out); ta
 /* Mechanical libc decimal conversion using an explicit C numeric locale.
  * Public grammar, policies and UTF-8 ownership stay in Tarn. */
 #include <locale.h>
+#ifdef __APPLE__
+#include <xlocale.h>
+#endif
 static locale_t tarn_numeric_locale;
 static pthread_once_t tarn_numeric_once = PTHREAD_ONCE_INIT;
 static void tarn_numeric_init(void) {
@@ -1573,3 +1980,67 @@ uint64_t tarn_format_f64(double value, uint8_t *out, uint64_t capacity) {
     if (count < 0 || (uint64_t)count >= capacity) return 0;
     return (uint64_t)count;
 }
+
+/* Mechanical helpers for ordinary stdlib modules: portable answers where the
+ * native clock IDs, struct layouts or socket constants differ (ADR 0098). */
+int32_t tarn_clock_read(int32_t which, int64_t *out) {
+    struct timespec now;
+    if (clock_gettime(which ? CLOCK_MONOTONIC : CLOCK_REALTIME, &now) != 0) return -1;
+    out[0] = (int64_t)now.tv_sec; out[1] = (int64_t)now.tv_nsec;
+    return 0;
+}
+int32_t tarn_net_share_port(int32_t fd) {
+    int one = 1;
+    return setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+}
+#ifdef __APPLE__
+#include <sys/param.h>
+#include <sys/mount.h>
+#include <crt_externs.h>
+/* statvfs truncates block counts to 32 bits here; statfs does not. */
+int32_t tarn_os_disk_space(const char *name, uint64_t *out) {
+    struct statfs info;
+    if (statfs(name, &info) != 0) return -1;
+    out[0] = info.f_blocks * info.f_bsize; out[1] = info.f_bfree * info.f_bsize; out[2] = info.f_bavail * info.f_bsize;
+    return 0;
+}
+/* NUL-terminated argv bytes, the shape of Linux /proc/self/cmdline. */
+const uint8_t *tarn_os_args_block(uint64_t *length) {
+    int count = *_NSGetArgc(); char **values = *_NSGetArgv();
+    uint64_t total = 0;
+    for (int i = 0; i < count; ++i) total += strlen(values[i]) + 1;
+    uint8_t *block = malloc(total ? total : 1), *next = block;
+    if (!block) abort();
+    for (int i = 0; i < count; ++i) { size_t size = strlen(values[i]) + 1; memcpy(next, values[i], size); next += size; }
+    *length = total;
+    return block;
+}
+#include <sys/random.h>
+/* Darwin spells these differently. Tarn's os, time, console and websocket
+ * modules call the Linux names; __errno_location reports the canonical value
+ * those modules compare against, and never exposes writable native errno. */
+int *__errno_location(void) {
+    static _Thread_local int canonical;
+    canonical = tarn_errno_canonical(errno);
+    return &canonical;
+}
+ssize_t getrandom(void *buffer, size_t length, unsigned int flags) {
+    (void)flags; size_t done = 0;
+    while (done < length) {
+        size_t step = length - done > 256 ? 256 : length - done;
+        if (getentropy((uint8_t *)buffer + done, step) != 0) return -1;
+        done += step;
+    }
+    return (ssize_t)length;
+}
+#else
+#include <sys/statvfs.h>
+int32_t tarn_os_disk_space(const char *name, uint64_t *out) {
+    struct statvfs info;
+    if (statvfs(name, &info) != 0) return -1;
+    out[0] = (uint64_t)info.f_blocks * info.f_frsize; out[1] = (uint64_t)info.f_bfree * info.f_frsize; out[2] = (uint64_t)info.f_bavail * info.f_frsize;
+    return 0;
+}
+/* Linux: os.args reads /proc/self/cmdline directly. */
+const uint8_t *tarn_os_args_block(uint64_t *length) { *length = 0; return NULL; }
+#endif
