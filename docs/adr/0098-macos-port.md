@@ -75,7 +75,7 @@ no way to redirect a path.
 ### Tests
 
 `tools/ci/macos` must be first on `PATH`. It supplies `timeout`, which macOS does
-not ship, and a test-only `cc` that emulates GNU `--wrap`, which Apple's linker
+not ship, `stdbuf`, which macOS 15 does not ship, and a test-only `cc` that emulates GNU `--wrap`, which Apple's linker
 lacks. Neither helper is used by `tarn build`. Fault tests inject Linux-numbered
 errors and translate them to native values.
 

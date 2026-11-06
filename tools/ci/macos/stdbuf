@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+# GNU `stdbuf -oL COMMAND...` for test runs: macOS 15 ships no such tool and the HTTP
+# suite needs a server's stdout line buffered on a pipe. Like GNU stdbuf, it injects
+# a library that sets the mode before main, and it supports only this one form.
+use strict;
+use warnings;
+use File::Temp qw(tempfile);
+
+my $mode = shift @ARGV // die "usage: stdbuf -oL COMMAND...\n";
+$mode eq '-oL' && @ARGV or die "usage: stdbuf -oL COMMAND...\n";
+
+my $tmp = $ENV{TMPDIR} // '/tmp';
+my $library = "$tmp/tarn-stdbuf-$>.dylib";
+if (!-f $library) {
+    my ($source, $source_path) = tempfile('tarn-stdbuf-XXXXXX', DIR => $tmp, SUFFIX => '.c', UNLINK => 1);
+    print $source qq{#include <stdio.h>\n__attribute__((constructor)) static void line_buffered(void) { setvbuf(stdout, NULL, _IOLBF, 0); }\n};
+    close $source or die "stdbuf: $!\n";
+    # Concurrent test processes may race here, so publish the library atomically.
+    my $built = "$library.$$";
+    system('/usr/bin/cc', '-dynamiclib', $source_path, '-o', $built) == 0 or die "stdbuf: cannot build helper\n";
+    rename $built, $library or die "stdbuf: $!\n";
+}
+$ENV{DYLD_INSERT_LIBRARIES} = $library;
+{ no warnings 'exec'; exec { $ARGV[0] } @ARGV; }
+die "stdbuf: cannot run $ARGV[0]: $!\n";

@@ -97,7 +97,7 @@ Design decisions belong in ADR 0098.
 - kqueue stands in for epoll, timerfd and pidfd on the shared readiness model.
   Do not add a second readiness or wake mechanism.
 - Run the test suites with `tools/ci/macos` first on `PATH`. Those helpers supply
-  `timeout` and emulate the GNU `--wrap` linker option for tests only.
+  `timeout` and `stdbuf`, and emulate the GNU `--wrap` linker option for tests only.
 - A test ignored on macOS must state the platform reason. Do not ignore a test
   to hide a runtime failure.
 
