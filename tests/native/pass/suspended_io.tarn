@@ -41,8 +41,14 @@ fn main() Result<void, io.Error> {
         io.Progress.Pending => panic("immediate write pending") }
     write.finish()
     var drain = runtime.read_operation(&execution, &mut server, &mut buffer)
+    // Loopback delivery can be asynchronous, so the bytes may need a readiness wait.
     match drain.poll() { io.Progress.Ready(value) => { require(try value == usize(2)) }
-        io.Progress.Pending => panic("drain pending") }
+        io.Progress.Pending => {
+            try execution.wait(5000)
+            require(drain.runnable())
+            match drain.poll() { io.Progress.Ready(value) => { require(try value == usize(2)) }
+                io.Progress.Pending => panic("drain pending") }
+        } }
     drain.finish()
     // Abandon Pending read, release loans and remove its registration.
     {

@@ -629,7 +629,8 @@ fn write_deadline_abandons_pending_output_without_a_second_response() {
     }
     use std::os::fd::AsRawFd;
     let size = 1024i32;
-    assert_eq!(unsafe { setsockopt(peer.as_raw_fd(), 1, 8, &size, 4) }, 0);
+    let (sol_socket, so_rcvbuf) = if cfg!(target_os = "macos") { (0xffff, 0x1002) } else { (1, 8) };
+    assert_eq!(unsafe { setsockopt(peer.as_raw_fd(), sol_socket, so_rcvbuf, &size, 4) }, 0);
     let request = b"GET /large HTTP/1.1\r\nHost: localhost\r\n\r\n";
     for _ in 0..20 {
         peer.write_all(request).unwrap();

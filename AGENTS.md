@@ -13,7 +13,7 @@ Tarn is a new systems programming language focused on:
 - a broad standard library;
 - low dependency overhead;
 - fast development iteration;
-- Linux x86_64 and Linux ARM64 as supported platforms;
+- Linux x86_64 and Linux ARM64 as supported platforms, with a macOS port in progress;
 - first-class support for coding agents and LLM-driven development;
 - xlinux as one of the first major real-world ports;
 - eventual self-hosting.
@@ -68,9 +68,38 @@ Current Rust edition:
 
 Do not change the Rust edition without a concrete technical reason and verified toolchain support.
 
-Do not add Windows or macOS support during the current development phases.
+Port in progress, not yet a supported or released platform:
+
+```text
+macOS x86_64 and macOS ARM64 (aarch64), little-endian, 64-bit
+```
+
+Do not describe macOS as supported until CI runs the suite on it, and the
+release archives and installer accept it.
+
+Do not add Windows support during the current development phases.
 
 Cross-platform abstractions should only be introduced when they solve a real architectural need.
+
+### macOS port
+
+Design decisions belong in ADR 0098.
+
+- Language semantics, ownership analysis and the safety rules are the same on
+  every platform. A rule in this file that names Linux behavior still applies
+  on macOS unless this section says otherwise; for example, close is never
+  retried.
+- Keep macOS differences in the runtime behind `__APPLE__`. Backend differences
+  stay mechanical, such as object format, linking and calling convention.
+- Stdlib modules use Tarn's canonical errno numbering, which is Linux's. Inside
+  the runtime `errno` and `E*` stay native; values are translated where a result
+  re-enters Tarn.
+- kqueue stands in for epoll, timerfd and pidfd on the shared readiness model.
+  Do not add a second readiness or wake mechanism.
+- Run the test suites with `tools/ci/macos` first on `PATH`. Those helpers supply
+  `timeout` and `stdbuf`, and emulate the GNU `--wrap` linker option for tests only.
+- A test ignored on macOS must state the platform reason. Do not ignore a test
+  to hide a runtime failure.
 
 ---
 

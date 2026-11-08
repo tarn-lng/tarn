@@ -256,6 +256,7 @@ fn main() Result<void, io.Error> {
     std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "APFS refuses to create the non-UTF-8 name this test needs")]
 fn invalid_directory_names_fail_without_leaking_the_cursor() {
     use std::os::unix::ffi::OsStringExt;
     let src = "import \"fs\"\nimport \"io\"\nfn main() Result<void, io.Error> { entries := try fs.read_dir(&\"ROOT/data\")\n return Ok(()) }";
@@ -327,7 +328,7 @@ fn fault_binary(src: &str, tag: &str) -> (PathBuf, PathBuf) {
             "-std=c11",
             "-O0",
             "-fno-strict-aliasing",
-            "-no-pie",
+            if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" },
             "-pthread",
         ])
         .arg(object)

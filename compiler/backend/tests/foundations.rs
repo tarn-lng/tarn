@@ -106,6 +106,52 @@ fn main() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+// XNU raises a pipe write's SIGPIPE on the process, so an idle thread that does
+// not block it must not die for the writer's EPIPE (ADR 0098 regression).
+#[test]
+fn console_broken_pipe_spares_other_threads_and_restores_the_stream() {
+    let dir = std::env::temp_dir().join(format!("tarn-foundations-{}-other-thread", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("other_thread.c");
+    std::fs::write(&file, r#"
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#else
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <errno.h>
+extern int64_t tarn_console_write(int32_t, const uint8_t *, uint64_t);
+static void *idle(void *unused) { (void)unused; for (;;) pause(); }
+int main(void) {
+    int fds[2];
+    if (pipe(fds) != 0 || dup2(fds[1], 1) < 0) return 1;
+    close(fds[0]);
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, idle, NULL) != 0) return 2;
+    for (int i = 0; i < 100; ++i) {
+        if (tarn_console_write(1, (const uint8_t *)"x", 1) != -1 || errno != EPIPE) return 5;
+    }
+#ifdef __APPLE__
+    if (fcntl(1, F_GETNOSIGPIPE) != 0) return 6;
+#endif
+    usleep(50000);
+    _exit(0);
+}
+"#).unwrap();
+    let exe = dir.join("other_thread");
+    let status = Command::new("cc").arg(&file).arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/native.c"))
+        .args(["-pthread", "-lm", "-o"]).arg(&exe).status().unwrap();
+    assert!(status.success());
+    let status = Command::new("timeout").arg("30s").arg(&exe).status().unwrap();
+    assert_eq!(status.code(), Some(0), "{status:?}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn console_bridge_preserves_pending_sigpipe_and_thread_mask() {
     let dir = std::env::temp_dir().join(format!("tarn-foundations-{}-signals", std::process::id()));

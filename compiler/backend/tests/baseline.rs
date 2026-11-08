@@ -16,7 +16,7 @@ fn native_baseline() {
         std::fs::write(&obj, &object).unwrap();
         let start = Instant::now();
         let linked = Command::new("cc")
-            .args(["-std=c11", "-O0", "-fno-strict-aliasing", "-no-pie"])
+            .args(["-std=c11", "-O0", "-fno-strict-aliasing", if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" }])
             .arg(&obj)
             .arg("../../runtime/native.c")
             .arg("-lm")

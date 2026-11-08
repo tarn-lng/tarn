@@ -169,7 +169,7 @@ fn fault_binary(src: &str, tag: &str) -> PathBuf {
     let (dir, result) = checked(src, tag); let object = dir.join("program.o");
     std::fs::write(&object, tarn_backend::emit_object(result.drops.as_ref().unwrap(), result.typed.as_ref().unwrap()).unwrap()).unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")); let exe = dir.join("program");
-    let out = Command::new("cc").args(["-std=c11", "-O0", "-pthread", "-no-pie"])
+    let out = Command::new("cc").args(["-std=c11", "-O0", "-pthread", if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" }])
         .arg(object).arg(root.join("../../runtime/native.c")).arg(root.join("tests/execution_faults.c"))
         .args(["-Wl,--wrap=send", "-Wl,--wrap=recv", "-lm", "-o"]).arg(&exe).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr)); exe
@@ -186,6 +186,12 @@ fn main() Result<void, io.Error> {
     var server = try listener.accept()
     try server.set_nonblocking(true)
     try client.write_all(&[2]u8{41, 42})
+    // Loopback delivery can be asynchronous, and this race needs the data present.
+    var ready = try net.Poll.new()
+    var events = [1]net.Event{net.Event.empty()}
+    token := try ready.register_stream(&server, net.Interest.Readable)
+    if try ready.wait(&mut events, 5000) == usize(0) { panic("data never arrived") }
+    try ready.deregister_stream(&server, token)
     var bytes = [2]u8{0, 0}
     var read = runtime.read_operation(&execution, &mut server, &mut bytes)
     // Injected WouldBlock precedes registration while real data is ready.

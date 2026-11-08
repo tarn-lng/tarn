@@ -40,7 +40,7 @@ bool truth(bool x) { return !x; }
     let object = tarn_backend::emit_object(checked.drops.as_ref().unwrap(), checked.typed.as_ref().unwrap()).unwrap();
     std::fs::write(dir.join("main.o"), object).unwrap();
     let executable = dir.join("program");
-    let linked = Command::new("cc").args(["-std=c11", "-O2", "-fno-strict-aliasing", "-no-pie", "-pthread"])
+    let linked = Command::new("cc").args(["-std=c11", "-O2", "-fno-strict-aliasing", if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" }, "-pthread"])
         .arg(dir.join("main.o")).arg(dir.join("helper.c")).arg(root.join("runtime/native.c"))
         .arg("-lm").arg("-o").arg(&executable).output().unwrap();
     assert!(linked.status.success(), "{}", String::from_utf8_lossy(&linked.stderr));

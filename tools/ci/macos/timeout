@@ -1,0 +1,34 @@
+#!/usr/bin/perl
+# GNU `timeout DURATION COMMAND...` for test runs: macOS ships no such tool and
+# the test suites bound every native program with it. Exits 124 on expiry and
+# otherwise reports the command's status or re-raises its fatal signal.
+use strict;
+use warnings;
+use Config;
+use POSIX ();
+
+my $duration = shift @ARGV // die "usage: timeout DURATION COMMAND...\n";
+$duration =~ /^(\d+)s?$/ or die "timeout: unsupported duration `$duration`\n";
+my $seconds = $1;
+@ARGV or die "usage: timeout DURATION COMMAND...\n";
+
+my $child = fork() // die "timeout: fork: $!\n";
+if ($child == 0) {
+    { no warnings 'exec'; exec { $ARGV[0] } @ARGV; }
+    print STDERR "timeout: cannot run $ARGV[0]: $!\n";
+    POSIX::_exit($!{ENOENT} ? 127 : 126);
+}
+$SIG{TERM} = sub { kill 'TERM', $child };
+$SIG{ALRM} = sub { kill 'TERM', $child; POSIX::_exit(124) };
+alarm $seconds;
+while (waitpid($child, 0) < 0) { next if $!{EINTR}; die "timeout: wait: $!\n" }
+my $status = $?;
+# Like GNU timeout, die from the same signal so callers still observe it.
+if (my $signal = $status & 127) {
+    alarm 0;
+    my %names; @names{map { $_ + 0 } split ' ', $Config::Config{sig_num}} = split ' ', $Config::Config{sig_name};
+    $SIG{$names{$signal}} = 'DEFAULT';
+    kill $signal, $$;
+    POSIX::_exit(128 + $signal);
+}
+POSIX::_exit($status >> 8);

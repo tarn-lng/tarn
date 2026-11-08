@@ -105,7 +105,7 @@ int32_t verify_abi(
             "-Werror",
             "-O2",
             "-fno-strict-aliasing",
-            "-no-pie",
+            if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" },
             "-pthread",
         ])
         .arg(dir.join("main.o"))

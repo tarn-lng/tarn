@@ -200,6 +200,12 @@ fn c_signature(module: &ObjectModule, f: &ir::Function) -> Result<cl::Signature>
     sig.returns.extend(ret);
     Ok(sig)
 }
+/// A runtime function parameter. Narrow values are `uint8_t`/`bool` in C, and
+/// clang relies on the caller extending them: without this, stale upper bits
+/// make `false` print as `true` (ADR 0098).
+fn runtime_param(ty: types::Type) -> cl::AbiParam {
+    if ty.bits() < 32 { cl::AbiParam::new(ty).uext() } else { cl::AbiParam::new(ty) }
+}
 /// Monomorphization suffixes instance names; C symbols are the source name.
 fn c_symbol(f: &ir::Function) -> &str {
     f.name.split("::").next().unwrap_or(&f.name)
@@ -356,7 +362,8 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
     settings.set("opt_level", "speed").map_err(|e| Error::bug(e.to_string()))?;
     // AArch64 non-PIC symbol addresses use relocations that cranelift-object
     // 0.125.3 cannot emit. Its PIC/GOT relocations are supported by ELF.
-    settings.set("is_pic", if cfg!(target_arch = "aarch64") { "true" } else { "false" }).map_err(|e| Error::bug(e.to_string()))?;
+    // Mach-O executables are always position independent (ADR 0098).
+    settings.set("is_pic", if cfg!(any(target_arch = "aarch64", target_os = "macos")) { "true" } else { "false" }).map_err(|e| Error::bug(e.to_string()))?;
     // Cranelift's IR verifier checks this backend, not the user's program.
     // Debug builds of the compiler (and so every test run) keep it; release
     // builds skip its cost unless TARN_VERIFY_CODEGEN asks for it.
@@ -428,6 +435,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
     let task_adapters = emit_task_adapters(&mut module, p, t, &ids)?;
     let mut runtime = HashMap::new();
     for (name, params, returns) in [
+        ("tarn_rt_raw_canonical", vec![types::I64], vec![]),
         ("tarn_rt_net_main_error", vec![types::I32, types::I32], vec![]),
         ("tarn_rt_net_drop", vec![types::I32], vec![]),
         ("tarn_rt_process_drop", vec![types::I32], vec![]),
@@ -542,7 +550,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
         ("tarn_rt_fault", vec![], vec![]),
     ] {
         let mut sig = module.make_signature();
-        sig.params = params.into_iter().map(cl::AbiParam::new).collect();
+        sig.params = params.into_iter().map(runtime_param).collect();
         sig.returns = returns.into_iter().map(cl::AbiParam::new).collect();
         let id = module.declare_function(name, Linkage::Import, &sig).map_err(|e| Error::bug(e.to_string()))?;
         runtime.insert(name.to_owned(), id);
@@ -560,7 +568,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
             if name == "bool" && op.starts_with("fetch_") { continue; }
             let name = format!("tarn_rt_atomic_{name}_{op}");
             let mut sig = module.make_signature();
-            sig.params.extend(params.into_iter().map(cl::AbiParam::new));
+            sig.params.extend(params.into_iter().map(runtime_param));
             sig.returns.extend(returns.into_iter().map(cl::AbiParam::new));
             let id = module.declare_function(&name, Linkage::Import, &sig).map_err(|e| Error::bug(e.to_string()))?;
             runtime.insert(name, id);
@@ -1045,6 +1053,15 @@ impl Cx<'_, '_> {
         let call = self.b.ins().call(target, args);
         self.b.inst_results(call).to_vec()
     }
+    /// Call a runtime operation that fills the `_Raw` result at `out`. macOS
+    /// errno values become Tarn's canonical numbering here, the single point
+    /// where they re-enter Tarn (ADR 0098).
+    fn runtime_raw(&mut self, name: &str, args: &[cl::Value], out: cl::Value) {
+        self.runtime(name, args);
+        if cfg!(target_os = "macos") {
+            self.runtime("tarn_rt_raw_canonical", &[out]);
+        }
+    }
     /// The value of `v` when it is an integer constant in this function.
     fn constant(&self, v: cl::Value) -> Option<i64> {
         let cl::ValueDef::Result(inst, _) = self.b.func.dfg.value_def(v) else { return None };
@@ -1306,7 +1323,8 @@ impl Cx<'_, '_> {
                             let mut data = DataDescription::new();
                             data.define(image.into_boxed_slice());
                             data.set_align(8);
-                            data.set_segment_section("", "tarn_strings");
+                            // Mach-O sections name a segment; __TEXT keeps literals read-only.
+                            data.set_segment_section(if cfg!(target_os = "macos") { "__TEXT" } else { "" }, "tarn_strings");
                             self.module.define_data(id, &data).map_err(|e| Error::bug(e.to_string()))?;
                             self.literals.borrow_mut().insert(s.clone(), id);
                             id

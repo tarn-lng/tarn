@@ -29,6 +29,18 @@ pub fn home() -> Result<PathBuf> {
         .map(|p| PathBuf::from(p).join(".tarn"))
         .ok_or_else(|| "set TARN_HOME; HOME is unavailable".into())
 }
+/// macOS ships `/var`, `/tmp` and `/etc` as root-owned symlinks into `/private`,
+/// so every temporary path crosses one. Only that exact system layout is exempt;
+/// it cannot redirect package data without administrator access (ADR 0098).
+fn is_system_alias(path: &Path) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    ["var", "tmp", "etc"].iter().any(|name| {
+        path == Path::new("/").join(name)
+            && fs::read_link(path).is_ok_and(|target| target == Path::new("private").join(name))
+    })
+}
 pub fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
     // Check each component, not just the leaf: cached parents cannot redirect reads.
     let mut prefix = PathBuf::new();
@@ -38,6 +50,7 @@ pub fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
             .map_err(|e| format!("cannot inspect `{}`: {e}", prefix.display()))?
             .file_type()
             .is_symlink()
+            && !is_system_alias(&prefix)
         {
             return Err(format!(
                 "symbolic links are forbidden in package data: {}",
@@ -109,7 +122,7 @@ pub fn check_parents(path: &Path) -> Result<()> {
     for component in path.components() {
         prefix.push(component);
         match fs::symlink_metadata(&prefix) {
-            Ok(meta) if meta.file_type().is_symlink() => {
+            Ok(meta) if meta.file_type().is_symlink() && !is_system_alias(&prefix) => {
                 return Err(format!(
                     "symbolic links are forbidden in package data: {}",
                     prefix.display()

@@ -8,6 +8,22 @@ fn pthread_mutex_and_seq_cst_atomics_survive_simultaneous_workers() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("stress.c");
     let test = r#"#include <assert.h>
+#ifdef __APPLE__
+/* macOS has no pthread_barrier_t; this test only needs the POSIX basics. */
+#define PTHREAD_BARRIER_SERIAL_THREAD 1
+typedef struct { pthread_mutex_t lock; pthread_cond_t turned; unsigned count, waiting, cycle; } pthread_barrier_t;
+static int pthread_barrier_init(pthread_barrier_t *b, const void *a, unsigned count) {
+    (void)a; b->count = count; b->waiting = 0; b->cycle = 0;
+    return pthread_mutex_init(&b->lock, NULL) || pthread_cond_init(&b->turned, NULL);
+}
+static int pthread_barrier_destroy(pthread_barrier_t *b) { return pthread_mutex_destroy(&b->lock) || pthread_cond_destroy(&b->turned); }
+static int pthread_barrier_wait(pthread_barrier_t *b) {
+    pthread_mutex_lock(&b->lock); unsigned cycle = b->cycle; int result = 0;
+    if (++b->waiting == b->count) { b->waiting = 0; ++b->cycle; pthread_cond_broadcast(&b->turned); result = PTHREAD_BARRIER_SERIAL_THREAD; }
+    else while (cycle == b->cycle) pthread_cond_wait(&b->turned, &b->lock);
+    pthread_mutex_unlock(&b->lock); return result;
+}
+#endif
 static pthread_barrier_t barrier;
 static TarnMutex *mutex;
 static int64_t payload;
