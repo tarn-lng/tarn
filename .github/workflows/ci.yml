@@ -83,6 +83,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      # Restore compiled dependencies and workspace artifacts. Only main
+      # writes the cache so PRs reuse it without evicting each other.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-${{ matrix.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Put the macOS test helpers first on PATH
         run: echo "$GITHUB_WORKSPACE/tools/ci/macos" >> "$GITHUB_PATH"
       - run: cargo test --locked --release --workspace --no-fail-fast
