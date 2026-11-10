@@ -83,3 +83,19 @@ fn test_hex_is_lowercase_two_digits() {
     if encoding.hex(&[4]u8{0, 15, 160, 255}) != "000fa0ff" { panic("hex digits") }
     if encoding.hex("".bytes()) != "" { panic("empty hex") }
 }
+
+fn test_base64url_round_trip_and_strictness() {
+    var all: Vec<u8> = Vec.new()
+    for i in 0..256 { all.push(u8(i)) }
+    text := encoding.base64url_encode(all.as_slice())
+    for b in text.bytes() { if b == 43 || b == 47 || b == 61 { panic("non-url character") } }
+    decoded := encoding.base64url_decode(&text, 256).unwrap()
+    if decoded.len() != 256 { panic("round trip length") }
+    for i in 0..256 { if decoded.at(i) != u8(i) { panic("round trip byte") } }
+    if encoding.base64url_encode("?>?".bytes()) != "Pz4_" { panic("url alphabet") }
+    if encoding.base64url_encode("a".bytes()) != "YQ" { panic("no padding") }
+    if encoding.base64url_decode("YQ==", 10).is_ok() { panic("padding accepted") }
+    if encoding.base64url_decode("Pz4/", 10).is_ok() { panic("slash accepted") }
+    if encoding.base64url_decode("YR", 10).is_ok() { panic("non-canonical bits accepted") }
+    if encoding.base64url_decode("Y", 10).is_ok() { panic("impossible length accepted") }
+}

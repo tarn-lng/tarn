@@ -1,5 +1,11 @@
-// Cryptographic digests (ADR 0076). Ordinary Tarn with no intrinsic
-// authority; FIPS 180-4 SHA-256 and RFC 2104 HMAC-SHA-256. No ciphers or streaming yet.
+// Cryptography (ADR 0076, ADR 0100). Ordinary Tarn: FIPS 180-4 SHA-256,
+// RFC 2104 HMAC-SHA-256, RFC 8017 RSASSA-PKCS1-v1_5 with SHA-256, RFC 8439
+// ChaCha20-Poly1305 and operating-system randomness. The only native call is
+// getrandom; every secret-dependent computation runs in constant time.
+import "ffi"
+import "encoding"
+import "string"
+extern "C" fn getrandom(buffer *mut u8, length usize, flags u32) isize
 
 fn _rotr(value u32, count u32) u32 { return (value >> count) | (value << (32 - count)) }
 
@@ -114,4 +120,661 @@ pub fn equal_bytes(a &[]u8, b &[]u8) bool {
     var difference = u8(0)
     for i in 0..a.len() { difference = difference | (a[i] ^ b[i]) }
     return difference == 0
+}
+
+/// Why a cryptographic operation was refused. Messages never include secrets.
+pub copy enum CryptoError {
+    /// Key material is malformed, unsupported or too weak.
+    InvalidKey
+    /// An argument has the wrong size or exceeds a limit.
+    InvalidInput
+    /// An authenticated ciphertext or signature did not verify.
+    AuthenticationFailed
+    /// The operating system could not provide random bytes.
+    RandomUnavailable
+}
+
+/// `count` bytes from the operating system's CSPRNG (getrandom). Requests are
+/// split into 256-byte reads, which Linux never interrupts or shortens.
+pub fn random_bytes(count usize) Result<Vec<u8>, CryptoError> {
+    var out: Vec<u8> = Vec.with_capacity(count)
+    for out.len() < count { out.push(0) }
+    var offset = usize(0)
+    for offset < count {
+        var chunk = count - offset
+        if chunk > 256 { chunk = 256 }
+        var piece: Vec<u8> = Vec.with_capacity(chunk)
+        for piece.len() < chunk { piece.push(0) }
+        var result = isize(0)
+        unsafe { result = getrandom(ffi.slice_mut(piece.as_mut_slice()), chunk, 0) }
+        if result != isize(chunk) { return Err(CryptoError.RandomUnavailable) }
+        for i in 0..chunk { out.replace(offset + i, piece.at(i)) }
+        offset = offset + chunk
+    }
+    return Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-width unsigned integers: little-endian 32-bit limbs. Values derived
+// from secrets are only ever touched by the constant-time routines below.
+
+fn _lo(value u64) u32 { return u32(value & 4294967295) }
+
+fn _zeros(count usize) Vec<u32> {
+    var out: Vec<u32> = Vec.with_capacity(count)
+    for out.len() < count { out.push(0) }
+    return out
+}
+
+// Big-endian bytes into `limbs` limbs; None when the value does not fit.
+fn _bn_from_be(bytes &[]u8, limbs usize) Option<Vec<u32>> {
+    var out = _zeros(limbs)
+    for i in 0..bytes.len() {
+        j := bytes.len() - 1 - i
+        if j / 4 >= limbs {
+            if bytes[i] != 0 { return None }
+        } else {
+            out.replace(j / 4, out.at(j / 4) | (u32(bytes[i]) << u32((j % 4) * 8)))
+        }
+    }
+    return Some(out)
+}
+
+fn _bn_to_be(value &[]u32, length usize) Vec<u8> {
+    var out: Vec<u8> = Vec.with_capacity(length)
+    for i in 0..length {
+        j := length - 1 - i
+        if j / 4 < value.len() {
+            out.push(u8((value[j / 4] >> u32((j % 4) * 8)) & 255))
+        } else {
+            out.push(0)
+        }
+    }
+    return out
+}
+
+// Public values only: variable time.
+fn _bn_less(a &[]u32, b &[]u32) bool {
+    var i = a.len()
+    for i > 0 {
+        i = i - 1
+        if a[i] != b[i] { return a[i] < b[i] }
+    }
+    return false
+}
+
+fn _bn_bits(value &[]u32) usize {
+    var i = value.len()
+    for i > 0 {
+        i = i - 1
+        if value[i] != 0 {
+            var bits = usize(32)
+            var top = value[i]
+            for (top >> 31) == 0 {
+                top = top << 1
+                bits = bits - 1
+            }
+            return i * 32 + bits
+        }
+    }
+    return 0
+}
+
+// Montgomery arithmetic modulo an odd public modulus (R = 2^(32 * limbs)).
+struct _Mont {
+    n Vec<u32>
+    n0 u32
+    rr Vec<u32>
+}
+
+fn _mont_new(n &[]u32) _Mont {
+    // -n^-1 mod 2^32 by Newton iteration: n*n = 1 mod 8, each step doubles bits.
+    var inverse = n[0]
+    for i in 0..4 { inverse = inverse.wrapping_mul(u32(2).wrapping_sub(n[0].wrapping_mul(inverse))) }
+    k := n.len()
+    // R^2 mod n by doubling 1 a total of 64k times (public modulus).
+    var x = _zeros(k)
+    x.replace(0, 1)
+    for step in 0..(64 * k) {
+        var carry = u32(0)
+        for j in 0..k {
+            top := x.at(j) >> 31
+            x.replace(j, (x.at(j) << 1) | carry)
+            carry = top
+        }
+        if carry == 1 || !_bn_less(x.as_slice(), n) {
+            var borrow = u64(0)
+            for j in 0..k {
+                d := u64(x.at(j)).wrapping_sub(u64(n[j])).wrapping_sub(borrow)
+                x.replace(j, _lo(d))
+                borrow = (d >> 63)
+            }
+        }
+    }
+    var modulus: Vec<u32> = Vec.with_capacity(k)
+    for limb in n { modulus.push(limb) }
+    return _Mont{n: modulus, n0: u32(0).wrapping_sub(inverse), rr: x}
+}
+
+// a * b * R^-1 mod n (CIOS). Inputs below n; output below n. Constant time.
+fn _mont_mul(m &_Mont, a &[]u32, b &[]u32) Vec<u32> {
+    k := m.n.len()
+    var t = _zeros(k + 2)
+    for i in 0..k {
+        var c = u64(0)
+        bi := u64(b[i])
+        for j in 0..k {
+            s := u64(t.at(j)) + u64(a[j]) * bi + c
+            t.replace(j, _lo(s))
+            c = s >> 32
+        }
+        s0 := u64(t.at(k)) + c
+        t.replace(k, _lo(s0))
+        t.replace(k + 1, u32(s0 >> 32))
+        q := t.at(0).wrapping_mul(m.n0)
+        s1 := u64(t.at(0)) + u64(q) * u64(m.n.at(0))
+        c = s1 >> 32
+        for j in 1..k {
+            s := u64(t.at(j)) + u64(q) * u64(m.n.at(j)) + c
+            t.replace(j - 1, _lo(s))
+            c = s >> 32
+        }
+        s2 := u64(t.at(k)) + c
+        t.replace(k - 1, _lo(s2))
+        t.replace(k, t.at(k + 1) + u32(s2 >> 32))
+    }
+    // Subtract n when t >= n, selecting the result with a mask (no branch).
+    var d = _zeros(k)
+    var borrow = u64(0)
+    for j in 0..k {
+        v := u64(t.at(j)).wrapping_sub(u64(m.n.at(j))).wrapping_sub(borrow)
+        d.replace(j, _lo(v))
+        borrow = v >> 63
+    }
+    use_d := t.at(k) | (u32(borrow) ^ 1)
+    mask := u32(0).wrapping_sub(use_d & 1)
+    var out = _zeros(k)
+    for j in 0..k { out.replace(j, (d.at(j) & mask) | (t.at(j) & (mask ^ 4294967295))) }
+    return out
+}
+
+// base^exponent mod n for base < n. The exponent is processed as 4-bit
+// windows over its full byte length with constant-time table selection, so
+// timing depends only on the exponent's length, never its value.
+fn _mod_pow(m &_Mont, base &[]u32, exponent &[]u8) Vec<u32> {
+    k := m.n.len()
+    var one = _zeros(k)
+    one.replace(0, 1)
+    var table: Vec<Vec<u32>> = Vec.new()
+    table.push(_mont_mul(m, one.as_slice(), m.rr.as_slice()))
+    table.push(_mont_mul(m, base, m.rr.as_slice()))
+    for i in 2..16 { table.push(_mont_mul(m, table.get(i - 1).as_slice(), table.get(1).as_slice())) }
+    var acc = _mont_mul(m, one.as_slice(), m.rr.as_slice())
+    for byte in exponent {
+        for half in 0..2 {
+            for s in 0..4 { acc = _mont_mul(m, acc.as_slice(), acc.as_slice()) }
+            var nibble = u32(byte >> 4)
+            if half == 1 { nibble = u32(byte & 15) }
+            var chosen = _zeros(k)
+            for i in 0..16 {
+                x := u32(i) ^ nibble
+                nonzero := (x | u32(0).wrapping_sub(x)) >> 31
+                mask := u32(0).wrapping_sub(nonzero ^ 1)
+                for j in 0..k { chosen.replace(j, chosen.at(j) | (table.get(i).at(j) & mask)) }
+            }
+            acc = _mont_mul(m, acc.as_slice(), chosen.as_slice())
+        }
+    }
+    return _mont_mul(m, acc.as_slice(), one.as_slice())
+}
+
+// ---------------------------------------------------------------------------
+// RSA (RFC 8017). Moduli of 2048 to 4096 bits only.
+
+/// An RSA public key: modulus and public exponent.
+pub struct RsaPublicKey {
+    n Vec<u32>
+    e Vec<u8>
+    size usize
+    mont _Mont
+}
+
+/// An RSA private key. Only the private exponent is used: signing runs a
+/// constant-time exponentiation and is checked against the public key.
+pub struct RsaPrivateKey {
+    public RsaPublicKey
+    d Vec<u8>
+}
+
+/// Modulus length in bytes (the signature length).
+pub fn RsaPublicKey.size(&self) usize { return self.size }
+pub fn RsaPrivateKey.size(&self) usize { return self.public.size }
+/// The matching public key.
+pub fn RsaPrivateKey.public_key(&self) RsaPublicKey { return _rsa_public(self.public.n.as_slice(), self.public.e.as_slice()) }
+
+fn _strip_zeros(bytes &[]u8) Vec<u8> {
+    var start = usize(0)
+    for start < bytes.len() && bytes[start] == 0 { start = start + 1 }
+    var out: Vec<u8> = Vec.with_capacity(bytes.len() - start)
+    for i in start..bytes.len() { out.push(bytes[i]) }
+    return out
+}
+
+fn _rsa_public(n &[]u32, e &[]u8) RsaPublicKey {
+    var modulus: Vec<u32> = Vec.with_capacity(n.len())
+    for limb in n { modulus.push(limb) }
+    var exponent: Vec<u8> = Vec.with_capacity(e.len())
+    for b in e { exponent.push(b) }
+    return RsaPublicKey{n: modulus, e: exponent, size: (_bn_bits(n) + 7) / 8, mont: _mont_new(n)}
+}
+
+// Validates (n, e) from big-endian bytes and builds the public key.
+fn _rsa_public_from(n_bytes &[]u8, e_bytes &[]u8) Result<RsaPublicKey, CryptoError> {
+    n_be := _strip_zeros(n_bytes)
+    e_be := _strip_zeros(e_bytes)
+    if n_be.len() < 256 || n_be.len() > 512 || e_be.len() == 0 || e_be.len() > 8 { return Err(CryptoError.InvalidKey) }
+    if (n_be.at(n_be.len() - 1) & 1) == 0 || (e_be.at(e_be.len() - 1) & 1) == 0 { return Err(CryptoError.InvalidKey) }
+    if e_be.len() == 1 && e_be.at(0) < 3 { return Err(CryptoError.InvalidKey) }
+    limbs := (n_be.len() + 3) / 4
+    n := match _bn_from_be(n_be.as_slice(), limbs) { Some(v) => v
+        None => { return Err(CryptoError.InvalidKey) } }
+    if _bn_bits(n.as_slice()) < 2048 { return Err(CryptoError.InvalidKey) }
+    return Ok(_rsa_public(n.as_slice(), e_be.as_slice()))
+}
+
+/// A public key from big-endian modulus and exponent bytes (as in a JWK).
+pub fn rsa_public_key(modulus &[]u8, exponent &[]u8) Result<RsaPublicKey, CryptoError> {
+    return _rsa_public_from(modulus, exponent)
+}
+
+// Minimal strict DER reader: one element at `at`, definite lengths only.
+struct _Der {
+    tag u8
+    start usize
+    end usize
+}
+
+fn _der(data &[]u8, at usize, limit usize) Result<_Der, CryptoError> {
+    if at + 2 > limit { return Err(CryptoError.InvalidKey) }
+    tag := data[at]
+    first := data[at + 1]
+    var length = usize(0)
+    var start = at + 2
+    if first < 128 {
+        length = usize(first)
+    } else {
+        count := usize(first & 127)
+        if count == 0 || count > 3 || start + count > limit { return Err(CryptoError.InvalidKey) }
+        for i in 0..count { length = length * 256 + usize(data[start + i]) }
+        if length < 128 || data[start] == 0 { return Err(CryptoError.InvalidKey) }
+        start = start + count
+    }
+    if length > limit - start { return Err(CryptoError.InvalidKey) }
+    return Ok(_Der{tag: tag, start: start, end: start + length})
+}
+
+// A non-negative DER INTEGER's magnitude.
+fn _der_uint(data &[]u8, item &_Der) Result<Vec<u8>, CryptoError> {
+    if item.tag != 2 || item.end == item.start { return Err(CryptoError.InvalidKey) }
+    if (data[item.start] & 128) != 0 { return Err(CryptoError.InvalidKey) }
+    var out: Vec<u8> = Vec.with_capacity(item.end - item.start)
+    for i in item.start..item.end { out.push(data[i]) }
+    return Ok(out)
+}
+
+// RSAPrivateKey (RFC 8017 A.1.2) occupying data[start..end].
+fn _rsa_pkcs1(data &[]u8, start usize, end usize) Result<RsaPrivateKey, CryptoError> {
+    sequence := try _der(data, start, end)
+    if sequence.tag != 48 || sequence.end != end { return Err(CryptoError.InvalidKey) }
+    version := try _der(data, sequence.start, sequence.end)
+    v := try _der_uint(data, &version)
+    if v.len() != 1 || v.at(0) != 0 { return Err(CryptoError.InvalidKey) }
+    n_item := try _der(data, version.end, sequence.end)
+    e_item := try _der(data, n_item.end, sequence.end)
+    d_item := try _der(data, e_item.end, sequence.end)
+    n := try _der_uint(data, &n_item)
+    e := try _der_uint(data, &e_item)
+    d := try _der_uint(data, &d_item)
+    public := try _rsa_public_from(n.as_slice(), e.as_slice())
+    d_be := _strip_zeros(d.as_slice())
+    if d_be.len() == 0 { return Err(CryptoError.InvalidKey) }
+    d_value := match _bn_from_be(d_be.as_slice(), public.n.len()) { Some(v) => v
+        None => { return Err(CryptoError.InvalidKey) } }
+    if !_bn_less(d_value.as_slice(), public.n.as_slice()) { return Err(CryptoError.InvalidKey) }
+    // Pad d to the modulus length so exponentiation time reveals only that length.
+    padded := _bn_to_be(d_value.as_slice(), public.size)
+    return Ok(RsaPrivateKey{public: public, d: padded})
+}
+
+/// An RSA private key from DER: PKCS#1 RSAPrivateKey or PKCS#8 PrivateKeyInfo.
+pub fn rsa_private_key_from_der(der &[]u8) Result<RsaPrivateKey, CryptoError> {
+    outer := try _der(der, 0, der.len())
+    if outer.tag != 48 || outer.end != der.len() { return Err(CryptoError.InvalidKey) }
+    version := try _der(der, outer.start, outer.end)
+    next := try _der(der, version.end, outer.end)
+    if next.tag == 2 { return _rsa_pkcs1(der, 0, der.len()) }
+    // PKCS#8: version 0, AlgorithmIdentifier rsaEncryption, OCTET STRING key.
+    v := try _der_uint(der, &version)
+    if v.len() != 1 || v.at(0) != 0 || next.tag != 48 { return Err(CryptoError.InvalidKey) }
+    oid := try _der(der, next.start, next.end)
+    expected := [9]u8{42, 134, 72, 134, 247, 13, 1, 1, 1}
+    if oid.tag != 6 || oid.end - oid.start != 9 { return Err(CryptoError.InvalidKey) }
+    for i in 0..9 { if der[oid.start + i] != expected[i] { return Err(CryptoError.InvalidKey) } }
+    if oid.end != next.end {
+        parameters := try _der(der, oid.end, next.end)
+        if parameters.tag != 5 || parameters.end != parameters.start || parameters.end != next.end { return Err(CryptoError.InvalidKey) }
+    }
+    key := try _der(der, next.end, outer.end)
+    if key.tag != 4 { return Err(CryptoError.InvalidKey) }
+    return _rsa_pkcs1(der, key.start, key.end)
+}
+
+/// An RSA private key from PEM ("RSA PRIVATE KEY" or "PRIVATE KEY"), as
+/// downloaded from GitHub App settings. Encrypted PEM is not supported.
+pub fn rsa_private_key_from_pem(pem &string) Result<RsaPrivateKey, CryptoError> {
+    if pem.len() > 65536 { return Err(CryptoError.InvalidKey) }
+    var body: Vec<u8> = Vec.new()
+    var inside = false
+    var label = ""
+    for raw in string.lines(pem).as_slice() {
+        line := string.trim(raw)
+        if string.starts_with(&line, "-----BEGIN ") {
+            if inside || label.len() > 0 { return Err(CryptoError.InvalidKey) }
+            inside = true
+            label = line.clone()
+        } else if string.starts_with(&line, "-----END ") {
+            if !inside { return Err(CryptoError.InvalidKey) }
+            if line != string.replace_all(&label, "BEGIN", "END") { return Err(CryptoError.InvalidKey) }
+            inside = false
+        } else if inside {
+            for b in line.bytes() { body.push(b) }
+        } else if line.len() > 0 {
+            return Err(CryptoError.InvalidKey)
+        }
+    }
+    if inside { return Err(CryptoError.InvalidKey) }
+    if label != "-----BEGIN RSA PRIVATE KEY-----" && label != "-----BEGIN PRIVATE KEY-----" { return Err(CryptoError.InvalidKey) }
+    text := match string.from_utf8(body.as_slice()) { Some(t) => t
+        None => { return Err(CryptoError.InvalidKey) } }
+    der := match encoding.base64_decode(&text, 16384) { Ok(bytes) => bytes
+        Err(_) => { return Err(CryptoError.InvalidKey) } }
+    return rsa_private_key_from_der(der.as_slice())
+}
+
+// EMSA-PKCS1-v1_5 encoding of SHA-256(message) for a k-byte modulus.
+fn _emsa_sha256(message &[]u8, k usize) Vec<u8> {
+    prefix := [19]u8{48, 49, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 1, 5, 0, 4, 32}
+    digest := sha256(message)
+    var out: Vec<u8> = Vec.with_capacity(k)
+    out.push(0)
+    out.push(1)
+    for out.len() < k - 3 - 51 + 2 { out.push(255) }
+    out.push(0)
+    for b in prefix { out.push(b) }
+    for b in digest { out.push(b) }
+    return out
+}
+
+/// RSASSA-PKCS1-v1_5 with SHA-256 (JWT "RS256"). Deterministic. The result is
+/// verified with the public key before it is returned, so a computation fault
+/// can never release a signature that leaks the key.
+pub fn rsa_sign_pkcs1v15_sha256(key &RsaPrivateKey, message &[]u8) Result<Vec<u8>, CryptoError> {
+    k := key.public.size
+    encoded := _emsa_sha256(message, k)
+    m := match _bn_from_be(encoded.as_slice(), key.public.n.len()) { Some(v) => v
+        None => { return Err(CryptoError.InvalidInput) } }
+    s := _mod_pow(&key.public.mont, m.as_slice(), key.d.as_slice())
+    check := _mod_pow(&key.public.mont, s.as_slice(), key.public.e.as_slice())
+    if !equal_bytes(_bn_to_be(check.as_slice(), k).as_slice(), encoded.as_slice()) { return Err(CryptoError.InvalidKey) }
+    return Ok(_bn_to_be(s.as_slice(), k))
+}
+
+/// True when `signature` is a valid RSASSA-PKCS1-v1_5 SHA-256 signature.
+pub fn rsa_verify_pkcs1v15_sha256(key &RsaPublicKey, message &[]u8, signature &[]u8) bool {
+    if signature.len() != key.size { return false }
+    s := match _bn_from_be(signature, key.n.len()) { Some(v) => v
+        None => { return false } }
+    if !_bn_less(s.as_slice(), key.n.as_slice()) { return false }
+    m := _mod_pow(&key.mont, s.as_slice(), key.e.as_slice())
+    return equal_bytes(_bn_to_be(m.as_slice(), key.size).as_slice(), _emsa_sha256(message, key.size).as_slice())
+}
+
+// ---------------------------------------------------------------------------
+// ChaCha20-Poly1305 AEAD (RFC 8439). 32-byte key, 12-byte nonce, 16-byte tag.
+
+fn _rotl(value u32, count u32) u32 { return (value << count) | (value >> (32 - count)) }
+
+fn _le32(data &[]u8, at usize) u32 {
+    return u32(data[at]) | (u32(data[at + 1]) << 8) | (u32(data[at + 2]) << 16) | (u32(data[at + 3]) << 24)
+}
+
+fn _quarter(s &mut Vec<u32>, a usize, b usize, c usize, d usize) {
+    s.replace(a, s.at(a).wrapping_add(s.at(b)))
+    s.replace(d, _rotl(s.at(d) ^ s.at(a), 16))
+    s.replace(c, s.at(c).wrapping_add(s.at(d)))
+    s.replace(b, _rotl(s.at(b) ^ s.at(c), 12))
+    s.replace(a, s.at(a).wrapping_add(s.at(b)))
+    s.replace(d, _rotl(s.at(d) ^ s.at(a), 8))
+    s.replace(c, s.at(c).wrapping_add(s.at(d)))
+    s.replace(b, _rotl(s.at(b) ^ s.at(c), 7))
+}
+
+// One 64-byte keystream block (RFC 8439 section 2.3).
+fn _chacha_block(key &[]u8, counter u32, nonce &[]u8) Vec<u8> {
+    var init: Vec<u32> = Vec.with_capacity(16)
+    init.push(1634760805)
+    init.push(857760878)
+    init.push(2036477234)
+    init.push(1797285236)
+    for i in 0..8 { init.push(_le32(key, i * 4)) }
+    init.push(counter)
+    for i in 0..3 { init.push(_le32(nonce, i * 4)) }
+    var s: Vec<u32> = Vec.with_capacity(16)
+    for word in init.as_slice() { s.push(word) }
+    for round in 0..10 {
+        _quarter(&mut s, 0, 4, 8, 12)
+        _quarter(&mut s, 1, 5, 9, 13)
+        _quarter(&mut s, 2, 6, 10, 14)
+        _quarter(&mut s, 3, 7, 11, 15)
+        _quarter(&mut s, 0, 5, 10, 15)
+        _quarter(&mut s, 1, 6, 11, 12)
+        _quarter(&mut s, 2, 7, 8, 13)
+        _quarter(&mut s, 3, 4, 9, 14)
+    }
+    var out: Vec<u8> = Vec.with_capacity(64)
+    for i in 0..16 {
+        word := s.at(i).wrapping_add(init.at(i))
+        out.push(u8(word & 255))
+        out.push(u8((word >> 8) & 255))
+        out.push(u8((word >> 16) & 255))
+        out.push(u8(word >> 24))
+    }
+    return out
+}
+
+fn _chacha_xor(key &[]u8, counter u32, nonce &[]u8, data &[]u8) Vec<u8> {
+    var out: Vec<u8> = Vec.with_capacity(data.len())
+    var block_counter = counter
+    var offset = usize(0)
+    for offset < data.len() {
+        stream := _chacha_block(key, block_counter, nonce)
+        var i = usize(0)
+        for i < 64 && offset + i < data.len() {
+            out.push(data[offset + i] ^ stream.at(i))
+            i = i + 1
+        }
+        offset = offset + 64
+        block_counter = block_counter.wrapping_add(1)
+    }
+    return out
+}
+
+// Poly1305 one-time authenticator (RFC 8439 section 2.5), 26-bit limbs.
+fn _poly1305(key &[]u8, message &[]u8) Vec<u8> {
+    mask := u64(67108863)
+    t0 := u64(_le32(key, 0))
+    t1 := u64(_le32(key, 4))
+    t2 := u64(_le32(key, 8))
+    t3 := u64(_le32(key, 12))
+    r0 := t0 & 67108863
+    r1 := ((t0 >> 26) | (t1 << 6)) & 67108611
+    r2 := ((t1 >> 20) | (t2 << 12)) & 67092735
+    r3 := ((t2 >> 14) | (t3 << 18)) & 66076671
+    r4 := (t3 >> 8) & 1048575
+    s1 := r1 * 5
+    s2 := r2 * 5
+    s3 := r3 * 5
+    s4 := r4 * 5
+    var h0 = u64(0)
+    var h1 = u64(0)
+    var h2 = u64(0)
+    var h3 = u64(0)
+    var h4 = u64(0)
+    var offset = usize(0)
+    for offset < message.len() {
+        var block: Vec<u8> = Vec.with_capacity(17)
+        var i = usize(0)
+        for i < 16 && offset + i < message.len() {
+            block.push(message[offset + i])
+            i = i + 1
+        }
+        var hibit = u64(16777216)
+        if block.len() < 16 {
+            block.push(1)
+            for block.len() < 16 { block.push(0) }
+            hibit = 0
+        }
+        b0 := u64(_le32(block.as_slice(), 0))
+        b1 := u64(_le32(block.as_slice(), 4))
+        b2 := u64(_le32(block.as_slice(), 8))
+        b3 := u64(_le32(block.as_slice(), 12))
+        h0 = h0 + (b0 & mask)
+        h1 = h1 + (((b0 >> 26) | (b1 << 6)) & mask)
+        h2 = h2 + (((b1 >> 20) | (b2 << 12)) & mask)
+        h3 = h3 + (((b2 >> 14) | (b3 << 18)) & mask)
+        h4 = h4 + ((b3 >> 8) | hibit)
+        d0 := h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1
+        var d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2
+        var d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3
+        var d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4
+        var d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0
+        var c = d0 >> 26
+        h0 = d0 & mask
+        d1 = d1 + c
+        c = d1 >> 26
+        h1 = d1 & mask
+        d2 = d2 + c
+        c = d2 >> 26
+        h2 = d2 & mask
+        d3 = d3 + c
+        c = d3 >> 26
+        h3 = d3 & mask
+        d4 = d4 + c
+        c = d4 >> 26
+        h4 = d4 & mask
+        h0 = h0 + c * 5
+        c = h0 >> 26
+        h0 = h0 & mask
+        h1 = h1 + c
+        offset = offset + 16
+    }
+    var c = h1 >> 26
+    h1 = h1 & mask
+    h2 = h2 + c
+    c = h2 >> 26
+    h2 = h2 & mask
+    h3 = h3 + c
+    c = h3 >> 26
+    h3 = h3 & mask
+    h4 = h4 + c
+    c = h4 >> 26
+    h4 = h4 & mask
+    h0 = h0 + c * 5
+    c = h0 >> 26
+    h0 = h0 & mask
+    h1 = h1 + c
+    // Compute h - p and keep it when it does not underflow (constant time).
+    var g0 = h0 + 5
+    c = g0 >> 26
+    g0 = g0 & mask
+    var g1 = h1 + c
+    c = g1 >> 26
+    g1 = g1 & mask
+    var g2 = h2 + c
+    c = g2 >> 26
+    g2 = g2 & mask
+    var g3 = h3 + c
+    c = g3 >> 26
+    g3 = g3 & mask
+    g4 := (h4 + c).wrapping_sub(67108864)
+    select := (g4 >> 63).wrapping_sub(1)
+    keep := select ^ 18446744073709551615
+    h0 = (h0 & keep) | (g0 & select)
+    h1 = (h1 & keep) | (g1 & select)
+    h2 = (h2 & keep) | (g2 & select)
+    h3 = (h3 & keep) | (g3 & select)
+    h4 = (h4 & keep) | (g4 & select & mask)
+    w0 := (h0 | (h1 << 26)) & 4294967295
+    w1 := ((h1 >> 6) | (h2 << 20)) & 4294967295
+    w2 := ((h2 >> 12) | (h3 << 14)) & 4294967295
+    w3 := ((h3 >> 18) | (h4 << 8)) & 4294967295
+    var f = w0 + u64(_le32(key, 16))
+    var out: Vec<u8> = Vec.with_capacity(16)
+    words := [4]u64{w0, w1, w2, w3}
+    for i in 0..4 {
+        if i > 0 { f = words[i] + u64(_le32(key, 16 + i * 4)) + (f >> 32) }
+        word := f & 4294967295
+        out.push(u8(word & 255))
+        out.push(u8((word >> 8) & 255))
+        out.push(u8((word >> 16) & 255))
+        out.push(u8(word >> 24))
+    }
+    return out
+}
+
+fn _push_le64(out &mut Vec<u8>, value u64) {
+    for i in 0..8 { out.push(u8((value >> u64(i * 8)) & 255)) }
+}
+
+fn _aead_tag(key &[]u8, nonce &[]u8, aad &[]u8, ciphertext &[]u8) Vec<u8> {
+    block := _chacha_block(key, 0, nonce)
+    var one_time: Vec<u8> = Vec.with_capacity(32)
+    for i in 0..32 { one_time.push(block.at(i)) }
+    var mac: Vec<u8> = Vec.with_capacity(aad.len() + ciphertext.len() + 48)
+    mac.extend_from_slice(aad)
+    for mac.len() % 16 != 0 { mac.push(0) }
+    mac.extend_from_slice(ciphertext)
+    for mac.len() % 16 != 0 { mac.push(0) }
+    _push_le64(&mut mac, u64(aad.len()))
+    _push_le64(&mut mac, u64(ciphertext.len()))
+    return _poly1305(one_time.as_slice(), mac.as_slice())
+}
+
+// 2^32 - 1 blocks of keystream after the one used for the Poly1305 key.
+fn _aead_limit() usize { return 274877906816 }
+
+/// ChaCha20-Poly1305 encryption: returns ciphertext followed by the 16-byte
+/// tag. `aad` is authenticated but not encrypted (e.g. a row identifier).
+/// Never reuse a nonce with the same key: use `random_bytes(12)` per message.
+pub fn chacha20poly1305_seal(key &[]u8, nonce &[]u8, plaintext &[]u8, aad &[]u8) Result<Vec<u8>, CryptoError> {
+    if key.len() != 32 { return Err(CryptoError.InvalidKey) }
+    if nonce.len() != 12 || plaintext.len() > _aead_limit() { return Err(CryptoError.InvalidInput) }
+    var out = _chacha_xor(key, 1, nonce, plaintext)
+    tag := _aead_tag(key, nonce, aad, out.as_slice())
+    out.extend_from_slice(tag.as_slice())
+    return Ok(out)
+}
+
+/// Verifies the tag in constant time before decrypting; any change to the
+/// key, nonce, aad, ciphertext or tag yields AuthenticationFailed.
+pub fn chacha20poly1305_open(key &[]u8, nonce &[]u8, sealed &[]u8, aad &[]u8) Result<Vec<u8>, CryptoError> {
+    if key.len() != 32 { return Err(CryptoError.InvalidKey) }
+    if nonce.len() != 12 || sealed.len() < 16 || sealed.len() - 16 > _aead_limit() { return Err(CryptoError.InvalidInput) }
+    var ciphertext: Vec<u8> = Vec.with_capacity(sealed.len() - 16)
+    for i in 0..(sealed.len() - 16) { ciphertext.push(sealed[i]) }
+    var tag: Vec<u8> = Vec.with_capacity(16)
+    for i in (sealed.len() - 16)..sealed.len() { tag.push(sealed[i]) }
+    expected := _aead_tag(key, nonce, aad, ciphertext.as_slice())
+    if !equal_bytes(expected.as_slice(), tag.as_slice()) { return Err(CryptoError.AuthenticationFailed) }
+    return Ok(_chacha_xor(key, 1, nonce, ciphertext.as_slice()))
 }

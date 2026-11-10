@@ -34,6 +34,10 @@ Response headers/streaming are not exposed; for a persistent duplex TLS byte
 stream use `net.TlsStream` ([ADR 0066](adr/0066-persistent-tls-streams.md)). The response buffer is allocated to
 the selected bound before the transfer; do not select unnecessarily large bounds.
 
+`https.request_headers(url, method, headers &[]string, body, options)` sends up
+to 16 `Name: value` headers (for example `User-Agent` plus `Authorization`);
+each one is rejected if it contains CR, LF or NUL or has an empty name.
+
 Errors preserve libcurl codes (e.g. 28 timeout, 60 certificate verification);
 -1 means native dependency/global initialization unavailable, -2 response bound
 exceeded, -3 invalid input. Truncated transfers fail; exact libcurl error may

@@ -25,6 +25,14 @@ pub fn request(url &string, method &string, header &string, body &[]u8, options 
     for byte in header.bytes() {
         if byte == 10 || byte == 13 || byte == 0 { return Err(Error{code: -3}) }
     }
+    return _request(url, method, header, body, options)
+}
+// `header` holds zero or more validated headers separated by LF; the native
+// side appends each line separately to the libcurl header list.
+fn _request(url &string, method &string, header &string, body &[]u8, options &Options) Result<Response, Error> {
+    if !string.starts_with(url, "https://") || (method != &"GET" && method != &"POST") { return Err(Error{code: -3}) }
+    if options.timeout_millis == 0 || options.timeout_millis > 9223372036854775807 || options.response_limit > 67108864 { return Err(Error{code: -3}) }
+    if method == &"GET" && !body.is_empty() { return Err(Error{code: -3}) }
     address := try cstring(url)
     verb := try cstring(method)
     field := try cstring(header)
@@ -38,6 +46,28 @@ pub fn request(url &string, method &string, header &string, body &[]u8, options 
     if code != 0 { return Err(Error{code: code}) }
     for buffer.len() > usize(used) { buffer.pop() }
     return Ok(Response{status: status, body: buffer})
+}
+/// Like `request`, with up to 16 headers ("Name: value"). Each header is
+/// validated against CR, LF and NUL injection and must have a non-empty name.
+pub fn request_headers(url &string, method &string, headers &[]string, body &[]u8, options &Options) Result<Response, Error> {
+    if headers.len() > 16 { return Err(Error{code: -3}) }
+    var joined = ""
+    for header in headers {
+        bytes := header.bytes()
+        var colon = usize(0)
+        var seen = false
+        for i in 0..bytes.len() {
+            if bytes[i] == 10 || bytes[i] == 13 || bytes[i] == 0 { return Err(Error{code: -3}) }
+            if bytes[i] == 58 && !seen {
+                colon = i
+                seen = true
+            }
+        }
+        if !seen || colon == 0 { return Err(Error{code: -3}) }
+        if joined.len() > 0 { joined = joined + "\n" }
+        joined = joined + header
+    }
+    return _request(url, method, &joined, body, options)
 }
 pub fn get(url &string, options &Options) Result<Response, Error> {
     empty := [0]u8{}
