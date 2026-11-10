@@ -1,0 +1,115 @@
+// ADR 0100: RSASSA-PKCS1-v1_5 SHA-256 and ChaCha20-Poly1305. Expected values
+// come from independent implementations (OpenSSL 4.1 signatures, Python
+// cryptography for AEAD) plus the RFC 8439 section 2.8.2 vector. Test-only keys.
+import "crypto"
+import "encoding"
+import "string"
+import "testing"
+
+fn pkcs1() string { return "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA39emfRMkFtmMf517O/irwCDThAG+O+mrkSQ4NDqjHpiUSNOy\n/+/d4sJoVjrIUMS1zAabWpC/BuklGK2v6KA1d31RLkW3zwIT/B9/srKIUPbdR7hz\nRetWQp6EBHYmb9PAp91iGKi27OpUCatMX1SvVZQbCMGpuHXnvog5ACvlf13L09fl\nVD1XR7XWC4UJ0pZjxiM87rhuZThA9n+no8ig4Lb8wXVbFwj8QSOl5yLnPrgF1SSz\nPm3bvS83IVcnuD8G6zHcL8ju+S6Fbvl7nwNMNC5jSHrkpDJRiE/JdpcmjdCwz3KX\nsiyYC38bKJSflwFNYVY/VoMsQP7D7vNui/V4GwIDAQABAoIBAGr43JQmSxduZOHx\nyRxqZO3e4iZSTO7F51toA0IWibDL+wVowkDkiVXeUU1wLx3GPBkiSSj5RolPbw6B\nprDVq2eMqHikEcjoddOF3Blyj4mdyDcHs3MFGgahSXb2Xb0QZZ/zQPeG3VCQVZP/\nXHKsflQ4AMlo/6prElJwOElYMQdxz1QCRnWQXVC2sC9Tq6pB9yPgzwzFqW6LGW+N\nZt9/zsbPUXyrW54Q9GIHmAo+GvGP80DaWUS/5rIAcRQqOufcJPp53v27Kz8J7Sz4\n0NNJ6+dudaPF+GRGEvVmxhbtBnXtY7f5RxqzyVX5EBuFFbjMOxNe2t36WbvTAlrk\nRzxUcUECgYEA91zpO0YCezzMjKXMdtvUsLlQXQPr8B7g5Z3tB6THnmLQqwABMGgB\nozOqEvMT6OyeQ6jIgiyco+S5PgPyNnwW/GANbgD0ls46II1mpdCsG7cL+c1nbeeW\n2K42qwzBCso8Io2wUvAAB9WqWQzG6ZPTIpG8DZ4Pyb57ABg2VhfTDNsCgYEA56h/\nW4bjpErc/GZbC5G4Dh2sqq88A+UHDaPrnS5YYazL1GTVWNeGetTBxuQigLl3tsfU\nV35yKkxZIIUa9eKZepKr77AokEVtonWfOnUlVORiFvCKhsSIOIhHxV2+BFzbZaJU\nGNtoVYYyackj35PHm3Qb9bnc7n9SItw9EWLxhcECgYAwJXFwDAxnmEnoBk1pxRf8\n3dT6hczii+ASUU7Vcgk4ltsurW2N0nCfJ2svDQkPCR805CFC1RQYAmjb3UDDwhtn\nO/rhMmZpA/LkayFTnO4i5tn54TUEe1MtEZuqZ20bgIl74EA1pGkdHUVu18HPrOon\njF4h+GXySpT+S7gnwbNeiQKBgQCGvByeujyKYLRY5JtNhko7g4zalSLdzQYmK9Gs\n0Li8zoialq7zhh8EL9wodqWOotB68YyR+swhx9gKrv/4RPwpK0dvF9Dv4EGcvLaI\nhHva/R4D45FeQs5Luw+rPhN3bB565UfuUSZEn9GQb1k6/zOYOZbNe3WBDXJTLi8i\nfp6kwQKBgGrOyeLX2+og6B8lbtPHl7tyobGzrvTq7VboozQ3BxJgsjrswNgEds0u\nictJmPjpmm0ncyyOPKtaMSJfqm21eNYLsOdvpBsHX1WOMm/XOFaUAYXCs6X8Zssy\nV5B0kiUGxfzyTKVZWws4ydsX/g9WVznO5xUSlIyzV+WoVf6tavja\n-----END RSA PRIVATE KEY-----\n" }
+fn pkcs8() string { return "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDf16Z9EyQW2Yx/\nnXs7+KvAINOEAb476auRJDg0OqMemJRI07L/793iwmhWOshQxLXMBptakL8G6SUY\nra/ooDV3fVEuRbfPAhP8H3+ysohQ9t1HuHNF61ZCnoQEdiZv08Cn3WIYqLbs6lQJ\nq0xfVK9VlBsIwam4dee+iDkAK+V/XcvT1+VUPVdHtdYLhQnSlmPGIzzuuG5lOED2\nf6ejyKDgtvzBdVsXCPxBI6XnIuc+uAXVJLM+bdu9LzchVye4PwbrMdwvyO75LoVu\n+XufA0w0LmNIeuSkMlGIT8l2lyaN0LDPcpeyLJgLfxsolJ+XAU1hVj9WgyxA/sPu\n826L9XgbAgMBAAECggEAavjclCZLF25k4fHJHGpk7d7iJlJM7sXnW2gDQhaJsMv7\nBWjCQOSJVd5RTXAvHcY8GSJJKPlGiU9vDoGmsNWrZ4yoeKQRyOh104XcGXKPiZ3I\nNwezcwUaBqFJdvZdvRBln/NA94bdUJBVk/9ccqx+VDgAyWj/qmsSUnA4SVgxB3HP\nVAJGdZBdULawL1OrqkH3I+DPDMWpbosZb41m33/Oxs9RfKtbnhD0YgeYCj4a8Y/z\nQNpZRL/msgBxFCo659wk+nne/bsrPwntLPjQ00nr5251o8X4ZEYS9WbGFu0Gde1j\nt/lHGrPJVfkQG4UVuMw7E17a3fpZu9MCWuRHPFRxQQKBgQD3XOk7RgJ7PMyMpcx2\n29SwuVBdA+vwHuDlne0HpMeeYtCrAAEwaAGjM6oS8xPo7J5DqMiCLJyj5Lk+A/I2\nfBb8YA1uAPSWzjogjWal0Kwbtwv5zWdt55bYrjarDMEKyjwijbBS8AAH1apZDMbp\nk9MikbwNng/JvnsAGDZWF9MM2wKBgQDnqH9bhuOkStz8ZlsLkbgOHayqrzwD5QcN\no+udLlhhrMvUZNVY14Z61MHG5CKAuXe2x9RXfnIqTFkghRr14pl6kqvvsCiQRW2i\ndZ86dSVU5GIW8IqGxIg4iEfFXb4EXNtlolQY22hVhjJpySPfk8ebdBv1udzuf1Ii\n3D0RYvGFwQKBgDAlcXAMDGeYSegGTWnFF/zd1PqFzOKL4BJRTtVyCTiW2y6tbY3S\ncJ8nay8NCQ8JHzTkIULVFBgCaNvdQMPCG2c7+uEyZmkD8uRrIVOc7iLm2fnhNQR7\nUy0Rm6pnbRuAiXvgQDWkaR0dRW7Xwc+s6ieMXiH4ZfJKlP5LuCfBs16JAoGBAIa8\nHJ66PIpgtFjkm02GSjuDjNqVIt3NBiYr0azQuLzOiJqWrvOGHwQv3Ch2pY6i0Hrx\njJH6zCHH2Aqu//hE/CkrR28X0O/gQZy8toiEe9r9HgPjkV5Czku7D6s+E3dsHnrl\nR+5RJkSf0ZBvWTr/M5g5ls17dYENclMuLyJ+nqTBAoGAas7J4tfb6iDoHyVu08eX\nu3KhsbOu9OrtVuijNDcHEmCyOuzA2AR2zS6Jy0mY+OmabSdzLI48q1oxIl+qbbV4\n1guw52+kGwdfVY4yb9c4VpQBhcKzpfxmyzJXkHSSJQbF/PJMpVlbCzjJ2xf+D1ZX\nOc7nFRKUjLNX5ahV/q1q+No=\n-----END PRIVATE KEY-----\n" }
+fn weak() string { return "-----BEGIN PRIVATE KEY-----\nMIICeAIBADANBgkqhkiG9w0BAQEFAASCAmIwggJeAgEAAoGBAKkLZPOghPa6hJPM\nvz/TLydZpUZF9GsOE/lIDpZnS3ICPY+o+Nl4GH4isMS2zNRzKDgi+EHI7lAam7ia\nfzQYvWHTtpApfllQxE+ffeUv+Ch+3ncI9InudxAt84w/PWcGeMsPwwBOr2QfEB1y\nwU3YMP9a3YPk9yKAnJEaY1kpQl3rAgMBAAECgYEAg1l6MJ+akUguedWPCV3j9tR+\nSpNSrth6hqkJxK4wfj7lbLoj2n6psWDtL3zGvZFZP/1UH3GsUwvJ0fAiRO2wQI7p\nYy9KnbgzRFTx3xGDtrWGvv61moikJv22v8dSryhbZ4/xxcAvUQMdcot+FF13m+vH\nhboSVfGpAQmRUHpjwMECQQDVSkegVCCusXnWVd26FGKplr2BA/rErVrxOhj0Iy7A\n3blRte/oiAVU0kwgqYUwLv1IWs0eRFmRWHAiArw70w0LAkEAyuT8Yqrq3P9Xi/bb\nqV/Wf0CiPiR2vWh72jfAT0cXFQZs7xrQol/PRDBd2KM/wgYSubfPBj3pmz3m0A64\nPyu+oQJBAILPtbItJoY9rt23d+9iBUjBfKQdzrTFJVuBKEDDOy9qTPhCP0s78Rke\niTYXAeqVRx4TIm4HuW8c8FjLmKqQPBUCQEHGZkOeYTFv3fPT/XY1SZZLX82BiLTy\nsGQX+tI4m7UHNj11lflt0gWrIGFg2wSNb3ihrA27+IWJVdBRVU21YsECQQDHs/el\nsTuQfEKekra38g3JCAmnALwWiDMjHG1pJX9B5q+75uJtEJuY96QDmPKtBZ/uvvmN\nY/iPVsrOItHEwAug\n-----END PRIVATE KEY-----\n" }
+fn openssl_signature() string { return "bb045d3f13eda9b2f9c8a8896ef62956b64353248c13a9c819dcdb2a9a9a813201c827d37529bdd49e618c1b7473f108bb4a50ebebc319a5fcd96cf33769b2eeefc9811302c2db02ef8143f38cd524145cbb68f588bfc456c980def195a5cd1504a51719dc950c7d6edc71698fe7c14f2d5624729795d8aafe44c2cc9b4b246479c6a7e6c89f4a89d97a016b1be390eb3771efb37dd4d2a5d57533511e693bd8202b6e388ce9331bb0e64e3e359316ecbbea63d65817391cf3886b357e41f2b35f183803ead073421580ce53263a23914672e10daa0ded8734735fc8e3b0779fbc31776c1bac0650860f3914ab196e50312e907cbcd7e359d29a1a15b11b3820" }
+
+fn unhex(text &string) Vec<u8> {
+    raw := text.bytes()
+    var out: Vec<u8> = Vec.new()
+    var i = usize(0)
+    for i + 1 < raw.len() {
+        out.push(u8(nibble(raw[i]) * 16 + nibble(raw[i + 1])))
+        i = i + 2
+    }
+    return out
+}
+fn nibble(b u8) u32 {
+    if b >= 97 { return u32(b) - 87 }
+    return u32(b) - 48
+}
+
+fn test_rsa_signature_matches_openssl_for_pkcs1_and_pkcs8(t &mut testing.T) {
+    first := crypto.rsa_private_key_from_pem(&pkcs1()).unwrap()
+    second := crypto.rsa_private_key_from_pem(&pkcs8()).unwrap()
+    t.eq(first.size(), usize(256))
+    a := crypto.rsa_sign_pkcs1v15_sha256(&first, "hello tarn".bytes()).unwrap()
+    b := crypto.rsa_sign_pkcs1v15_sha256(&second, "hello tarn".bytes()).unwrap()
+    t.eq(encoding.hex(a.as_slice()), openssl_signature())
+    t.eq(encoding.hex(b.as_slice()), openssl_signature())
+}
+
+fn test_rsa_verify_accepts_valid_and_rejects_tampering(t &mut testing.T) {
+    key := crypto.rsa_private_key_from_pem(&pkcs8()).unwrap()
+    public := key.public_key()
+    signature := unhex(&openssl_signature())
+    t.check(crypto.rsa_verify_pkcs1v15_sha256(&public, "hello tarn".bytes(), signature.as_slice()), "valid signature")
+    t.check(!crypto.rsa_verify_pkcs1v15_sha256(&public, "hello tarm".bytes(), signature.as_slice()), "other message")
+    var flipped = unhex(&openssl_signature())
+    flipped.replace(100, flipped.at(100) ^ 1)
+    t.check(!crypto.rsa_verify_pkcs1v15_sha256(&public, "hello tarn".bytes(), flipped.as_slice()), "flipped bit")
+    t.check(!crypto.rsa_verify_pkcs1v15_sha256(&public, "hello tarn".bytes(), "short".bytes()), "wrong length")
+}
+
+fn test_rsa_rejects_weak_malformed_and_encrypted_keys(t &mut testing.T) {
+    t.err(&crypto.rsa_private_key_from_pem(&weak()))
+    t.err(&crypto.rsa_private_key_from_pem(""))
+    t.err(&crypto.rsa_private_key_from_pem("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"))
+    t.err(&crypto.rsa_private_key_from_pem(&string.replace_all(&pkcs1(), "RSA PRIVATE KEY", "EC PRIVATE KEY")))
+    t.err(&crypto.rsa_private_key_from_pem(&string.replace_all(&pkcs1(), "-----END RSA PRIVATE KEY-----", "-----END PRIVATE KEY-----")))
+    t.err(&crypto.rsa_private_key_from_pem(&("junk\n" + &pkcs1())))
+}
+
+fn test_chacha20poly1305_rfc8439_vector(t &mut testing.T) {
+    var key: Vec<u8> = Vec.new()
+    for i in 0..32 { key.push(u8(128 + i)) }
+    nonce := unhex("070000004041424344454647")
+    aad := unhex("50515253c0c1c2c3c4c5c6c7")
+    plaintext := "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+    sealed := crypto.chacha20poly1305_seal(key.as_slice(), nonce.as_slice(), plaintext.bytes(), aad.as_slice()).unwrap()
+    t.eq(encoding.hex(sealed.as_slice()), "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691")
+    opened := crypto.chacha20poly1305_open(key.as_slice(), nonce.as_slice(), sealed.as_slice(), aad.as_slice()).unwrap()
+    t.check(crypto.equal_bytes(opened.as_slice(), plaintext.bytes()), "round trip")
+}
+
+fn aead_case(t &mut testing.T, length usize, expected string) {
+    key := unhex("0000000000000000000000000000000000000000000000000000000000000000")
+    nonce := unhex("000000000000000000000000")
+    var plaintext: Vec<u8> = Vec.new()
+    for plaintext.len() < length { plaintext.push(7) }
+    sealed := crypto.chacha20poly1305_seal(key.as_slice(), nonce.as_slice(), plaintext.as_slice(), "".bytes()).unwrap()
+    t.eq(encoding.hex(sealed.as_slice()), expected)
+}
+
+fn test_chacha20poly1305_block_and_padding_boundaries(t &mut testing.T) {
+    aead_case(t, 0, "4eb972c9a8fb3a1b382bb4d36f5ffad1")
+    aead_case(t, 1, "985c31fd2453c480cc74b9afef91d30ab0")
+    aead_case(t, 16, "9800e0b952563f7d9fbd907b742a0f0a7a4b9a14f76aee0a94460b277e5dac15")
+    aead_case(t, 17, "9800e0b952563f7d9fbd907b742a0f0accf3af34b95c945f281f1afc4c825dd403")
+    aead_case(t, 64, "9800e0b952563f7d9fbd907b742a0f0acc082ea74fe4626e15c1543935e97dea2eb026719be14944d27634b773df3ed236ea182f560dfc42abe60d184c7e4a68fec14c7b9d8ff43e93124cd3c29fca2a")
+    aead_case(t, 129, "9800e0b952563f7d9fbd907b742a0f0acc082ea74fe4626e15c1543935e97dea2eb026719be14944d27634b773df3ed236ea182f560dfc42abe60d184c7e4a682a0ea7e164216be6a979d60f1e6fa7728976899e7cd465c1b7c44133aea7b45a0620306f187c5a082f193dfae35fbb1974d5d414cec893c758f4766547a54ff5141b6f522e62feab703e21172fb4b12971")
+}
+
+fn test_chacha20poly1305_rejects_any_modification(t &mut testing.T) {
+    key := crypto.random_bytes(32).unwrap()
+    nonce := crypto.random_bytes(12).unwrap()
+    sealed := crypto.chacha20poly1305_seal(key.as_slice(), nonce.as_slice(), "secret token".bytes(), "row:42".bytes()).unwrap()
+    t.ok(&crypto.chacha20poly1305_open(key.as_slice(), nonce.as_slice(), sealed.as_slice(), "row:42".bytes()))
+    t.err(&crypto.chacha20poly1305_open(key.as_slice(), nonce.as_slice(), sealed.as_slice(), "row:43".bytes()))
+    for at in 0..sealed.len() {
+        var tampered: Vec<u8> = Vec.new()
+        for b in sealed.as_slice() { tampered.push(b) }
+        tampered.replace(at, tampered.at(at) ^ 128)
+        t.err(&crypto.chacha20poly1305_open(key.as_slice(), nonce.as_slice(), tampered.as_slice(), "row:42".bytes()))
+    }
+    other := crypto.random_bytes(32).unwrap()
+    t.err(&crypto.chacha20poly1305_open(other.as_slice(), nonce.as_slice(), sealed.as_slice(), "row:42".bytes()))
+    t.err(&crypto.chacha20poly1305_open(key.as_slice(), nonce.as_slice(), "short".bytes(), "".bytes()))
+    t.err(&crypto.chacha20poly1305_seal("short".bytes(), nonce.as_slice(), "x".bytes(), "".bytes()))
+    t.err(&crypto.chacha20poly1305_seal(key.as_slice(), "short".bytes(), "x".bytes(), "".bytes()))
+}
+
+fn test_random_bytes_lengths_and_variation(t &mut testing.T) {
+    t.eq(crypto.random_bytes(0).unwrap().len(), usize(0))
+    a := crypto.random_bytes(700).unwrap()
+    b := crypto.random_bytes(700).unwrap()
+    t.eq(a.len(), usize(700))
+    t.check(!crypto.equal_bytes(a.as_slice(), b.as_slice()), "two draws differ")
+}

@@ -577,8 +577,13 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
     // Vector element destruction functions, declared on demand by drop_vector
     // and defined after ordinary functions (see Cx::element_glue).
     let glue = RefCell::new(Vec::new());
-    // String literals, emitted once per program as static TarnString images.
-    let literals = RefCell::new(HashMap::new());
+    // String literals, emitted once per program as static TarnString images
+    // packed into a single `tarn_strings` data object (see LiteralPool).
+    let literals = RefCell::new(LiteralPool {
+        id: module.declare_anonymous_data(false, false).map_err(|e| Error::bug(e.to_string()))?,
+        image: Vec::new(),
+        offsets: HashMap::new(),
+    });
     // Translation needs the module; machine-code compilation does not, so it
     // runs in parallel afterwards (see compile_in_parallel).
     let mut translated = Vec::new();
@@ -782,7 +787,48 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
         b.finalize();
     }
     module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
+    literals.into_inner().define(&mut module)?;
     module.finish().emit().map_err(|e| Error::bug(e.to_string()))
+}
+
+/// All string literals of a program in one read-only `tarn_strings` object.
+/// cranelift-object adds a new section for every data object placed in a
+/// custom section; Mach-O allows at most 255 sections, so one object per
+/// literal stopped linking on macOS beyond ~250 distinct literals.
+struct LiteralPool {
+    id: DataId,
+    image: Vec<u8>,
+    offsets: HashMap<String, u32>,
+}
+
+impl LiteralPool {
+    /// Byte offset of the TarnString image (u64 length, then bytes) for `s`,
+    /// 8-byte aligned, appended on first use.
+    fn intern(&mut self, s: &str) -> Result<u32> {
+        if let Some(offset) = self.offsets.get(s) {
+            return Ok(*offset);
+        }
+        while self.image.len() % 8 != 0 {
+            self.image.push(0);
+        }
+        let offset = u32::try_from(self.image.len()).map_err(|_| Error::bug("string literals exceed 4 GiB".to_string()))?;
+        self.image.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        self.image.extend_from_slice(s.as_bytes());
+        self.offsets.insert(s.to_string(), offset);
+        Ok(offset)
+    }
+
+    fn define(mut self, module: &mut ObjectModule) -> Result<()> {
+        if self.image.is_empty() {
+            self.image.extend_from_slice(&0u64.to_le_bytes());
+        }
+        let mut data = DataDescription::new();
+        data.define(self.image.into_boxed_slice());
+        data.set_align(8);
+        // Mach-O sections name a segment; __TEXT keeps literals read-only.
+        data.set_segment_section(if cfg!(target_os = "macos") { "__TEXT" } else { "" }, "tarn_strings");
+        module.define_data(self.id, &data).map_err(|e| Error::bug(e.to_string()))
+    }
 }
 fn emit_task_adapters(module: &mut ObjectModule, p: &post::Program, t: &Typed,
     ids: &HashMap<FunctionId, FuncId>) -> Result<HashMap<FunctionId, (FuncId, FuncId)>> {
@@ -887,7 +933,7 @@ struct Cx<'a, 'b> {
     /// Declared vector element destruction functions, by element type.
     glue: &'b RefCell<Vec<(Ty, FuncId)>>,
     /// Static string literal data by content (Phase 27).
-    literals: &'b RefCell<HashMap<String, DataId>>,
+    literals: &'b RefCell<LiteralPool>,
     locals: Vec<Slot>,
     flags: Vec<Flag>,
     blocks: Vec<cl::Block>,
@@ -1313,25 +1359,12 @@ impl Cx<'_, '_> {
                     // the `tarn_strings` section: no allocation per evaluation.
                     // It is still an owned string; tarn_rt_drop_string skips
                     // `free` for addresses in that section (Phase 27).
-                    let existing = self.literals.borrow().get(s).copied();
-                    let id = match existing {
-                        Some(id) => id,
-                        None => {
-                            let id = self.module.declare_anonymous_data(false, false).map_err(|e| Error::bug(e.to_string()))?;
-                            let mut image = (s.len() as u64).to_le_bytes().to_vec();
-                            image.extend_from_slice(s.as_bytes());
-                            let mut data = DataDescription::new();
-                            data.define(image.into_boxed_slice());
-                            data.set_align(8);
-                            // Mach-O sections name a segment; __TEXT keeps literals read-only.
-                            data.set_segment_section(if cfg!(target_os = "macos") { "__TEXT" } else { "" }, "tarn_strings");
-                            self.module.define_data(id, &data).map_err(|e| Error::bug(e.to_string()))?;
-                            self.literals.borrow_mut().insert(s.clone(), id);
-                            id
-                        }
-                    };
+                    let offset = self.literals.borrow_mut().intern(s)?;
+                    let id = self.literals.borrow().id;
                     let gv = self.module.declare_data_in_func(id, self.b.func);
-                    Val { value: Some(self.b.ins().global_value(types::I64, gv)), ty: Ty::Str }
+                    let base = self.b.ins().global_value(types::I64, gv);
+                    let value = if offset == 0 { base } else { self.b.ins().iadd_imm(base, offset as i64) };
+                    Val { value: Some(value), ty: Ty::Str }
                 }
                 Const::Fn(id, _) => {
                     let f = &self.p.functions[id.0 as usize].decl;

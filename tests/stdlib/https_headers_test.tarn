@@ -1,0 +1,17 @@
+// ADR 0100: header validation happens before any network access.
+import "https"
+
+fn test_request_headers_rejects_injection_and_malformed_headers() {
+    options := https.Options.new()
+    empty := [0]u8{}
+    injected := [2]string{"User-Agent: tarn", "X-A: b\nX-Injected: 1"}
+    if https.request_headers("https://example.invalid/", "GET", &injected, &empty, &options).is_ok() { panic("LF accepted") }
+    carriage := [1]string{"X-A: b\rX-B: c"}
+    if https.request_headers("https://example.invalid/", "GET", &carriage, &empty, &options).is_ok() { panic("CR accepted") }
+    nameless := [1]string{": value"}
+    if https.request_headers("https://example.invalid/", "GET", &nameless, &empty, &options).is_ok() { panic("empty name accepted") }
+    bare := [1]string{"no-colon"}
+    if https.request_headers("https://example.invalid/", "GET", &bare, &empty, &options).is_ok() { panic("missing colon accepted") }
+    plain := [1]string{"X-A: b"}
+    if https.request_headers("http://example.invalid/", "GET", &plain, &empty, &options).is_ok() { panic("plain http accepted") }
+}

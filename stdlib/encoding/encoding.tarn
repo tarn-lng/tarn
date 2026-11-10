@@ -91,6 +91,35 @@ pub fn base64_decode(text &string, limit usize) Result<Vec<u8>, Base64Error> {
     return Ok(out)
 }
 
+/// URL-safe Base64 without padding (RFC 4648 section 5), as used by JWT.
+pub fn base64url_encode(data &[]u8) string {
+    standard := base64_encode(data)
+    var out: Vec<u8> = Vec.with_capacity(standard.len())
+    for byte in standard.bytes() {
+        if byte == 43 { out.push(45) } else if byte == 47 { out.push(95) } else if byte != 61 { out.push(byte) }
+    }
+    match string.from_utf8(out.as_slice()) { Some(text) => { return text }
+        None => { panic("base64url encoding invariant") } }
+}
+
+/// Strict unpadded URL-safe Base64. Rejects `+`, `/`, `=` and lengths that
+/// cannot be canonical; trailing bits must be zero, as in `base64_decode`.
+pub fn base64url_decode(text &string, limit usize) Result<Vec<u8>, Base64Error> {
+    bytes := text.bytes()
+    if bytes.len() % 4 == 1 { return Err(Base64Error.InvalidLength) }
+    var standard: Vec<u8> = Vec.with_capacity(bytes.len() + 2)
+    for i in 0..bytes.len() {
+        byte := bytes[i]
+        if byte == 43 || byte == 47 || byte == 61 { return Err(Base64Error.InvalidCharacter(i)) }
+        if byte == 45 { standard.push(43) } else if byte == 95 { standard.push(47) } else { standard.push(byte) }
+    }
+    for standard.len() % 4 != 0 { standard.push(61) }
+    match string.from_utf8(standard.as_slice()) {
+        Some(padded) => { return base64_decode(&padded, limit) }
+        None => { return Err(Base64Error.InvalidCharacter(0)) }
+    }
+}
+
 /// Lowercase hexadecimal, two digits per byte.
 pub fn hex(data &[]u8) string {
     digits := "0123456789abcdef"

@@ -1734,9 +1734,19 @@ int32_t tarn_https_request(const char *url, const char *method, const char *head
     SET(10004, ""); SET(155, (long)timeout); SET(156, (long)timeout);
     SET(20011, tarn_https_write); SET(10001, &output);
     if (*ca) SET(10065, ca);
-    if (*header) {
-        headers = tarn_curl.append(NULL, header);
-        if (!headers) { code = 27; goto done; }
+    /* `header` is zero or more lines separated by LF; the Tarn side rejects CR,
+     * NUL and empty names, so each line is one complete header. */
+    for (const char *line = header; *line;) {
+        const char *end = strchr(line, '\n');
+        size_t length = end ? (size_t)(end - line) : strlen(line);
+        char one[8192];
+        if (length == 0 || length >= sizeof one) { code = 27; goto done; }
+        memcpy(one, line, length);
+        one[length] = 0;
+        void *grown = tarn_curl.append(headers, one);
+        if (!grown) { code = 27; goto done; }
+        headers = grown;
+        line = end ? end + 1 : line + length;
     }
     void *more = tarn_curl.append(headers, "Content-Type: application/json");
     if (!more) { code = 27; goto done; }
