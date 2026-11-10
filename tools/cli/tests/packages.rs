@@ -490,3 +490,83 @@ fn watch_observes_global_policy_and_verified_dependency_changes() {
     fs::write(&source, original).unwrap();
     wait("check succeeded");
 }
+#[test]
+fn scoped_specifiers_and_registry_api_protocol() {
+    let f = Fixture::new();
+    let lib = f.library(
+        "greeting",
+        "1.0.0",
+        "pub fn answer() i32 { return 42 }\n",
+        "",
+    );
+    f.publish(&lib);
+
+    let api_reg = f.root.join("api-registry");
+    let api_pkg_dir = api_reg.join("v1/packages/@acme/greeting/1.2.0");
+    fs::create_dir_all(&api_pkg_dir).unwrap();
+
+    let archive_src = f.library(
+        "greeting",
+        "1.2.0",
+        "pub fn answer() i32 { return 77 }\n",
+        "",
+    );
+    let archive_path = api_pkg_dir.join("download");
+    assert!(
+        Command::new("tar")
+            .args(["-czf"])
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&archive_src)
+            .arg(".")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let archive_hash = tarn_packages::hash(&fs::read(&archive_path).unwrap());
+    let versions_json = serde_json::json!([
+        {
+            "version": "1.3.0",
+            "hash": archive_hash,
+            "yanked": true,
+            "protocol": "github-release",
+            "metadataUrl": null,
+            "dependencies": {}
+        },
+        {
+            "version": "1.2.0",
+            "hash": archive_hash,
+            "yanked": false,
+            "protocol": "github-release",
+            "metadataUrl": null,
+            "dependencies": {}
+        }
+    ]);
+    fs::write(
+        api_reg.join("v1/packages/@acme/greeting/versions"),
+        serde_json::to_vec(&versions_json).unwrap(),
+    )
+    .unwrap();
+
+    let app = f.app();
+    f.ok(
+        &app,
+        &[
+            "add",
+            "@acme/greeting",
+            "--registry",
+            api_reg.to_str().unwrap(),
+        ],
+    );
+    fs::write(
+        app.join("main.tarn"),
+        "import \"greeting\"\nfn main() { print(greeting.answer()) }\n",
+    )
+    .unwrap();
+    assert_eq!(f.ok(&app, &["run"]).stdout, b"77\n");
+    let lock = tarn_packages::graph::Lock::read(&app).unwrap();
+    let cache = tarn_packages::store::cache_root(&f.home, &lock.packages["greeting"]);
+    fs::remove_dir_all(&cache).unwrap();
+    f.ok(&app, &["fetch"]);
+    assert_eq!(f.ok(&app, &["run"]).stdout, b"77\n");
+}

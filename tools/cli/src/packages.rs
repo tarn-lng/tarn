@@ -92,10 +92,10 @@ fn parse(command: &str, args: &[String]) -> Result<Options> {
         .as_ref()
         .filter(|_| matches!(command, "add" | "remove" | "update"))
     {
-        pkg::manifest::package_name(name)?;
+        pkg::manifest::parse_package_spec(name)?;
     }
     if let Some(name) = &options.why {
-        pkg::manifest::package_name(name)?;
+        pkg::manifest::parse_package_spec(name)?;
     }
     if let Some(version) = &options.requirement {
         semver_check(version)?;
@@ -257,13 +257,16 @@ fn execute(command: &str, options: &Options) -> Result<u8> {
         None
     };
     if matches!(command, "add" | "remove" | "update") {
+        let mut target_update = None;
         if command == "add" {
-            let name = options.positional.as_ref().unwrap();
-            let registry = origin(options, &manifest, &home)?;
+            let spec = options.positional.as_ref().unwrap();
+            let (scope, name) = pkg::manifest::parse_package_spec(spec)?;
+            let base_registry = origin(options, &manifest, &home)?;
+            let registry = pkg::store::scoped_registry(&base_registry, scope.as_deref(), &name)?;
             let requirement = if let Some(requirement) = &options.requirement {
                 requirement.clone()
             } else {
-                let version = pkg::store::versions(&registry, name)?
+                let version = pkg::store::versions(&registry, spec)?
                     .into_iter()
                     .find(|v| v.pre.is_empty())
                     .ok_or(
@@ -274,30 +277,33 @@ fn execute(command: &str, options: &Options) -> Result<u8> {
             let mut table = InlineTable::new();
             table.insert("version", requirement.clone().into());
             table.insert("registry", registry.clone().into());
-            manifest.document["dependencies"][name] = Item::Value(Value::InlineTable(table));
+            manifest.document["dependencies"][&name] = Item::Value(Value::InlineTable(table));
             manifest.dependencies.insert(
-                name.clone(),
+                name,
                 Dependency {
                     requirement,
                     registry,
                 },
             );
         } else if command == "remove" {
-            let name = options.positional.as_ref().unwrap();
-            if manifest.dependencies.remove(name).is_none() {
+            let spec = options.positional.as_ref().unwrap();
+            let (_, name) = pkg::manifest::parse_package_spec(spec)?;
+            if manifest.dependencies.remove(&name).is_none() {
                 return Err(format!("`{name}` is not a direct dependency"));
             }
             manifest.document["dependencies"]
                 .as_table_like_mut()
                 .unwrap()
-                .remove(name);
-        } else if let Some(name) = &options.positional {
-            if old.as_ref().is_none_or(|l| !l.packages.contains_key(name)) {
+                .remove(&name);
+        } else if let Some(spec) = &options.positional {
+            let (_, name) = pkg::manifest::parse_package_spec(spec)?;
+            if old.as_ref().is_none_or(|l| !l.packages.contains_key(&name)) {
                 return Err(format!("`{name}` is not in the locked graph"));
             }
+            target_update = Some(name);
         }
         let update = if command == "update" {
-            Some(options.positional.as_deref().unwrap_or("*"))
+            Some(target_update.as_deref().unwrap_or("*"))
         } else {
             None
         };
@@ -347,7 +353,9 @@ fn execute(command: &str, options: &Options) -> Result<u8> {
         return Ok(0);
     }
     if command == "deps" {
-        if let Some(name) = &options.why {
+        if let Some(raw_name) = &options.why {
+            let (_, name) = pkg::manifest::parse_package_spec(raw_name)?;
+            let name = &name;
             let mut paths = Vec::new();
             let mut budget = 10_000usize;
             for direct in manifest.dependencies.keys() {
