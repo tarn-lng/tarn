@@ -1,7 +1,7 @@
 //! Bounded immutable releases and verified content-addressed source storage.
 use crate::{
     Result, hash,
-    manifest::{Dependency, Manifest, Policy, package_name, safe_path},
+    manifest::{Dependency, Manifest, Policy, package_name, parse_package_spec, safe_path},
     read_bytes, write_atomic,
 };
 use semver::Version;
@@ -167,19 +167,14 @@ impl Release {
         Ok(())
     }
 }
-pub fn obtain(registry: &str, relative: &str, limit: u64) -> Result<Vec<u8>> {
-    safe_path(relative)?;
-    let base = url::Url::parse(registry).map_err(|e| e.to_string())?;
-    if base.scheme() == "file" {
+fn obtain_url(url: &url::Url, limit: u64, allow_redirects: bool) -> Result<Vec<u8>> {
+    if url.scheme() == "file" {
         return read_bytes(
-            &base
-                .to_file_path()
-                .map_err(|_| "invalid local registry")?
-                .join(relative),
+            &url.to_file_path().map_err(|_| "invalid local registry")?,
             limit,
         );
     }
-    if base.scheme() != "https" {
+    if url.scheme() != "https" {
         return Err("HTTPS is required for registry downloads".into());
     }
     let mut command = Command::new("curl");
@@ -193,8 +188,6 @@ pub fn obtain(registry: &str, relative: &str, limit: u64) -> Result<Vec<u8>> {
             "=https",
             "--proto-redir",
             "=https",
-            "--max-redirs",
-            "0",
             "--max-time",
             "30",
             "--max-filesize",
@@ -204,12 +197,17 @@ pub fn obtain(registry: &str, relative: &str, limit: u64) -> Result<Vec<u8>> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    if allow_redirects {
+        command.args(["--location", "--max-redirs", "5"]);
+    } else {
+        command.args(["--max-redirs", "0"]);
+    }
     // An explicit caller-provided CA bundle grants TLS trust, never package authority.
     if let Some(ca) = std::env::var_os("TARN_CA_BUNDLE") {
         command.arg("--cacert").arg(ca);
     }
     let mut child = command
-        .arg(base.join(relative).map_err(|e| e.to_string())?.as_str())
+        .arg(url.as_str())
         .spawn()
         .map_err(|e| format!("cannot start trusted curl download tool: {e}"))?;
     let mut bytes = Vec::new();
@@ -238,40 +236,252 @@ pub fn obtain(registry: &str, relative: &str, limit: u64) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-pub fn versions(registry: &str, name: &str) -> Result<Vec<Version>> {
-    package_name(name)?;
-    let bytes = obtain(registry, &format!("{name}/index.json"), 4 * 1024 * 1024)?;
+pub fn obtain(registry: &str, relative: &str, limit: u64) -> Result<Vec<u8>> {
+    safe_path(relative)?;
+    let base = url::Url::parse(registry).map_err(|e| e.to_string())?;
+    let target = base.join(relative).map_err(|e| e.to_string())?;
+    obtain_url(&target, limit, false)
+}
+pub fn scoped_registry(base_registry: &str, scope: Option<&str>, name: &str) -> Result<String> {
+    let Some(scope) = scope.filter(|s| *s != "tarn-lng") else {
+        return Ok(base_registry.to_owned());
+    };
+    let trimmed = base_registry.trim_end_matches('/');
+    if trimmed.ends_with(&format!("/@{scope}")) {
+        return Ok(base_registry.to_owned());
+    }
+    if obtain(base_registry, &format!("{name}/index.json"), 4 * 1024 * 1024).is_ok() {
+        return Ok(base_registry.to_owned());
+    }
+    Ok(format!("{trimmed}/@{scope}/"))
+}
+fn split_registry_scope(registry: &str, spec: &str) -> Result<(String, String, String)> {
+    let (spec_scope, name) = parse_package_spec(spec)?;
+    let trimmed = registry.trim_end_matches('/');
+    let (api_base, reg_scope) = if let Some((prefix, last)) = trimmed.rsplit_once('/') {
+        if let Some(slug) = last.strip_prefix('@') {
+            if !slug.is_empty()
+                && slug
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            {
+                (format!("{prefix}/"), Some(slug.to_owned()))
+            } else {
+                (registry.to_owned(), None)
+            }
+        } else {
+            (registry.to_owned(), None)
+        }
+    } else {
+        (registry.to_owned(), None)
+    };
+    let scope = spec_scope
+        .or(reg_scope)
+        .unwrap_or_else(|| "tarn-lng".to_owned());
+    Ok((api_base, scope, name))
+}
+fn api_versions_list(api_base: &str, scope: &str, name: &str) -> Result<Vec<Value>> {
+    let base = url::Url::parse(api_base).map_err(|e| e.to_string())?;
+    let url = base
+        .join(&format!("v1/packages/@{scope}/{name}/versions"))
+        .map_err(|e| e.to_string())?;
+    let bytes = obtain_url(&url, 4 * 1024 * 1024, false)?;
     let data: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     let list = data
         .as_array()
-        .ok_or("registry index must be an array of versions")?;
+        .ok_or("registry API versions response must be an array")?;
     if list.len() > 512 {
         return Err("registry version limit exceeded".into());
     }
+    Ok(list.clone())
+}
+fn extract_tar_gz(archive: &[u8], default_registry: &str) -> Result<(Manifest, BTreeMap<String, Vec<u8>>)> {
+    let temp = std::env::temp_dir().join(format!(
+        "tarn-archive-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let extracted = temp.join("extracted");
+    fs::create_dir_all(&extracted).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let tar_path = temp.join("package.tar.gz");
+        fs::write(&tar_path, archive).map_err(|e| e.to_string())?;
+        let status = Command::new("tar")
+            .args(["-xzf"])
+            .arg(&tar_path)
+            .arg("-C")
+            .arg(&extracted)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("cannot run tar to extract package archive: {e}"))?;
+        if !status.success() {
+            return Err("failed to extract package .tar.gz archive".into());
+        }
+        let mut pkg_root = extracted.clone();
+        if !pkg_root.join("tarn.toml").is_file() {
+            let mut subdirs = Vec::new();
+            for entry in fs::read_dir(&extracted).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+                    subdirs.push(entry.path());
+                }
+            }
+            if subdirs.len() == 1 && subdirs[0].join("tarn.toml").is_file() {
+                pkg_root = subdirs.remove(0);
+            }
+        }
+        let mut files = BTreeMap::new();
+        inventory(&pkg_root, &pkg_root, &mut files, false)?;
+        let raw_toml = std::str::from_utf8(
+            files
+                .get("tarn.toml")
+                .ok_or("release archive is missing tarn.toml")?,
+        )
+        .map_err(|_| "invalid UTF-8 manifest")?;
+        let mut doc: toml_edit::DocumentMut =
+            raw_toml.parse().map_err(|e| format!("invalid tarn.toml: {e}"))?;
+        if doc.get("registry").is_none() {
+            doc["registry"]["source"] = toml_edit::value(default_registry);
+        }
+        let manifest = Manifest::parse(&pkg_root, &doc.to_string())?;
+        let mut normalized_doc = manifest.document.clone();
+        if let Some(reg) = &manifest.registry {
+            normalized_doc["registry"]["source"] = toml_edit::value(reg);
+        }
+        for (dep_name, dep) in &manifest.dependencies {
+            let mut table = toml_edit::InlineTable::new();
+            table.insert("version", dep.requirement.clone().into());
+            table.insert("registry", dep.registry.clone().into());
+            normalized_doc["dependencies"][dep_name] =
+                toml_edit::Item::Value(toml_edit::Value::InlineTable(table));
+        }
+        files.insert("tarn.toml".into(), normalized_doc.to_string().into_bytes());
+        Ok((manifest, files))
+    })();
+    let _ = fs::remove_dir_all(&temp);
+    result
+}
+pub fn versions(registry: &str, spec: &str) -> Result<Vec<Version>> {
+    let (api_base, scope, name) = split_registry_scope(registry, spec)?;
+    if let Ok(bytes) = obtain(&api_base, &format!("{name}/index.json"), 4 * 1024 * 1024) {
+        let data: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        let list = data
+            .as_array()
+            .ok_or("registry index must be an array of versions")?;
+        if list.len() > 512 {
+            return Err("registry version limit exceeded".into());
+        }
+        let mut versions = Vec::new();
+        for version in list {
+            versions.push(
+                Version::parse(version.as_str().ok_or("invalid registry version")?)
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        versions.sort();
+        versions.reverse();
+        versions.dedup();
+        return Ok(versions);
+    }
+    let list = api_versions_list(&api_base, &scope, &name)?;
     let mut versions = Vec::new();
-    for version in list {
-        versions.push(
-            Version::parse(version.as_str().ok_or("invalid registry version")?)
-                .map_err(|e| e.to_string())?,
-        );
+    for item in list {
+        if item["yanked"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        let ver_str = item["version"]
+            .as_str()
+            .ok_or("invalid registry API version entry")?;
+        versions.push(Version::parse(ver_str).map_err(|e| e.to_string())?);
     }
     versions.sort();
     versions.reverse();
     versions.dedup();
     Ok(versions)
 }
-pub fn load_release(registry: &str, name: &str, version: &Version) -> Result<Release> {
-    let value = serde_json::from_slice(&obtain(
-        registry,
+pub fn load_release(registry: &str, spec: &str, version: &Version) -> Result<Release> {
+    let (api_base, scope, name) = split_registry_scope(registry, spec)?;
+    if let Ok(bytes) = obtain(
+        &api_base,
         &format!("{name}/{version}/release.json"),
         4 * 1024 * 1024,
-    )?)
-    .map_err(|e| e.to_string())?;
-    let release = release(&value, registry)?;
-    if release.name != name || &release.version != version {
-        return Err("registry release identity mismatch".into());
+    ) {
+        let value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        let release = release(&value, registry)?;
+        if release.name != name || &release.version != version {
+            return Err("registry release identity mismatch".into());
+        }
+        return Ok(release);
     }
-    Ok(release)
+    let list = api_versions_list(&api_base, &scope, &name)?;
+    let ver_string = version.to_string();
+    let entry = list
+        .into_iter()
+        .find(|item| {
+            item["version"].as_str() == Some(ver_string.as_str())
+                && !item["yanked"].as_bool().unwrap_or(false)
+        })
+        .ok_or_else(|| format!("release {name} {version} is unavailable or yanked"))?;
+    match entry["protocol"].as_str() {
+        Some("source-files") => {
+            let meta_url_str = entry["metadataUrl"]
+                .as_str()
+                .ok_or("source-files release requires metadataUrl")?;
+            let meta_url = url::Url::parse(meta_url_str).map_err(|e| e.to_string())?;
+            let bytes = obtain_url(&meta_url, 4 * 1024 * 1024, false)?;
+            let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            let rel = release(&value, registry)?;
+            if rel.name != name || &rel.version != version {
+                return Err("registry release identity mismatch".into());
+            }
+            if let Some(expected_hash) = entry["hash"].as_str() {
+                if rel.hash != expected_hash {
+                    return Err("registry API hash does not match release metadata".into());
+                }
+            }
+            Ok(rel)
+        }
+        Some("github-release") => {
+            let expected_archive_hash = text(&entry, "hash")?;
+            valid_hash(&expected_archive_hash)?;
+            let base = url::Url::parse(&api_base).map_err(|e| e.to_string())?;
+            let download_url = base
+                .join(&format!("v1/packages/@{scope}/{name}/{version}/download"))
+                .map_err(|e| e.to_string())?;
+            let archive = obtain_url(&download_url, 64 * 1024 * 1024, true)?;
+            if hash(&archive) != expected_archive_hash {
+                return Err("downloaded release archive SHA-256 mismatch".into());
+            }
+            let (manifest, files) = extract_tar_gz(&archive, registry)?;
+            if manifest.name != name || &manifest.version != version {
+                return Err("archive manifest identity mismatch".into());
+            }
+            let rel = Release {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                registry: registry.to_owned(),
+                hash: content(&files),
+                entry: manifest.entry.clone(),
+                published: entry["published"].as_u64().unwrap_or(0),
+                dependencies: manifest.dependencies.clone(),
+                files: files.iter().map(|(n, b)| (n.clone(), hash(b))).collect(),
+            };
+            if !rel.files.contains_key(&rel.entry) {
+                return Err("package entry is missing in archive".into());
+            }
+            if let Ok(home) = crate::home() {
+                let _ = write_cache_files(&home, &rel, files);
+            }
+            Ok(rel)
+        }
+        _ => Err("unsupported registry release protocol".into()),
+    }
 }
 pub fn content(files: &BTreeMap<String, Vec<u8>>) -> String {
     let mut digest = Sha256::new();
@@ -391,16 +601,12 @@ pub fn verified_files(
 pub fn verify(home: &Path, release: &Release) -> Result<PathBuf> {
     verified_files(home, release).map(|(root, _)| root)
 }
-pub fn fetch(home: &Path, release: &Release) -> Result<PathBuf> {
-    crate::check_parents(&cache_root(home, release))?;
-    if cache_root(home, release).exists() {
-        return verify(home, release);
-    }
+fn download_files_from_origin(origin: &str, release: &Release) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut files = BTreeMap::new();
     let mut total = 0;
     for (name, expected) in &release.files {
         let bytes = obtain(
-            &release.registry,
+            origin,
             &format!("{}/{}/files/{name}", release.name, release.version),
             4 * 1024 * 1024,
         )?;
@@ -411,6 +617,67 @@ pub fn fetch(home: &Path, release: &Release) -> Result<PathBuf> {
             );
         }
         files.insert(name.clone(), bytes);
+    }
+    Ok(files)
+}
+fn download_files_from_api(release: &Release) -> Result<BTreeMap<String, Vec<u8>>> {
+    let (api_base, scope, name) = split_registry_scope(&release.registry, &release.name)?;
+    let list = api_versions_list(&api_base, &scope, &name)?;
+    let ver_string = release.version.to_string();
+    let entry = list
+        .into_iter()
+        .find(|item| {
+            item["version"].as_str() == Some(ver_string.as_str())
+                && !item["yanked"].as_bool().unwrap_or(false)
+        })
+        .ok_or_else(|| format!("release {name} {} is unavailable or yanked", release.version))?;
+    match entry["protocol"].as_str() {
+        Some("source-files") => {
+            let meta_url = entry["metadataUrl"]
+                .as_str()
+                .ok_or("source-files release requires metadataUrl")?;
+            let suffix = format!("{}/{}/release.json", release.name, release.version);
+            let source_origin = meta_url
+                .strip_suffix(&suffix)
+                .ok_or("invalid source-files metadataUrl")?;
+            download_files_from_origin(source_origin, release)
+        }
+        Some("github-release") => {
+            let expected_archive_hash = text(&entry, "hash")?;
+            valid_hash(&expected_archive_hash)?;
+            let base = url::Url::parse(&api_base).map_err(|e| e.to_string())?;
+            let download_url = base
+                .join(&format!(
+                    "v1/packages/@{scope}/{}/{}/download",
+                    release.name, release.version
+                ))
+                .map_err(|e| e.to_string())?;
+            let archive = obtain_url(&download_url, 64 * 1024 * 1024, true)?;
+            if hash(&archive) != expected_archive_hash {
+                return Err("downloaded release archive SHA-256 mismatch".into());
+            }
+            let (_, files) = extract_tar_gz(&archive, &release.registry)?;
+            for (fname, expected) in &release.files {
+                let Some(bytes) = files.get(fname) else {
+                    return Err(format!("missing file `{fname}` in downloaded archive"));
+                };
+                if &hash(bytes) != expected {
+                    return Err("downloaded archive file hash mismatch".into());
+                }
+            }
+            Ok(files)
+        }
+        _ => Err("unsupported registry release protocol".into()),
+    }
+}
+fn write_cache_files(
+    home: &Path,
+    release: &Release,
+    files: BTreeMap<String, Vec<u8>>,
+) -> Result<PathBuf> {
+    crate::check_parents(&cache_root(home, release))?;
+    if cache_root(home, release).exists() {
+        return verify(home, release);
     }
     if content(&files) != release.hash {
         return Err("downloaded package content identity mismatch".into());
@@ -456,6 +723,18 @@ pub fn fetch(home: &Path, release: &Release) -> Result<PathBuf> {
         let _ = fs::remove_dir_all(temporary);
     }
     result
+}
+pub fn fetch(home: &Path, release: &Release) -> Result<PathBuf> {
+    crate::check_parents(&cache_root(home, release))?;
+    if cache_root(home, release).exists() {
+        return verify(home, release);
+    }
+    let (api_base, _, _) = split_registry_scope(&release.registry, &release.name)?;
+    let files = match download_files_from_origin(&api_base, release) {
+        Ok(files) => files,
+        Err(_) => download_files_from_api(release)?,
+    };
+    write_cache_files(home, release, files)
 }
 pub fn publish(manifest: &Manifest, registry: &str) -> Result<Release> {
     let base=url::Url::parse(registry).map_err(|e|e.to_string())?.to_file_path().map_err(|_|"network publication needs authenticated registry infrastructure; publish supports local registries")?;

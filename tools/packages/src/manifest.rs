@@ -67,6 +67,29 @@ pub fn package_name(name: &str) -> Result<()> {
     }
     Ok(())
 }
+pub fn parse_package_spec(spec: &str) -> Result<(Option<String>, String)> {
+    if let Some(rest) = spec.strip_prefix('@') {
+        let Some((scope, name)) = rest.split_once('/') else {
+            return Err(format!(
+                "invalid scoped package `{spec}`; expected `@scope/name`"
+            ));
+        };
+        if scope.is_empty()
+            || scope.len() > 63
+            || !(scope.as_bytes()[0].is_ascii_lowercase() || scope.as_bytes()[0].is_ascii_digit())
+            || !scope
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err(format!("invalid organization scope `@{scope}`"));
+        }
+        package_name(name)?;
+        Ok((Some(scope.to_owned()), name.to_owned()))
+    } else {
+        package_name(spec)?;
+        Ok((None, spec.to_owned()))
+    }
+}
 pub fn safe_path(path: &str) -> Result<()> {
     if path.is_empty()
         || path.len() > 512
