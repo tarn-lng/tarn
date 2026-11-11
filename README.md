@@ -109,6 +109,10 @@ reflects the installed binary, not later source edits. Phase plans/reports
 record historical scope and measurements; later guides and ADR extensions may
 supersede their limitations.
 
+## Examples
+
+See [examples/README.md](examples/README.md) for an index of all examples with what each shows, how to run it, and notes on flags, stdin, or network access.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
