@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: accepted; P1 through P6 implemented. Delivered as a series of 0.5.x patches; no new minor.
+Status: accepted; P1 through P7 implemented. Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -250,12 +250,80 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
     the formatter prints `static mut NAME[16]u8` (the same spacing it already
     gives struct fields of array type).
 
-### P7 — Interrupt handlers
+### P7 — Interrupt handlers — implemented
 
-- `#[interrupt] fn timer(frame: *InterruptFrame)`: generated prologue/epilogue
-  that saves all caller- and callee-saved registers and returns with `iretq`
-  (x86_64) or `eret` (aarch64). Built from P5 stubs plus a trampoline.
-- Tests: QEMU test where a software interrupt runs a handler and returns.
+- `#[interrupt]` on a Tarn function; generated trampolines save the
+  interrupted state, call the function with the frame pointer and return with
+  `iretq` (x86_64) or `eret` (aarch64).
+- Tests: trampoline bytes disassembled and compared with the documented
+  sequence for both architectures (with and without an error code); handler
+  symbols and relocations read back from the ELF; the vector table's alignment
+  and branches; contract-only imports; invalid signatures and misuse rejected.
+- Done: user guide in [docs/freestanding.md](../freestanding.md#interrupt-handlers),
+  helpers in [docs/arch.md](../arch.md).
+  - **Syntax.** `#[interrupt]` (x86_64: `fn h(frame *mut Frame)` or, for
+    exceptions that push an error code, `fn h(frame *mut Frame, code u64)`;
+    aarch64: `fn h(frame *mut Frame)`). The variant is chosen by the parameter
+    count, so no attribute argument is needed, and the stack layout can never
+    disagree with the signature the type checker sees. `#[interrupt(n)]`
+    (aarch64) puts the handler in slot `n` (0-15) of a generated vector table,
+    which a function marked `#[vector_table]` stands for. Both attributes are
+    function-only; signature and shape errors are E3086 at `tarn check`; the
+    target-dependent ones (error code on aarch64, slots on x86_64, a hosted
+    target, slot without table, a slot twice, two tables) are build errors.
+  - **Why attributes on an ordinary function, not `naked`/asm.** The Tarn body
+    keeps all its checks and Tarn's private ABI; the trampoline is a separate
+    machine-code function (P5's `define_function_bytes`, now with a relocation
+    to a C-ABI adapter of the body, which `emit_callbacks` already produces).
+    Cranelift's own prologue never has to cooperate with `iretq`.
+  - **Addresses.** `ffi.callback(handler)` returns the trampoline for an
+    `#[interrupt]` function (and the table for the `#[vector_table]` one) rather
+    than a C adapter; no new intrinsic was needed. `#[export("name")]` on a
+    handler exports the trampoline. Addresses are therefore available at run
+    time only: statics still cannot hold function addresses (a data relocation
+    to a function is not in P6's initializer set), so an IDT is filled by
+    `arch_x86_64.idt_set_gate`, which writes the 16-byte gate with volatile
+    stores, and loaded with `idt_load`. The aarch64 table has real relocations
+    (`b` with `R_AARCH64_CALL26`) because it is code.
+  - **x86_64 trampoline.** Pushes `rax rcx rdx rsi rdi r8-r11`, reserves 256
+    bytes (264 with an error code, to keep the call 16-byte aligned; the CPU
+    aligns the stack before pushing its frame) and saves `xmm0-15` with
+    `movups`, `cld`, passes the hardware frame in `rdi` (and the code in
+    `rsi`), `call`s the adapter, restores, drops the error code and `iretq`.
+    SSE is saved because Cranelift may emit SSE for floats and bulk moves;
+    the cost is documented, the alternative (a no-SSE contract) is not
+    enforceable. MXCSR/x87 are not saved. No `swapgs`: kernel-mode only.
+  - **aarch64 trampoline.** A 784-byte frame: `x0-x30`, `elr_el1`, `spsr_el1`,
+    the old `sp` (272 bytes, the `ExceptionFrame` the handler gets), then
+    `q0-q31`. Everything but `sp` is restored, so a handler can change the
+    return address, PSTATE and registers. The vector table is 16 x 128 bytes,
+    2048-aligned, `b trampoline` or `b .`. FP/SIMD must be enabled
+    (`write_cpacr_el1`, added to the register whitelist) before the first
+    exception.
+  - **Hosted builds.** Rejected at `tarn build` (`#[interrupt]` needs a
+    `*-none` target); `tarn check` has no target and accepts them.
+  - **Verification limits.** No ELF linker exists on the authoring machine, so
+    nothing was booted: the trampolines are checked by disassembly, the call
+    relocations and the table by reading the object, and the stack
+    arithmetic by review, not on QEMU or hardware. The QEMU `int3`/`int 0x80`
+    test is left to P8, which links and boots.
+  - **Limitations.** The handler sees the hardware frame only on x86_64 (the
+    pushed general registers are restored but not exposed, so a preemptive
+    scheduler needs a context-switch routine of its own); no IST/stack
+    switching helpers, no `swapgs` or ring-3 entry; interrupts stay disabled
+    (interrupt gates) during handlers; no function addresses in static
+    initializers; one slot per handler (a handler for several vectors is
+    installed through `ffi.callback`, not slots); the aarch64 table reaches
+    handlers within +-128 MiB; no GIC/APIC/PIC drivers; the encodings follow
+    the Intel SDM and Arm ARM and are verified by disassembly only.
+  - **Notes for P8.** Limine x86_64 enters `kmain` in long mode with paging on
+    and interrupts off. Install your own GDT (`lgdt` + reload `cs` needs a far
+    return, which no stub offers: reuse Limine's selectors or add one), then
+    the IDT with `idt_set_gate` and `idt_load`, check `CR4.OSFXSR` before the
+    first interrupt, remap/mask the 8259 PIC, program the PIT (ports `0x40`,
+    `0x43`) or LAPIC timer, `sti`, `hlt` in a loop. A panic handler writes to
+    COM1 (`out8(0x3f8, byte)`). The kernel needs a linker (`ld.lld` or a
+    cross `ld`) in CI.
 
 ### P8 — Example kernel and CI
 

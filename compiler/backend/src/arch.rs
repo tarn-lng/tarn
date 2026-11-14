@@ -136,7 +136,7 @@ fn x86_64(op: &str) -> Option<Stub> {
 /// op2), writable)`. `mrs x0, reg` is `0xd5300000 | enc`, `msr reg, x0` is
 /// `0xd5100000 | enc`, with `enc = (op0 - 2) << 19 | op1 << 16 | CRn << 12 |
 /// CRm << 8 | op2 << 5` (x0 is both the argument and the result register).
-const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
+pub(crate) const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
     ("daif", (3, 3, 4, 2, 1), true),
     ("vbar_el1", (3, 0, 12, 0, 0), true),
     ("ttbr0_el1", (3, 0, 2, 0, 0), true),
@@ -144,6 +144,7 @@ const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
     ("tcr_el1", (3, 0, 2, 0, 2), true),
     ("mair_el1", (3, 0, 10, 2, 0), true),
     ("sctlr_el1", (3, 0, 1, 0, 0), true),
+    ("cpacr_el1", (3, 0, 1, 0, 2), true),
     ("currentel", (3, 0, 4, 2, 2), false),
     ("esr_el1", (3, 0, 5, 2, 0), true),
     ("far_el1", (3, 0, 6, 0, 0), true),

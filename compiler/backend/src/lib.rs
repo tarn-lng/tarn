@@ -12,8 +12,10 @@ mod elf;
 pub mod link;
 mod heap;
 mod arch;
+mod interrupt;
 #[doc(hidden)]
 pub use arch::{listing as cpu_stub_listing, operations as cpu_operations};
+pub use interrupt::listing as interrupt_listing;
 pub use target::{Arch, Os, Target, TARGETS};
 pub use freestanding::CONTRACT as FREESTANDING_CONTRACT;
 use std::fmt;

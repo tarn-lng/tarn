@@ -244,4 +244,7 @@ code has one meaning.
   `#[section]` a name such as `.text.boot`, `#[align]` a power of two up to
   65536), a symbol exported twice, or an attribute on a generic, async, method
   or `extern` function. An exported function's parameters and result must be
-  integers, floats, `bool` or raw pointers.
+  integers, floats, `bool` or raw pointers. `#[interrupt]` (P7) also reports a
+  signature other than `(*mut Frame)` / `(*mut Frame, u64)`, a result, an
+  `unsafe fn`, a slot above 15, and `#[vector_table]` with parameters or an
+  argument.

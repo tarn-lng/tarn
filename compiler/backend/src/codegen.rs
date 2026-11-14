@@ -432,7 +432,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             }
         }
     }
-    let c_callbacks = ffi::emit_callbacks(&mut module, p, &ids)?;
+    let mut c_callbacks = ffi::emit_callbacks(&mut module, p, t, &ids)?;
     let mut thunks = HashMap::new();
     for id in &ordered {
         let f = &p.functions[id.0 as usize].decl;
@@ -602,6 +602,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             }
         }
     }
+    function_sections.extend(ffi::emit_interrupts(&mut module, p, t, target, &mut c_callbacks)?);
     function_sections.extend(ffi::emit_exports(&mut module, p, t, &ids, target, &runtime.signatures)?);
     // Vector element destruction functions, declared on demand by drop_vector
     // and defined after ordinary functions (see Cx::element_glue).

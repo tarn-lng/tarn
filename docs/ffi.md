@@ -143,7 +143,9 @@ unsupported.
 `#[export("name")]` makes a Tarn function callable from C by name, and
 `static` items give C-layout global data an address (`ffi.address(NAME)`).
 Both, with `#[section]` and linking a kernel, are described in
-[docs/freestanding.md](freestanding.md).
+[docs/freestanding.md](freestanding.md). `#[interrupt]` functions, entered
+by hardware rather than by a C call, are covered there too; `ffi.callback` of
+one returns its trampoline.
 
 ## Linking libraries
 

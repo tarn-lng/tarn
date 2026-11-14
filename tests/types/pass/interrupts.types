@@ -1,0 +1,122 @@
+== interrupts
+19:18 message: *u8
+24:13 message: *u8
+24:26 location: *u8
+29:15 frame: *mut InterruptFrame
+31:9 rip: u64
+37:15 frame: *mut InterruptFrame
+37:54 code: u64
+45:10 frame: *mut InterruptFrame
+47:9 ticks: *mut u64
+54:5 idt: *mut u8
+== ffi
+10:33 value: &T
+11:37 value: &mut T
+12:36 data: &[]T
+13:40 data: &mut []T
+16:15 data: &Vec<T>
+17:19 data: &mut Vec<T>
+19:39 pointer: *mut T
+21:38 pointer: *T
+22:43 value: usize
+26:37 pointer: *T
+26:49 count: usize
+27:41 pointer: *mut T
+27:57 count: usize
+29:19 pointer: *T
+31:22 text: *u8
+32:22 target: *mut u8
+32:38 source: *u8
+32:50 count: usize
+36:26 source: *u8
+36:38 count: usize
+37:9 bytes: Vec<u8>
+38:9 index: usize
+44:18 copied: *mut u8
+50:29 text: *u8
+51:9 bytes: Vec<u8>
+61:20 text: &string
+62:9 bytes: Vec<u8>
+63:9 byte: u8
+71:23 self: &CString
+73:20 self: &CString
+78:39 function: F
+82:29 pointer: *T
+85:30 pointer: *mut T
+85:46 value: T
+87:38 pointer: *T
+88:39 pointer: *mut T
+88:55 value: T
+94:38 pointer: *T
+97:39 pointer: *mut T
+97:55 value: T
+102:47 pointer: *T
+103:48 pointer: *mut T
+103:64 value: T
+== arch_x86_64
+9:19 port: u16
+10:28 port: u16
+13:20 port: u16
+14:29 port: u16
+17:20 port: u16
+18:29 port: u16
+21:20 port: u16
+21:30 value: u8
+22:29 port: u16
+22:39 value: u8
+25:21 port: u16
+25:31 value: u16
+26:30 port: u16
+26:40 value: u16
+29:21 port: u16
+29:31 value: u32
+30:30 port: u16
+30:40 value: u32
+69:25 value: u64
+70:34 value: u64
+73:25 value: u64
+74:34 value: u64
+77:25 value: u64
+78:34 value: u64
+81:22 address: u64
+82:31 address: u64
+85:21 msr: u32
+86:30 msr: u32
+89:21 msr: u32
+89:30 value: u64
+90:30 msr: u32
+90:39 value: u64
+94:20 descriptor: *u8
+95:29 descriptor: *u8
+98:20 descriptor: *u8
+99:29 descriptor: *u8
+125:15 frame: *InterruptFrame
+125:38 index: usize
+126:5 base: *u64
+130:25 frame: *InterruptFrame
+132:24 frame: *InterruptFrame
+134:28 frame: *InterruptFrame
+136:25 frame: *InterruptFrame
+138:24 frame: *InterruptFrame
+140:29 frame: *mut InterruptFrame
+140:56 rip: u64
+141:5 base: *mut u64
+150:28 idt: *mut u8
+150:41 vector: usize
+150:55 handler: *u8
+150:68 selector: u16
+150:82 ist: u8
+150:90 gate: u8
+151:5 address: u64
+152:5 entry: *mut u8
+153:5 low: *mut u16
+154:5 sel: *mut u16
+155:5 mid: *mut u16
+156:5 high: *mut u32
+157:5 reserved: *mut u32
+171:24 idt: *u8
+171:33 entries: usize
+172:9 descriptor: [10]u8
+173:5 limit: u64
+174:5 base: u64
+175:9 index: usize

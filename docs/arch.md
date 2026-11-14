@@ -71,11 +71,26 @@ instruction.
 | `write_<reg>(value u64)` | `msr <reg>, x0` |
 
 Registers (a whitelist, so a typo is a compile error, not a trap): `daif`,
-`vbar_el1`, `ttbr0_el1`, `ttbr1_el1`, `tcr_el1`, `mair_el1`, `sctlr_el1`,
+`vbar_el1`, `ttbr0_el1`, `ttbr1_el1`, `tcr_el1`, `mair_el1`, `sctlr_el1`, `cpacr_el1`,
 `esr_el1`, `far_el1`, `elr_el1`, `spsr_el1`, `cntv_ctl_el0`, `cntv_tval_el0`
 (read and write); `currentel`, `cntfrq_el0`, `cntvct_el0` (read only). A
 system-register write takes effect only after a context-synchronization
 event: call `isb()` where it matters.
+
+## Interrupts and exceptions
+
+Entering a handler from hardware needs register save/restore and `iretq` or
+`eret`, which no typed intrinsic can express. `#[interrupt]` functions get
+generated trampolines instead (see
+[freestanding.md](freestanding.md#interrupt-handlers)). The pieces in these
+modules:
+
+- `arch_x86_64`: `InterruptFrame` (`rip cs rflags rsp ss`), `frame_rip/cs/rflags/rsp/ss`,
+  `set_frame_rip`, `idt_set_gate(idt, vector, handler, selector, ist, gate)`,
+  `idt_load(idt, entries)`, `gate_interrupt()`, `gate_trap()`, `gate_user_interrupt()`.
+- `arch_aarch64`: `ExceptionFrame` (`x[31] elr spsr sp`), `frame_x`/`set_frame_x`,
+  `frame_elr`/`set_frame_elr`, `frame_spsr`/`set_frame_spsr`, and
+  `read_/write_cpacr_el1` (enable FP/SIMD before the first exception).
 
 ## How the stubs are built
 

@@ -1,0 +1,57 @@
+// Interrupt handlers on aarch64 (ADR 0101, P7): handlers placed in a generated
+// 16-entry exception vector table, which is installed in VBAR_EL1 at run time.
+import "arch_aarch64"
+import "ffi"
+
+static mut IRQS u64
+
+#[export("tarn_rt_fault")]
+fn fault() {
+    for true {}
+}
+
+#[export("tarn_rt_panic")]
+fn panic_message(message *u8) {
+    for true {}
+}
+
+#[export("tarn_rt_panic_at")]
+fn panic_at(message *u8, location *u8) {
+    for true {}
+}
+
+// Slot 4: synchronous exception from the current EL using SP_ELx (svc, brk, aborts).
+#[interrupt(4)]
+fn synchronous(frame *mut arch_aarch64.ExceptionFrame) {
+    unsafe {
+        arch_aarch64.set_frame_elr(frame, arch_aarch64.frame_elr(ffi.to_const(frame)) + 4)
+    }
+}
+
+// Slot 5: IRQ from the current EL using SP_ELx.
+#[interrupt(5)]
+fn irq(frame *mut arch_aarch64.ExceptionFrame) {
+    unsafe {
+        counter: *mut u64 := ffi.from_address(ffi.address(IRQS))
+        ffi.write_volatile(counter, ffi.read_volatile(ffi.to_const(counter)) + 1)
+    }
+}
+
+// Reachable from `ffi.callback` but not placed in the table.
+#[interrupt]
+#[export("unused_handler")]
+fn spare(frame *mut arch_aarch64.ExceptionFrame) {}
+
+#[vector_table]
+#[export("exception_vectors")]
+fn vectors() {}
+
+#[export("kmain")]
+fn kmain() {
+    unsafe {
+        table := ffi.address(ffi.callback(vectors))
+        arch_aarch64.write_vbar_el1(u64(table))
+        arch_aarch64.isb()
+        arch_aarch64.irq_enable()
+    }
+}

@@ -1,0 +1,62 @@
+// Interrupt handlers on x86_64 (ADR 0101, P7): a breakpoint handler without an
+// error code, a page fault handler with one, an exported timer handler, and
+// the IDT set up at run time from trampoline addresses.
+import "arch_x86_64"
+import "ffi"
+
+#[align(4096)]
+static mut IDT[4096]u8
+
+static mut TICKS u64
+static mut LAST_CODE u64
+
+#[export("tarn_rt_fault")]
+fn fault() {
+    for true {}
+}
+
+#[export("tarn_rt_panic")]
+fn panic_message(message *u8) {
+    for true {}
+}
+
+#[export("tarn_rt_panic_at")]
+fn panic_at(message *u8, location *u8) {
+    for true {}
+}
+
+#[interrupt]
+fn breakpoint(frame *mut arch_x86_64.InterruptFrame) {
+    unsafe {
+        rip := arch_x86_64.frame_rip(ffi.to_const(frame))
+        arch_x86_64.set_frame_rip(frame, rip)
+    }
+}
+
+#[interrupt]
+fn page_fault(frame *mut arch_x86_64.InterruptFrame, code u64) {
+    unsafe {
+        ffi.write_volatile(ffi.from_address(ffi.address(LAST_CODE)), code)
+    }
+}
+
+#[interrupt]
+#[export("timer_interrupt")]
+fn timer(frame *mut arch_x86_64.InterruptFrame) {
+    unsafe {
+        ticks: *mut u64 := ffi.from_address(ffi.address(TICKS))
+        ffi.write_volatile(ticks, ffi.read_volatile(ffi.to_const(ticks)) + 1)
+    }
+}
+
+#[export("kmain")]
+fn kmain() {
+    idt: *mut u8 := ffi.from_address(ffi.address(IDT))
+    unsafe {
+        arch_x86_64.idt_set_gate(idt, 3, ffi.callback(breakpoint), 8, 0, arch_x86_64.gate_trap())
+        arch_x86_64.idt_set_gate(idt, 14, ffi.callback(page_fault), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 32, ffi.callback(timer), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_load(ffi.to_const(idt), 256)
+        arch_x86_64.sti()
+    }
+}

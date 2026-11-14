@@ -88,7 +88,7 @@ pub fn exported(p: &post::Program, t: &Typed) -> Vec<FunctionId> {
         .functions
         .iter()
         .filter(|f| f.decl.kind == FnKind::Body && f.decl.generics.is_empty() && f.decl.asynchronous.is_none())
-        .filter(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.export.is_some()))
+        .filter(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.is_root()))
         .map(|f| f.decl.id)
         .collect();
     ids.sort();

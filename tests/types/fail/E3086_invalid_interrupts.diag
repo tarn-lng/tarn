@@ -1,0 +1,108 @@
+error[E3086]: an `#[interrupt]` function takes `(frame *mut Frame)` or, on x86_64 for exceptions that push one, `(frame *mut Frame, code u64)`; found ()
+ --> tests/types/fail/E3086_invalid_interrupts.tarn:2:4
+  |
+2 | fn no_frame() {}
+  |    ^^^^^^^^
+  |
+  = note: the frame is a raw `*mut` pointer to the CPU-saved state; the error code, when present, is a `u64`
+
+error[E3086]: an `#[interrupt]` function takes `(frame *mut Frame)` or, on x86_64 for exceptions that push one, `(frame *mut Frame, code u64)`; found (u64)
+ --> tests/types/fail/E3086_invalid_interrupts.tarn:5:4
+  |
+5 | fn frame_by_value(frame u64) {}
+  |    ^^^^^^^^^^^^^^
+  |
+  = note: the frame is a raw `*mut` pointer to the CPU-saved state; the error code, when present, is a `u64`
+
+error[E3086]: an `#[interrupt]` function takes `(frame *mut Frame)` or, on x86_64 for exceptions that push one, `(frame *mut Frame, code u64)`; found (*u64)
+ --> tests/types/fail/E3086_invalid_interrupts.tarn:8:4
+  |
+8 | fn shared_frame(frame *u64) {}
+  |    ^^^^^^^^^^^^
+  |
+  = note: the frame is a raw `*mut` pointer to the CPU-saved state; the error code, when present, is a `u64`
+
+error[E3086]: an `#[interrupt]` function takes `(frame *mut Frame)` or, on x86_64 for exceptions that push one, `(frame *mut Frame, code u64)`; found (*mut u64, u32)
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:11:4
+   |
+11 | fn bad_code(frame *mut u64, code u32) {}
+   |    ^^^^^^^^
+   |
+   = note: the frame is a raw `*mut` pointer to the CPU-saved state; the error code, when present, is a `u64`
+
+error[E3086]: an `#[interrupt]` function takes `(frame *mut Frame)` or, on x86_64 for exceptions that push one, `(frame *mut Frame, code u64)`; found (*mut u64, u64, u64)
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:14:4
+   |
+14 | fn too_many(frame *mut u64, code u64, extra u64) {}
+   |    ^^^^^^^^
+   |
+   = note: the frame is a raw `*mut` pointer to the CPU-saved state; the error code, when present, is a `u64`
+
+error[E3086]: a `#[interrupt]` function returns nothing, found `u64`
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:17:28
+   |
+17 | fn returns(frame *mut u64) u64 {
+   |                            ^^^
+
+error[E3086]: `#[interrupt]` functions cannot be `unsafe fn`; use `unsafe` blocks inside
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:21:1
+   |
+21 | #[interrupt]
+   | ^^^^^^^^^^^^
+
+error[E3086]: vector table slot 16 is out of range
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:24:1
+   |
+24 | #[interrupt(16)]
+   | ^^^^^^^^^^^^^^^^
+   |
+   = help: an aarch64 vector table has 16 slots, 0 to 15
+
+error[E3086]: `#[interrupt]` takes no argument or a vector table slot number
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:27:1
+   |
+27 | #[interrupt("text")]
+   | ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: write `#[interrupt]` or `#[interrupt(5)]`
+
+error[E3086]: `#[interrupt]` given more than once
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:31:1
+   |
+31 | #[interrupt]
+   | ^^^^^^^^^^^^
+
+error[E3086]: `#[interrupt]` and `#[vector_table]` cannot be combined
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:34:1
+   |
+34 | #[interrupt]
+   | ^^^^^^^^^^^^
+
+error[E3086]: a `#[vector_table]` function takes no parameters
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:39:4
+   |
+39 | fn table_with_parameter(frame *mut u64) {}
+   |    ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: write `#[vector_table] fn vectors() {}`; the compiler generates the table
+
+error[E3086]: `#[vector_table]` takes no argument
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:41:1
+   |
+41 | #[vector_table(1)]
+   | ^^^^^^^^^^^^^^^^^^
+
+error[E3086]: attributes are not allowed on generic functions or methods
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:44:1
+   |
+44 | #[interrupt]
+   | ^^^^^^^^^^^^
+   |
+   = help: a symbol names exactly one machine function; write a plain function that calls the generic one with concrete types
+
+error[E3086]: attributes are not allowed on `async` functions
+  --> tests/types/fail/E3086_invalid_interrupts.tarn:47:1
+   |
+47 | #[interrupt]
+   | ^^^^^^^^^^^^
+

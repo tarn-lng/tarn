@@ -2,9 +2,13 @@ use super::*;
 
 /// Native adapters own no environment. Their signatures reuse the exact C ABI
 /// classifier used by external calls; Tarn bodies keep their private ABI.
-pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program,
+pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program, t: &tarn_types::Typed,
     ids: &HashMap<FunctionId, FuncId>) -> Result<HashMap<FunctionId, FuncId>> {
     let mut targets = Vec::new();
+    // Interrupt handlers always need a C-ABI adapter: their trampoline calls it.
+    for f in &p.functions {
+        if fn_attrs(t, f).is_some_and(|a| a.interrupt) { targets.push(f.decl.id); }
+    }
     for f in &p.functions { for b in &f.blocks {
         if let Terminator::Call { callee: Callee::Intrinsic(name), args, .. } = &b.term
             && name == "ffi.callback"
@@ -16,6 +20,8 @@ pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program,
     }}
     targets.sort_by_key(|id| id.0);
     targets.dedup();
+    // The vector table stands in for its (empty) function and needs no adapter.
+    targets.retain(|id| !p.functions.get(id.0 as usize).and_then(|f| fn_attrs(t, f)).is_some_and(|a| a.vector_table));
     let mut adapters = HashMap::new();
     for target in targets {
         let f = &p.functions.get(target.0 as usize).ok_or_else(|| Error::bug("C callback target missing"))?.decl;
@@ -58,6 +64,8 @@ pub(super) fn emit_exports(module: &mut ObjectModule, p: &post::Program, t: &tar
     for f in &p.functions {
         let Some(attrs) = f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)) else { continue };
         let Some(name) = &attrs.export else { continue };
+        // Interrupt handlers and the vector table export their trampoline (emit_interrupts).
+        if attrs.interrupt || attrs.vector_table { continue; }
         if f.decl.kind != FnKind::Body || f.decl.asynchronous.is_some() || !f.decl.generics.is_empty() { return Err(Error::bug("invalid exported function")); }
         if let Some(first) = seen.insert(name.clone(), f.decl.name.clone()) {
             return Err(Error::unsupported(format!("symbol `{name}` is exported by both `{first}` and `{}`", f.decl.name)));
@@ -76,6 +84,109 @@ pub(super) fn emit_exports(module: &mut ObjectModule, p: &post::Program, t: &tar
         let id = module.declare_function(name, Linkage::Export, &sig).map_err(|e| Error::unsupported(format!("exported symbol `{name}` conflicts with another declaration: {e}")))?;
         define_adapter(module, id, sig, ids[&f.decl.id])?;
         if let Some(section) = &attrs.section { sections.push((id, section.clone())); }
+    }
+    Ok(sections)
+}
+
+fn fn_attrs<'a>(t: &'a tarn_types::Typed, f: &post::Function) -> Option<&'a tarn_types::statics::FnAttrs> {
+    f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s))
+}
+
+/// `#[interrupt]` trampolines and the `#[vector_table]` (ADR 0101, P7). Each
+/// handler gets an entry sequence (see `crate::interrupt`) that calls the C-ABI
+/// adapter of its Tarn body; `ffi.callback(handler)` and `#[export]` then name
+/// the trampoline, so `c_callbacks` is rewritten to point at it. Returns the
+/// sections trampolines were asked to live in.
+pub(super) fn emit_interrupts(module: &mut ObjectModule, p: &post::Program, t: &tarn_types::Typed, target: crate::Target,
+    c_callbacks: &mut HashMap<FunctionId, FuncId>) -> Result<Vec<(FuncId, String)>> {
+    use cranelift_module::{ModuleReloc, ModuleRelocTarget};
+    let mut sections = Vec::new();
+    let handlers: Vec<&post::Function> = p.functions.iter().filter(|f| fn_attrs(t, f).is_some_and(|a| a.interrupt)).collect();
+    let tables: Vec<&post::Function> = p.functions.iter().filter(|f| fn_attrs(t, f).is_some_and(|a| a.vector_table)).collect();
+    if handlers.is_empty() && tables.is_empty() { return Ok(sections); }
+    if target.os != crate::Os::None {
+        return Err(Error::unsupported(format!("`#[interrupt]` and `#[vector_table]` need a freestanding `*-none` target, not {target}")));
+    }
+    let (call, alignment) = match target.arch {
+        crate::Arch::X86_64 => (cranelift_codegen::binemit::Reloc::X86CallPCRel4, 16),
+        crate::Arch::Aarch64 => (cranelift_codegen::binemit::Reloc::Arm64Call, 4),
+    };
+    let mut trampolines: HashMap<FunctionId, FuncId> = HashMap::new();
+    let mut slots: Vec<Option<(u32, FuncId, String)>> = vec![None; 16];
+    for f in handlers {
+        let attrs = fn_attrs(t, f).ok_or_else(|| Error::bug("interrupt attributes"))?;
+        let adapter = *c_callbacks.get(&f.decl.id).ok_or_else(|| Error::bug("interrupt adapter missing"))?;
+        let sig = module.declarations().get_function_decl(adapter).signature.clone();
+        let error_code = match (target.arch, sig.params.len()) {
+            (_, 1) => false,
+            (crate::Arch::X86_64, 2) => true,
+            (crate::Arch::Aarch64, 2) => return Err(Error::unsupported(format!(
+                "interrupt handler `{}` takes an error code, which exists only on x86_64; an aarch64 handler is `fn(frame *mut ExceptionFrame)`", f.decl.name))),
+            _ => return Err(Error::bug("interrupt handler arity")),
+        };
+        if attrs.vector.is_some() && target.arch != crate::Arch::Aarch64 {
+            return Err(Error::unsupported(format!("`#[interrupt({})]` on `{}`: vector table slots exist only on aarch64; x86_64 handlers are installed in the IDT at run time", attrs.vector.unwrap_or(0), f.decl.name)));
+        }
+        let name = format!("tarn_interrupt_{}_{}", f.decl.id.0, f.decl.name.split("::").next().unwrap_or("handler"));
+        let linkage = match &attrs.export {
+            Some(symbol) => {
+                crate::statics::check_export_name(symbol, target, true)?;
+                Linkage::Export
+            }
+            None => Linkage::Local,
+        };
+        let symbol = attrs.export.clone().unwrap_or(name);
+        let id = module.declare_function(&symbol, linkage, &sig).map_err(|e| Error::unsupported(format!("exported symbol `{symbol}` conflicts with another declaration: {e}")))?;
+        let trampoline = crate::interrupt::trampoline(target.arch, error_code);
+        let relocs = [ModuleReloc { offset: trampoline.call_at as u32, kind: call, name: ModuleRelocTarget::from(adapter), addend: if target.arch == crate::Arch::X86_64 { -4 } else { 0 } }];
+        module.define_function_bytes(id, alignment, &trampoline.code, &relocs).map_err(|e| Error::bug(e.to_string()))?;
+        if let Some(section) = &attrs.section { sections.push((id, section.clone())); }
+        if let Some(slot) = attrs.vector {
+            if let Some((_, _, first)) = &slots[slot as usize] {
+                return Err(Error::unsupported(format!("vector table slot {slot} is used by both `{first}` and `{}`", f.decl.name)));
+            }
+            slots[slot as usize] = Some((slot, id, f.decl.name.clone()));
+        }
+        trampolines.insert(f.decl.id, id);
+        c_callbacks.insert(f.decl.id, id);
+    }
+    if tables.len() > 1 { return Err(Error::unsupported("a program has at most one `#[vector_table]` function")); }
+    match tables.first() {
+        None => {
+            if let Some((slot, _, name)) = slots.iter().flatten().next() {
+                return Err(Error::unsupported(format!("`#[interrupt({slot})]` on `{name}` needs a `#[vector_table]` function to hold the slot")));
+            }
+        }
+        Some(f) => {
+            if target.arch != crate::Arch::Aarch64 {
+                return Err(Error::unsupported("`#[vector_table]` builds an aarch64 exception vector table; x86_64 uses an IDT filled at run time"));
+            }
+            let attrs = fn_attrs(t, f).ok_or_else(|| Error::bug("vector table attributes"))?;
+            let mut bytes = Vec::with_capacity(2048);
+            let mut relocs = Vec::new();
+            for slot in 0..16u32 {
+                bytes.extend(crate::interrupt::BRANCH.to_le_bytes());
+                bytes.resize(((slot + 1) * 128) as usize, 0);
+                // Unfilled slots keep `b .`; filled ones branch to their trampoline.
+                if let Some((_, id, _)) = &slots[slot as usize] {
+                    relocs.push(ModuleReloc { offset: slot * 128, kind: call, name: ModuleRelocTarget::from(*id), addend: 0 });
+                }
+            }
+            let linkage = if attrs.export.is_some() { Linkage::Export } else { Linkage::Local };
+            let symbol = match &attrs.export {
+                Some(symbol) => {
+                    crate::statics::check_export_name(symbol, target, true)?;
+                    symbol.as_str()
+                }
+                None => "tarn_vector_table",
+            };
+            let mut sig = module.make_signature();
+            sig.call_conv = module.isa().default_call_conv();
+            let id = module.declare_function(symbol, linkage, &sig).map_err(|e| Error::unsupported(format!("exported symbol `{symbol}` conflicts with another declaration: {e}")))?;
+            module.define_function_bytes(id, 2048, &bytes, &relocs).map_err(|e| Error::bug(e.to_string()))?;
+            if let Some(section) = &attrs.section { sections.push((id, section.clone())); }
+            c_callbacks.insert(f.decl.id, id);
+        }
     }
     Ok(sections)
 }

@@ -4,6 +4,7 @@
 // x86_64 target; any other target is a compile error. Privileged instructions
 // fault (SIGSEGV/SIGILL) in user mode: that is the caller's `unsafe`
 // responsibility. Every function requires the documented CPU state.
+import "ffi"
 /// Read a u8 from I/O port `port` (`in`). Requires I/O privilege (ring 0 or IOPL/IO bitmap).
 pub unsafe fn in8(port u16) u8 { return _in8(port) }
 extern "intrinsic" fn _in8(port u16) u8
@@ -96,3 +97,89 @@ extern "intrinsic" fn _lgdt(descriptor *u8)
 /// Load the IDT register from the 10-byte descriptor (u16 limit, u64 base) at `descriptor` (`lidt`). Ring 0.
 pub unsafe fn lidt(descriptor *u8) { _lidt(descriptor) }
 extern "intrinsic" fn _lidt(descriptor *u8)
+
+// ---- Interrupts (ADR 0101, P7) ----------------------------------------------
+
+/// What the CPU pushes on an interrupt or exception in 64-bit mode (Intel SDM
+/// vol. 3, 6.14.2). An `#[interrupt]` handler receives `*mut InterruptFrame`
+/// pointing at it on the interrupted stack; the saved general registers are
+/// restored by the trampoline and are not part of the frame. Writing `rip`,
+/// `cs`, `rflags`, `rsp` or `ss` changes where `iretq` resumes.
+pub struct InterruptFrame {
+    rip u64
+    cs u64
+    rflags u64
+    rsp u64
+    ss u64
+}
+
+/// IDT gate type byte: present, DPL 0, 64-bit interrupt gate (clears IF on entry).
+pub fn gate_interrupt() u8 { return 142 }
+/// IDT gate type byte: present, DPL 0, 64-bit trap gate (IF unchanged).
+pub fn gate_trap() u8 { return 143 }
+/// IDT gate type byte: present, DPL 3 interrupt gate, so ring 3 may use `int n`.
+pub fn gate_user_interrupt() u8 { return 238 }
+
+/// Read word `index` (0 rip, 1 cs, 2 rflags, 3 rsp, 4 ss) of a frame.
+/// Requires: `frame` points at a live `InterruptFrame`.
+fn frame_word(frame *InterruptFrame, index usize) u64 {
+    base: *u64 := ffi.from_address(ffi.address(frame))
+    unsafe { return ffi.read(ffi.offset(base, index)) }
+}
+/// Saved instruction pointer: where `iretq` resumes (for `int3` the byte after it).
+pub unsafe fn frame_rip(frame *InterruptFrame) u64 { return frame_word(frame, 0) }
+/// Saved code segment selector.
+pub unsafe fn frame_cs(frame *InterruptFrame) u64 { return frame_word(frame, 1) }
+/// Saved RFLAGS.
+pub unsafe fn frame_rflags(frame *InterruptFrame) u64 { return frame_word(frame, 2) }
+/// Saved stack pointer.
+pub unsafe fn frame_rsp(frame *InterruptFrame) u64 { return frame_word(frame, 3) }
+/// Saved stack segment selector.
+pub unsafe fn frame_ss(frame *InterruptFrame) u64 { return frame_word(frame, 4) }
+/// Change where `iretq` resumes. Requires: `frame` is the handler's own frame and `rip` is code to run at the saved privilege.
+pub unsafe fn set_frame_rip(frame *mut InterruptFrame, rip u64) {
+    base: *mut u64 := ffi.from_address(ffi.address(frame))
+    unsafe { ffi.write(base, rip) }
+}
+
+/// Write the 16-byte gate for `vector` into the IDT at `idt`: `handler` is
+/// the address of an `#[interrupt]` trampoline (`ffi.callback(handler_fn)`),
+/// `selector` a 64-bit code segment selector of the current GDT, `ist` 0 or an
+/// IST slot (1..7), `gate` one of `gate_interrupt()`, `gate_trap()`, `gate_user_interrupt()`.
+/// Requires: `idt` is valid for writing 16 * (vector + 1) bytes and 8-byte aligned.
+pub unsafe fn idt_set_gate(idt *mut u8, vector usize, handler *u8, selector u16, ist u8, gate u8) {
+    address := u64(ffi.address(handler))
+    entry: *mut u8 := ffi.offset_mut(idt, vector * 16)
+    low: *mut u16 := ffi.from_address(ffi.address(entry))
+    sel: *mut u16 := ffi.from_address(ffi.address(ffi.offset_mut(entry, 2)))
+    mid: *mut u16 := ffi.from_address(ffi.address(ffi.offset_mut(entry, 6)))
+    high: *mut u32 := ffi.from_address(ffi.address(ffi.offset_mut(entry, 8)))
+    reserved: *mut u32 := ffi.from_address(ffi.address(ffi.offset_mut(entry, 12)))
+    unsafe {
+        ffi.write_volatile(low, u16(address & 65535))
+        ffi.write_volatile(sel, selector)
+        ffi.write_volatile(ffi.offset_mut(entry, 4), ist & 7)
+        ffi.write_volatile(ffi.offset_mut(entry, 5), gate)
+        ffi.write_volatile(mid, u16((address >> 16) & 65535))
+        ffi.write_volatile(high, u32(address >> 32))
+        ffi.write_volatile(reserved, 0)
+    }
+}
+
+/// Load the IDT register with `entries` gates at `idt` (`lidt`). Ring 0.
+/// Requires: `idt` holds `entries` valid 16-byte gates and `entries` is 1..=256.
+pub unsafe fn idt_load(idt *u8, entries usize) {
+    var descriptor: [10]u8 = [10]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    limit := u64(entries * 16 - 1)
+    base := u64(ffi.address(idt))
+    var index: usize = 0
+    for index < 2 {
+        descriptor[index] = u8((limit >> u64(index * 8)) & 255)
+        index = index + 1
+    }
+    for index < 10 {
+        descriptor[index] = u8((base >> u64((index - 2) * 8)) & 255)
+        index = index + 1
+    }
+    unsafe { lidt(ffi.of(&descriptor[0])) }
+}

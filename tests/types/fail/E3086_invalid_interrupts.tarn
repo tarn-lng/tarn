@@ -1,0 +1,52 @@
+#[interrupt]
+fn no_frame() {}
+
+#[interrupt]
+fn frame_by_value(frame u64) {}
+
+#[interrupt]
+fn shared_frame(frame *u64) {}
+
+#[interrupt]
+fn bad_code(frame *mut u64, code u32) {}
+
+#[interrupt]
+fn too_many(frame *mut u64, code u64, extra u64) {}
+
+#[interrupt]
+fn returns(frame *mut u64) u64 {
+    return 0
+}
+
+#[interrupt]
+unsafe fn unsafe_handler(frame *mut u64) {}
+
+#[interrupt(16)]
+fn slot_out_of_range(frame *mut u64) {}
+
+#[interrupt("text")]
+fn slot_text(frame *mut u64) {}
+
+#[interrupt]
+#[interrupt]
+fn twice(frame *mut u64) {}
+
+#[interrupt]
+#[vector_table]
+fn both() {}
+
+#[vector_table]
+fn table_with_parameter(frame *mut u64) {}
+
+#[vector_table(1)]
+fn table_with_argument() {}
+
+#[interrupt]
+fn generic<T>(frame *mut u64) {}
+
+#[interrupt]
+async fn asynchronous(frame *mut u64) {}
+
+#[interrupt]
+#[export("fine")]
+fn valid(frame *mut u64, code u64) {}

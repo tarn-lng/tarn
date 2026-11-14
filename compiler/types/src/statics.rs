@@ -11,6 +11,7 @@
 //! `unsafe` pointer reads and writes.
 use crate::env::Env;
 use crate::ty::Ty;
+use crate::IntTy;
 use std::collections::HashMap;
 use tarn_ast::{Attr, AttrArg, ExprKind, FnDecl, ItemKind, StaticDecl};
 use tarn_diagnostics::{Diagnostic, Span};
@@ -51,6 +52,19 @@ pub struct StaticDef {
 pub struct FnAttrs {
     pub export: Option<String>,
     pub section: Option<String>,
+    /// `#[interrupt]` (ADR 0101, P7): the function is an interrupt handler body.
+    pub interrupt: bool,
+    /// `#[interrupt(n)]`: aarch64 vector-table slot (0..=15) that branches to the handler.
+    pub vector: Option<u32>,
+    /// `#[vector_table]`: the function stands for the generated aarch64 vector table.
+    pub vector_table: bool,
+}
+
+impl FnAttrs {
+    /// Functions that must be compiled although nothing calls them.
+    pub fn is_root(&self) -> bool {
+        self.export.is_some() || self.vector.is_some() || self.vector_table
+    }
 }
 
 fn invalid_static(span: Span, message: impl Into<String>) -> Diagnostic {
@@ -77,13 +91,16 @@ struct Parsed {
     export: Option<String>,
     section: Option<String>,
     align: Option<u32>,
+    interrupt: bool,
+    vector: Option<u32>,
+    vector_table: bool,
 }
 
 fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Parsed {
-    let mut out = Parsed { export: None, section: None, align: None };
+    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false };
     let what = if is_fn { "function" } else { "static" };
     for a in attrs {
-        let known: &[&str] = if is_fn { &["export", "section"] } else { &["export", "section", "align"] };
+        let known: &[&str] = if is_fn { &["export", "section", "interrupt", "vector_table"] } else { &["export", "section", "align"] };
         if !known.contains(&a.name.as_str()) {
             diags.push(invalid_attr(a.span, format!("unknown attribute `{}` on a {what}", a.name)).help(format!("a {what} accepts {}", known.iter().map(|k| format!("`#[{k}(..)]`")).collect::<Vec<_>>().join(", "))));
             continue;
@@ -91,6 +108,8 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
         let duplicate = match a.name.as_str() {
             "export" => out.export.is_some(),
             "section" => out.section.is_some(),
+            "interrupt" => out.interrupt,
+            "vector_table" => out.vector_table,
             _ => out.align.is_some(),
         };
         if duplicate {
@@ -104,6 +123,15 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
             ("section", Some(AttrArg::Str(s))) if valid_section(s) => out.section = Some(s.clone()),
             ("section", Some(AttrArg::Str(s))) => diags.push(invalid_attr(a.span, format!("`{s}` is not a valid section name")).help("use `.` followed by letters, digits, `.`, `_` or `-`, such as `.text.boot`")),
             ("section", _) => diags.push(invalid_attr(a.span, "`#[section]` needs a section name").help("write `#[section(\".text.boot\")]`")),
+            ("interrupt", None) => out.interrupt = true,
+            ("interrupt", Some(AttrArg::Int(n))) if *n < 16 => {
+                out.interrupt = true;
+                out.vector = Some(*n as u32);
+            }
+            ("interrupt", Some(AttrArg::Int(n))) => diags.push(invalid_attr(a.span, format!("vector table slot {n} is out of range")).help("an aarch64 vector table has 16 slots, 0 to 15")),
+            ("interrupt", _) => diags.push(invalid_attr(a.span, "`#[interrupt]` takes no argument or a vector table slot number").help("write `#[interrupt]` or `#[interrupt(5)]`")),
+            ("vector_table", None) => out.vector_table = true,
+            ("vector_table", _) => diags.push(invalid_attr(a.span, "`#[vector_table]` takes no argument")),
             ("align", Some(AttrArg::Int(n))) if n.is_power_of_two() && *n <= 65536 => out.align = Some(*n as u32),
             ("align", Some(AttrArg::Int(n))) => diags.push(invalid_attr(a.span, format!("alignment {n} is not a power of two up to 65536"))),
             ("align", _) => diags.push(invalid_attr(a.span, "`#[align]` needs a number").help("write `#[align(4096)]`")),
@@ -135,7 +163,7 @@ pub fn evaluate(env: &mut Env<'_>) {
                 }
             }
             env.diags.extend(diags);
-            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section });
+            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table });
         }
     }
     // ---- statics, pass 1: types and attributes
@@ -206,6 +234,40 @@ fn function_problems(env: &Env<'_>, f: &FnDecl, sym: SymbolId, parsed: &Parsed) 
     if f.is_async {
         out.push(invalid_attr(span, "attributes are not allowed on `async` functions"));
         return out;
+    }
+    if parsed.interrupt || parsed.vector_table {
+        let show = |t: &Ty| crate::show(t, env.r, &env.decls.param_names, &|_| "_");
+        let which = if parsed.interrupt { "interrupt" } else { "vector_table" };
+        if parsed.interrupt && parsed.vector_table {
+            out.push(invalid_attr(span, "`#[interrupt]` and `#[vector_table]` cannot be combined"));
+        }
+        if f.is_unsafe {
+            out.push(invalid_attr(span, format!("`#[{which}]` functions cannot be `unsafe fn`; use `unsafe` blocks inside")));
+        }
+        if let Some(sig) = env.decls.fns.get(&sym) {
+            if sig.ret != Ty::Void && sig.ret != Ty::Error {
+                out.push(invalid_attr(f.ret.as_ref().map(|t| t.span).unwrap_or(f.name.span), format!("a `#[{which}]` function returns nothing, found `{}`", show(&sig.ret))));
+            }
+            if parsed.vector_table {
+                if !sig.params.is_empty() {
+                    out.push(invalid_attr(f.name.span, "a `#[vector_table]` function takes no parameters").help("write `#[vector_table] fn vectors() {}`; the compiler generates the table"));
+                }
+            } else {
+                let frame_ok = |t: &Ty| matches!(t, Ty::Ptr(true, inner) if !matches!(**inner, Ty::Slice(_) | Ty::Any(_) | Ty::Str)) || *t == Ty::Error;
+                match sig.params.as_slice() {
+                    [frame] if frame_ok(frame) => {}
+                    [frame, code] if frame_ok(frame) && (*code == Ty::Int(IntTy::U64) || *code == Ty::Error) => {}
+                    other => {
+                        out.push(invalid_attr(f.name.span, format!("an `#[interrupt]` function takes `(frame *mut Frame)` or, on x86_64 for exceptions that push one, `(frame *mut Frame, code u64)`; found ({})",
+                            other.iter().map(|t| show(t)).collect::<Vec<_>>().join(", ")))
+                            .note("the frame is a raw `*mut` pointer to the CPU-saved state; the error code, when present, is a `u64`"));
+                    }
+                }
+            }
+        }
+        if parsed.vector_table && parsed.vector.is_some() {
+            out.push(invalid_attr(span, "a slot number belongs to `#[interrupt(n)]`"));
+        }
     }
     if parsed.export.is_some()
         && let Some(sig) = env.decls.fns.get(&sym)

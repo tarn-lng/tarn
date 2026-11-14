@@ -5,6 +5,7 @@
 // barrier instructions fault in user mode (EL0) on most registers: that is
 // the caller's `unsafe` responsibility. A system-register write takes effect
 // only after a context-synchronization event: call `isb()` when it matters.
+import "ffi"
 /// Wait for interrupt (`wfi`).
 pub unsafe fn wfi() { _wfi() }
 extern "intrinsic" fn _wfi()
@@ -89,6 +90,14 @@ extern "intrinsic" fn _read_sctlr_el1() u64
 pub unsafe fn write_sctlr_el1(value u64) { _write_sctlr_el1(value) }
 extern "intrinsic" fn _write_sctlr_el1(value u64)
 
+/// Read `CPACR_EL1`: Architectural feature access control. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_cpacr_el1() u64 { return _read_cpacr_el1() }
+extern "intrinsic" fn _read_cpacr_el1() u64
+
+/// Write `CPACR_EL1`: Architectural feature access control; bits 21:20 = 3 allow FP/SIMD at EL1 and EL0. Interrupt trampolines save the SIMD registers, so this must be set before the first exception. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_cpacr_el1(value u64) { _write_cpacr_el1(value) }
+extern "intrinsic" fn _write_cpacr_el1(value u64)
+
 /// Read `CURRENTEL`: Current exception level (bits 3:2). Read-only. Needs EL1 unless the register is EL0-accessible.
 pub unsafe fn read_currentel() u64 { return _read_currentel() }
 extern "intrinsic" fn _read_currentel() u64
@@ -148,3 +157,52 @@ extern "intrinsic" fn _read_cntfrq_el0() u64
 /// Read `CNTVCT_EL0`: Virtual counter. Read-only. Needs EL1 unless the register is EL0-accessible.
 pub unsafe fn read_cntvct_el0() u64 { return _read_cntvct_el0() }
 extern "intrinsic" fn _read_cntvct_el0() u64
+
+// ---- Exceptions (ADR 0101, P7) -----------------------------------------------
+//
+// `#[interrupt(slot)]` puts a handler's trampoline in the compiler-generated
+// vector table of the `#[vector_table]` function; `ffi.callback(that_function)`
+// is the table's address for `write_vbar_el1`. Slots (the table has 16 entries
+// of 128 bytes; the table is 2048-byte aligned as VBAR_EL1 requires):
+//
+//     0-3   current EL, SP_EL0:   synchronous, IRQ, FIQ, SError
+//     4-7   current EL, SP_ELx:   synchronous, IRQ, FIQ, SError
+//     8-11  lower EL, AArch64:    synchronous, IRQ, FIQ, SError
+//     12-15 lower EL, AArch32:    synchronous, IRQ, FIQ, SError
+//
+// An empty slot is `b .` (the CPU spins), so a stray exception is visible.
+
+/// The register state an `#[interrupt]` handler receives a pointer to: x0..x30,
+/// then ELR_EL1, SPSR_EL1 and the stack pointer at the time of the exception
+/// (informational; not restored). 272 bytes. The 32 SIMD registers are saved
+/// right after it and restored too. The handler may change `x`, `elr` and
+/// `spsr`: they are written back before `eret`.
+pub struct ExceptionFrame {
+    x[31]u64
+    elr u64
+    spsr u64
+    sp u64
+}
+
+fn frame_word(frame *ExceptionFrame, index usize) u64 {
+    base: *u64 := ffi.from_address(ffi.address(frame))
+    unsafe { return ffi.read(ffi.offset(base, index)) }
+}
+fn set_frame_word(frame *mut ExceptionFrame, index usize, value u64) {
+    base: *mut u64 := ffi.from_address(ffi.address(frame))
+    unsafe { ffi.write(ffi.offset_mut(base, index), value) }
+}
+
+/// Saved general register `x<index>` (0..=30); index 31 would read ELR; use `frame_elr`.
+/// Requires: `frame` points at a live `ExceptionFrame`.
+pub unsafe fn frame_x(frame *ExceptionFrame, index usize) u64 { return frame_word(frame, index) }
+/// Change the value `x<index>` has after `eret`. Requires: the handler's own frame, `index` 0..=30.
+pub unsafe fn set_frame_x(frame *mut ExceptionFrame, index usize, value u64) { set_frame_word(frame, index, value) }
+/// Saved ELR_EL1: where `eret` resumes.
+pub unsafe fn frame_elr(frame *ExceptionFrame) u64 { return frame_word(frame, 31) }
+/// Change where `eret` resumes. Requires: the handler's own frame; `elr` is code to run at the saved level.
+pub unsafe fn set_frame_elr(frame *mut ExceptionFrame, elr u64) { set_frame_word(frame, 31, elr) }
+/// Saved SPSR_EL1.
+pub unsafe fn frame_spsr(frame *ExceptionFrame) u64 { return frame_word(frame, 32) }
+/// Change the PSTATE `eret` restores. Requires: the handler's own frame and a valid SPSR value.
+pub unsafe fn set_frame_spsr(frame *mut ExceptionFrame, spsr u64) { set_frame_word(frame, 32, spsr) }

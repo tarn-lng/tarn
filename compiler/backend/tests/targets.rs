@@ -206,7 +206,12 @@ fn only_the_stubs_a_program_calls_are_emitted() {
 /// Disassemble `bytes` with the host `objdump` (llvm; reads either ELF
 /// architecture) in a stable syntax: `symbol -> lowercase instructions`.
 fn stub_disassembly(bytes: &[u8], tag: &str, intel: bool) -> Option<std::collections::HashMap<String, Vec<String>>> {
-    let path = std::env::temp_dir().join(format!("tarn-freestanding-stubs-{tag}-{}.o", std::process::id()));
+    disassembly_of(bytes, tag, intel, "tarn_arch_")
+}
+
+/// Like `stub_disassembly` for the functions whose symbol starts with `prefix`.
+fn disassembly_of(bytes: &[u8], tag: &str, intel: bool, prefix: &str) -> Option<std::collections::HashMap<String, Vec<String>>> {
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-stubs-{tag}-{prefix}-{}.o", std::process::id()));
     std::fs::write(&path, bytes).unwrap();
     let mut command = std::process::Command::new("objdump");
     command.args(["-d", "--no-show-raw-insn"]);
@@ -216,7 +221,7 @@ fn stub_disassembly(bytes: &[u8], tag: &str, intel: bool) -> Option<std::collect
     let text = String::from_utf8_lossy(&out.filter(|o| o.status.success())?.stdout).into_owned();
     let mut map = std::collections::HashMap::new();
     for block in text.split("\n\n") {
-        let Some(start) = block.find("<tarn_arch_") else { continue };
+        let Some(start) = block.find(&format!("<{prefix}")) else { continue };
         let name = block[start + 1..].split(">:").next().unwrap().to_string();
         let instructions: Vec<String> = block.lines().skip_while(|l| !l.contains(">:")).skip(1)
             .filter_map(|l| l.split_once(':').filter(|(address, _)| !address.trim().is_empty() && address.trim().bytes().all(|b| b.is_ascii_hexdigit())).map(|(_, i)| i))
@@ -592,4 +597,153 @@ fn linking_a_kernel_with_an_elf_linker() {
     assert_eq!(u64::from_le_bytes(bytes[24..32].try_into().unwrap()), 0x100000, "entry is kmain at the start of .text");
     let magic = 0xc7b1dd30df4c8b88u64.to_le_bytes();
     assert!(bytes.windows(8).any(|w| w == magic), "the Limine request is in the image");
+}
+
+// ---------------------------------------------------------------- ADR 0101, P7
+
+fn symbol_named<'a>(elf: &'a Elf, middle: &str) -> &'a ElfSymbol {
+    if !middle.starts_with('_') { return elf.symbol(middle); }
+    elf.symbols.iter().find(|s| s.name.starts_with("tarn_interrupt_") && s.name.ends_with(middle)).unwrap_or_else(|| panic!("no trampoline for {middle}: {:?}", elf.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()))
+}
+
+#[test]
+fn interrupt_programs_import_only_the_contract() {
+    for (target, program) in [("x86_64-none", "interrupts_x86_64"), ("aarch64-none", "interrupts_aarch64")] {
+        let bytes = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.is_empty(), "{target}: {undefined:?}");
+        assert!(globals.contains(&"kmain".to_string()), "{target}: {globals:?}");
+    }
+}
+
+#[test]
+fn trampolines_disassemble_to_the_documented_sequence() {
+    for (target, program, arch, intel, variants) in [
+        ("x86_64-none", "interrupts_x86_64", Arch::X86_64, true, vec![("_breakpoint", false), ("_page_fault", true), ("timer_interrupt", false)]),
+        ("aarch64-none", "interrupts_aarch64", Arch::Aarch64, false, vec![("_synchronous", false), ("_irq", false), ("unused_handler", false)]),
+    ] {
+        let bytes = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap();
+        let elf = Elf::parse(&bytes);
+        let Some(disassembly) = disassembly_of(&bytes, target, intel, "") else { eprintln!("objdump unavailable; skipping {target}"); continue };
+        for (name, error_code) in variants {
+            let symbol = symbol_named(&elf, name);
+            let expected = tarn_backend::interrupt_listing(arch, error_code);
+            let actual = disassembly.get(&symbol.name).unwrap_or_else(|| panic!("{target}: {} not disassembled: {:?}", symbol.name, disassembly.keys().collect::<Vec<_>>()));
+            // The call or branch to the adapter prints its address; compare the mnemonic.
+            let actual: Vec<String> = actual.iter().take(expected.len()).map(|l| if l.starts_with("call ") || l.starts_with("bl ") { l.split(' ').next().unwrap().to_string() } else { l.clone() }).collect();
+            assert_eq!(actual, expected, "{target}: {}", symbol.name);
+        }
+    }
+}
+
+#[test]
+fn trampolines_call_the_c_adapter_of_their_handler() {
+    // R_X86_64_PLT32 = 4, R_AARCH64_CALL26 = 283.
+    for (target, program, kind, handlers) in [
+        ("x86_64-none", "interrupts_x86_64", 4u32, ["_breakpoint", "_page_fault", "timer_interrupt"]),
+        ("aarch64-none", "interrupts_aarch64", 283, ["_synchronous", "_irq", "unused_handler"]),
+    ] {
+        let bytes = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap();
+        let elf = Elf::parse(&bytes);
+        for name in handlers {
+            let symbol = symbol_named(&elf, name);
+            assert_eq!(symbol.kind, 2, "{target}: {name} is a function");
+            let relocations: Vec<_> = elf.relocations(symbol.section).into_iter().filter(|(offset, ..)| *offset >= symbol.value && symbol_end(&elf, symbol) > *offset).collect();
+            assert_eq!(relocations.len(), 1, "{target}: {name}: {relocations:?}");
+            let (offset, found, callee) = &relocations[0];
+            assert_eq!(*found, kind, "{target}: {name}");
+            assert!(callee.starts_with("tarn_c_callback_"), "{target}: {name} calls {callee}");
+            // The relocated field is the call's operand: the last 4 bytes of x86's 5-byte call, a whole aarch64 `bl`.
+            let at = (offset - symbol.value) as usize;
+            let code = elf.contents(symbol, at + 4);
+            if target == "x86_64-none" { assert_eq!(code[at - 1], 0xe8, "{name}: call opcode"); } else { assert_eq!(code[at + 3], 0x94, "{name}: bl"); }
+        }
+        // `#[export]` makes the trampoline itself the global symbol.
+        let exported = elf.symbol(if target == "x86_64-none" { "timer_interrupt" } else { "unused_handler" });
+        assert!(exported.global && exported.kind == 2, "{target}: {exported:?}");
+        assert!(elf.relocations(exported.section).iter().any(|(_, _, callee)| callee.starts_with("tarn_c_callback_")), "{target}");
+        // No stray C adapter or C-ABI symbol takes the exported name.
+        assert_eq!(elf.symbols.iter().filter(|s| s.name == exported.name).count(), 1);
+    }
+}
+
+/// End of a function symbol: the next symbol of its section, or the section's end.
+fn symbol_end(elf: &Elf, symbol: &ElfSymbol) -> u64 {
+    elf.symbols.iter().filter(|s| s.section == symbol.section && s.value > symbol.value).map(|s| s.value).min().unwrap_or(elf.sections[symbol.section].size as u64)
+}
+
+#[test]
+fn the_aarch64_vector_table_is_aligned_and_branches_to_its_handlers() {
+    let bytes = freestanding("../../tests/freestanding/interrupts_aarch64.tarn", "aarch64-none").unwrap();
+    let elf = Elf::parse(&bytes);
+    let table = elf.symbol("exception_vectors");
+    assert!(table.global && table.kind == 2);
+    assert_eq!(table.value % 2048, 0, "VBAR_EL1 needs 2 KiB alignment");
+    assert!(elf.sections[table.section].align >= 2048, "{:?}", elf.sections[table.section]);
+    let words: Vec<u32> = elf.contents(table, 2048).chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+    // Every entry is `b` (target filled in by the relocation) or `b .`, and the other 31 words are zero.
+    for slot in 0..16 {
+        assert_eq!(words[slot * 32], 0x1400_0000, "slot {slot}");
+        assert!(words[slot * 32 + 1..(slot + 1) * 32].iter().all(|w| *w == 0));
+    }
+    let relocations: Vec<_> = elf.relocations(table.section).into_iter().filter(|(o, ..)| *o >= table.value && *o < table.value + 2048).collect();
+    let slot_of = |o: u64| (o - table.value) / 128;
+    assert_eq!(relocations.len(), 2, "{relocations:?}");
+    for (offset, kind, callee) in relocations {
+        assert_eq!((offset - table.value) % 128, 0);
+        assert_eq!(kind, 283, "R_AARCH64_CALL26");
+        match slot_of(offset) {
+            4 => assert!(callee.ends_with("_synchronous"), "{callee}"),
+            5 => assert!(callee.ends_with("_irq"), "{callee}"),
+            other => panic!("unexpected slot {other}"),
+        }
+    }
+}
+
+#[test]
+fn handler_addresses_come_from_callback_and_are_the_trampolines() {
+    // `ffi.callback(handler)` yields the trampoline, not a C adapter: kmain's
+    // address operand relocates against the trampoline symbols.
+    let bytes = freestanding("../../tests/freestanding/interrupts_x86_64.tarn", "x86_64-none").unwrap();
+    let elf = Elf::parse(&bytes);
+    let referenced: std::collections::HashSet<String> = elf.sections.iter().enumerate().flat_map(|(i, _)| elf.relocations(i)).map(|(_, _, name)| name).collect();
+    for name in ["_breakpoint", "_page_fault"] {
+        let symbol = symbol_named(&elf, name);
+        assert!(referenced.contains(&symbol.name), "{} is never referenced: {referenced:?}", symbol.name);
+    }
+    assert!(referenced.contains("timer_interrupt"));
+}
+
+#[test]
+fn interrupt_attribute_misuse_is_a_build_error() {
+    let handler = "#[interrupt]\nfn h(frame *mut u64) {}\n";
+    let contract = "#[export(\"tarn_rt_fault\")]\nfn f() {}\n#[export(\"tarn_rt_panic\")]\nfn p(m *u8) {}\n#[export(\"tarn_rt_panic_at\")]\nfn q(m *u8, l *u8) {}\n";
+    let expect = |tag: &str, source: String, target: &str, message: &str| {
+        let error = freestanding_source(tag, &source, target).expect_err(tag);
+        assert!(error.message.contains(message), "{tag}: {}", error.message);
+    };
+    // Handlers need a freestanding target.
+    for target in ["x86_64-linux", "aarch64-linux"] {
+        expect("hosted", format!("import \"ffi\"\n{handler}fn main() {{\n    a := ffi.callback(h)\n}}\n"), target, "freestanding");
+    }
+    // An error code exists only on x86_64.
+    expect("code-arm", format!("{contract}#[interrupt]\n#[export(\"h\")]\nfn h(frame *mut u64, code u64) {{}}\n"), "aarch64-none", "error code");
+    // Vector table slots exist only on aarch64.
+    expect("slot-x86", format!("{contract}#[interrupt(3)]\nfn h(frame *mut u64) {{}}\n"), "x86_64-none", "aarch64");
+    expect("table-x86", format!("{contract}#[vector_table]\nfn v() {{}}\n"), "x86_64-none", "aarch64");
+    // A slot needs a table, and a slot has one handler.
+    expect("no-table", format!("{contract}#[interrupt(3)]\nfn h(frame *mut u64) {{}}\n"), "aarch64-none", "#[vector_table]");
+    expect("same-slot", format!("{contract}#[vector_table]\nfn v() {{}}\n#[interrupt(3)]\nfn a(frame *mut u64) {{}}\n#[interrupt(3)]\nfn b(frame *mut u64) {{}}\n"), "aarch64-none", "slot 3");
+    expect("two-tables", format!("{contract}#[vector_table]\nfn v() {{}}\n#[vector_table]\nfn w() {{}}\n"), "aarch64-none", "at most one");
+}
+
+#[test]
+fn a_handler_without_attributes_beyond_interrupt_stays_private() {
+    // No `#[export]`: nothing but the contract and entry is global.
+    let source = "import \"ffi\"\n#[export(\"tarn_rt_fault\")]\nfn f() {}\n#[export(\"tarn_rt_panic\")]\nfn p(m *u8) {}\n#[export(\"tarn_rt_panic_at\")]\nfn q(m *u8, l *u8) {}\n#[interrupt]\nfn h(frame *mut u64) {}\n#[export(\"kmain\")]\nfn k() {\n    a := ffi.callback(h)\n}\n";
+    let bytes = freestanding_source("private", source, "x86_64-none");
+    let bytes = match bytes { Ok(b) => b, Err(e) => panic!("{e}") };
+    let elf = Elf::parse(&bytes);
+    let trampoline = symbol_named(&elf, "_h");
+    assert!(!trampoline.global);
 }

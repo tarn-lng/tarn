@@ -107,7 +107,7 @@ impl CheckResult {
     /// `#[export]`ed function instead of `main` (ADR 0101, P6).
     pub fn missing_main_for(&self, freestanding: bool) -> Option<Diagnostic> {
         let (p, t) = (self.drops.as_ref()?, self.typed.as_ref()?);
-        let exports = freestanding && t.decls.fn_attrs.values().any(|a| a.export.is_some());
+        let exports = freestanding && t.decls.fn_attrs.values().any(|a| a.is_root());
         let found = exports || p.functions.iter().any(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0));
         (!found).then(|| Diagnostic::error("E3078", "missing_main", "no `fn main` found in the entry module")
             .note("`tarn build` and `tarn run` need an entry point")
