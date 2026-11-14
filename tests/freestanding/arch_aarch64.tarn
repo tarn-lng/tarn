@@ -1,0 +1,44 @@
+// Every aarch64 CPU intrinsic in a freestanding program (ADR 0101, P5).
+// Compiled only; running these needs EL1.
+import "arch_aarch64"
+
+fn main() {
+    unsafe {
+        arch_aarch64.wfi()
+        arch_aarch64.wfe()
+        arch_aarch64.isb()
+        arch_aarch64.dsb_sy()
+        arch_aarch64.dmb_sy()
+        arch_aarch64.irq_enable()
+        arch_aarch64.irq_disable()
+        r0 := arch_aarch64.read_daif()
+        r1 := arch_aarch64.read_vbar_el1()
+        r2 := arch_aarch64.read_ttbr0_el1()
+        r3 := arch_aarch64.read_ttbr1_el1()
+        r4 := arch_aarch64.read_tcr_el1()
+        r5 := arch_aarch64.read_mair_el1()
+        r6 := arch_aarch64.read_sctlr_el1()
+        r7 := arch_aarch64.read_currentel()
+        r8 := arch_aarch64.read_esr_el1()
+        r9 := arch_aarch64.read_far_el1()
+        r10 := arch_aarch64.read_elr_el1()
+        r11 := arch_aarch64.read_spsr_el1()
+        r12 := arch_aarch64.read_cntv_ctl_el0()
+        r13 := arch_aarch64.read_cntv_tval_el0()
+        r14 := arch_aarch64.read_cntfrq_el0()
+        r15 := arch_aarch64.read_cntvct_el0()
+        arch_aarch64.write_daif(r0)
+        arch_aarch64.write_vbar_el1(r0)
+        arch_aarch64.write_ttbr0_el1(r0)
+        arch_aarch64.write_ttbr1_el1(r0)
+        arch_aarch64.write_tcr_el1(r0)
+        arch_aarch64.write_mair_el1(r0)
+        arch_aarch64.write_sctlr_el1(r0)
+        arch_aarch64.write_esr_el1(r0)
+        arch_aarch64.write_far_el1(r0)
+        arch_aarch64.write_elr_el1(r0)
+        arch_aarch64.write_spsr_el1(r0)
+        arch_aarch64.write_cntv_ctl_el0(r0)
+        arch_aarch64.write_cntv_tval_el0(r0)
+    }
+}

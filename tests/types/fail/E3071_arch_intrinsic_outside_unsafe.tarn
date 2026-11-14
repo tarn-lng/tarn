@@ -1,0 +1,5 @@
+// CPU intrinsics are unsafe: this one halts the processor (ADR 0101, P5).
+import "arch_x86_64"
+fn main() {
+    arch_x86_64.hlt()
+}

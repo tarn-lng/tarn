@@ -17,6 +17,9 @@ without them the link fails. Programs that do not use the heap import none of
 the three. `print`, async and other operating-system services are a compile error
 naming the feature. Device registers use `ffi.read_volatile`/`ffi.write_volatile`
 and `ffi.fence()` (docs/ffi.md); the object never imports libc `memcpy`/`memset`/`memmove`.
+Privileged instructions come from the typed `arch_x86_64` / `arch_aarch64`
+modules (docs/arch.md); they are defined inside the object, and using the
+module of the other architecture is a build error.
 `tarn build` and `tarn run` require `cc`
 and system libraries granted by the package's `[native] links` in `tarn.toml`
 or by repeated `--link` flags.

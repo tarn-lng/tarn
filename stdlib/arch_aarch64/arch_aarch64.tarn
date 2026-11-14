@@ -1,0 +1,150 @@
+// AArch64 CPU intrinsics (ADR 0101, P5). Typed, `unsafe` wrappers over tiny
+// hand-assembled stubs that the compiler emits into the object of a program
+// that calls them (see docs/arch.md). Available only when compiling for an
+// aarch64 target; any other target is a compile error. System-register and
+// barrier instructions fault in user mode (EL0) on most registers: that is
+// the caller's `unsafe` responsibility. A system-register write takes effect
+// only after a context-synchronization event: call `isb()` when it matters.
+/// Wait for interrupt (`wfi`).
+pub unsafe fn wfi() { _wfi() }
+extern "intrinsic" fn _wfi()
+
+/// Wait for event (`wfe`).
+pub unsafe fn wfe() { _wfe() }
+extern "intrinsic" fn _wfe()
+
+/// Instruction synchronization barrier (`isb`).
+pub unsafe fn isb() { _isb() }
+extern "intrinsic" fn _isb()
+
+/// Data synchronization barrier, full system (`dsb sy`).
+pub unsafe fn dsb_sy() { _dsb_sy() }
+extern "intrinsic" fn _dsb_sy()
+
+/// Data memory barrier, full system (`dmb sy`).
+pub unsafe fn dmb_sy() { _dmb_sy() }
+extern "intrinsic" fn _dmb_sy()
+
+/// Unmask IRQ in PSTATE (`msr daifclr, #2`). EL1+.
+pub unsafe fn irq_enable() { _irq_enable() }
+extern "intrinsic" fn _irq_enable()
+
+/// Mask IRQ in PSTATE (`msr daifset, #2`). EL1+.
+pub unsafe fn irq_disable() { _irq_disable() }
+extern "intrinsic" fn _irq_disable()
+
+/// Read `DAIF`: Interrupt mask bits (D, A, I, F). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_daif() u64 { return _read_daif() }
+extern "intrinsic" fn _read_daif() u64
+
+/// Write `DAIF`: Interrupt mask bits (D, A, I, F). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_daif(value u64) { _write_daif(value) }
+extern "intrinsic" fn _write_daif(value u64)
+
+/// Read `VBAR_EL1`: Vector base address of EL1 exceptions. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_vbar_el1() u64 { return _read_vbar_el1() }
+extern "intrinsic" fn _read_vbar_el1() u64
+
+/// Write `VBAR_EL1`: Vector base address of EL1 exceptions. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_vbar_el1(value u64) { _write_vbar_el1(value) }
+extern "intrinsic" fn _write_vbar_el1(value u64)
+
+/// Read `TTBR0_EL1`: Translation table base 0 (EL1&0 lower VA range). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_ttbr0_el1() u64 { return _read_ttbr0_el1() }
+extern "intrinsic" fn _read_ttbr0_el1() u64
+
+/// Write `TTBR0_EL1`: Translation table base 0 (EL1&0 lower VA range). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_ttbr0_el1(value u64) { _write_ttbr0_el1(value) }
+extern "intrinsic" fn _write_ttbr0_el1(value u64)
+
+/// Read `TTBR1_EL1`: Translation table base 1 (EL1&0 upper VA range). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_ttbr1_el1() u64 { return _read_ttbr1_el1() }
+extern "intrinsic" fn _read_ttbr1_el1() u64
+
+/// Write `TTBR1_EL1`: Translation table base 1 (EL1&0 upper VA range). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_ttbr1_el1(value u64) { _write_ttbr1_el1(value) }
+extern "intrinsic" fn _write_ttbr1_el1(value u64)
+
+/// Read `TCR_EL1`: Translation control. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_tcr_el1() u64 { return _read_tcr_el1() }
+extern "intrinsic" fn _read_tcr_el1() u64
+
+/// Write `TCR_EL1`: Translation control. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_tcr_el1(value u64) { _write_tcr_el1(value) }
+extern "intrinsic" fn _write_tcr_el1(value u64)
+
+/// Read `MAIR_EL1`: Memory attribute indirection. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_mair_el1() u64 { return _read_mair_el1() }
+extern "intrinsic" fn _read_mair_el1() u64
+
+/// Write `MAIR_EL1`: Memory attribute indirection. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_mair_el1(value u64) { _write_mair_el1(value) }
+extern "intrinsic" fn _write_mair_el1(value u64)
+
+/// Read `SCTLR_EL1`: System control (MMU, caches). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_sctlr_el1() u64 { return _read_sctlr_el1() }
+extern "intrinsic" fn _read_sctlr_el1() u64
+
+/// Write `SCTLR_EL1`: System control (MMU, caches). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_sctlr_el1(value u64) { _write_sctlr_el1(value) }
+extern "intrinsic" fn _write_sctlr_el1(value u64)
+
+/// Read `CURRENTEL`: Current exception level (bits 3:2). Read-only. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_currentel() u64 { return _read_currentel() }
+extern "intrinsic" fn _read_currentel() u64
+
+/// Read `ESR_EL1`: Exception syndrome. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_esr_el1() u64 { return _read_esr_el1() }
+extern "intrinsic" fn _read_esr_el1() u64
+
+/// Write `ESR_EL1`: Exception syndrome. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_esr_el1(value u64) { _write_esr_el1(value) }
+extern "intrinsic" fn _write_esr_el1(value u64)
+
+/// Read `FAR_EL1`: Faulting virtual address. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_far_el1() u64 { return _read_far_el1() }
+extern "intrinsic" fn _read_far_el1() u64
+
+/// Write `FAR_EL1`: Faulting virtual address. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_far_el1(value u64) { _write_far_el1(value) }
+extern "intrinsic" fn _write_far_el1(value u64)
+
+/// Read `ELR_EL1`: Exception link (return address). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_elr_el1() u64 { return _read_elr_el1() }
+extern "intrinsic" fn _read_elr_el1() u64
+
+/// Write `ELR_EL1`: Exception link (return address). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_elr_el1(value u64) { _write_elr_el1(value) }
+extern "intrinsic" fn _write_elr_el1(value u64)
+
+/// Read `SPSR_EL1`: Saved program status. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_spsr_el1() u64 { return _read_spsr_el1() }
+extern "intrinsic" fn _read_spsr_el1() u64
+
+/// Write `SPSR_EL1`: Saved program status. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_spsr_el1(value u64) { _write_spsr_el1(value) }
+extern "intrinsic" fn _write_spsr_el1(value u64)
+
+/// Read `CNTV_CTL_EL0`: Virtual timer control. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_cntv_ctl_el0() u64 { return _read_cntv_ctl_el0() }
+extern "intrinsic" fn _read_cntv_ctl_el0() u64
+
+/// Write `CNTV_CTL_EL0`: Virtual timer control. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_cntv_ctl_el0(value u64) { _write_cntv_ctl_el0(value) }
+extern "intrinsic" fn _write_cntv_ctl_el0(value u64)
+
+/// Read `CNTV_TVAL_EL0`: Virtual timer value (32-bit; upper bits ignored). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_cntv_tval_el0() u64 { return _read_cntv_tval_el0() }
+extern "intrinsic" fn _read_cntv_tval_el0() u64
+
+/// Write `CNTV_TVAL_EL0`: Virtual timer value (32-bit; upper bits ignored). Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn write_cntv_tval_el0(value u64) { _write_cntv_tval_el0(value) }
+extern "intrinsic" fn _write_cntv_tval_el0(value u64)
+
+/// Read `CNTFRQ_EL0`: Counter frequency in Hz. Read-only here. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_cntfrq_el0() u64 { return _read_cntfrq_el0() }
+extern "intrinsic" fn _read_cntfrq_el0() u64
+
+/// Read `CNTVCT_EL0`: Virtual counter. Read-only. Needs EL1 unless the register is EL0-accessible.
+pub unsafe fn read_cntvct_el0() u64 { return _read_cntvct_el0() }
+extern "intrinsic" fn _read_cntvct_el0() u64

@@ -1,0 +1,16 @@
+// Unprivileged aarch64 intrinsics on a hosted build: shows the stub call ABI
+// works (ADR 0101, P5). The virtual counter and its frequency are readable
+// from user mode.
+import "arch_aarch64"
+
+fn main() {
+    unsafe {
+        arch_aarch64.dmb_sy()
+        arch_aarch64.isb()
+        frequency := arch_aarch64.read_cntfrq_el0()
+        counter := arch_aarch64.read_cntvct_el0()
+        if frequency > 0 && counter > 0 {
+            print("cpu intrinsics ok")
+        }
+    }
+}

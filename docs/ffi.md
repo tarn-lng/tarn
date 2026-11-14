@@ -77,7 +77,8 @@ relative to every other volatile access and `ffi.fence()`. They are never
 merged, forwarded from an earlier store, hoisted or deleted, even when the
 value is unused. Calling them outside `unsafe` is error E3071. `ffi.fence()`
 (safe) is a full memory fence for compiler and CPU (`mfence` / `dmb ish`) and
-needs no runtime, so it works on `*-none` targets.
+needs no runtime, so it works on `*-none` targets. Port I/O, control
+registers and other CPU instructions are in docs/arch.md.
 
 ```
 import "ffi"

@@ -139,6 +139,36 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
 - Safety: each intrinsic documents its precondition; the type checker already
   requires `unsafe` for the call.
 
+- Done: modules are flat stdlib names (`arch_x86_64`, `arch_aarch64`; the
+  module system has no nesting), each function an `unsafe fn` wrapping a
+  private `extern "intrinsic"`. x86_64: `in8/16/32`, `out8/16/32`, `cli`,
+  `sti`, `hlt`, `pause`, `rdtsc`, `read_cr0/2/3/4`, `write_cr0/3/4`,
+  `invlpg(u64)`, `rdmsr`, `wrmsr`, `lgdt(*u8)`, `lidt(*u8)`. aarch64: `wfi`,
+  `wfe`, `isb`, `dsb_sy`, `dmb_sy`, `irq_enable/disable`, and
+  `read_`/`write_` for `daif`, `vbar_el1`, `ttbr0/1_el1`, `tcr_el1`,
+  `mair_el1`, `sctlr_el1`, `esr_el1`, `far_el1`, `elr_el1`, `spsr_el1`,
+  `cntv_ctl_el0`, `cntv_tval_el0` plus read-only `currentel`, `cntfrq_el0`,
+  `cntvct_el0`. Instead of a separate stub object, the bytes are defined as
+  Local functions inside the emitted object with Cranelift's
+  `define_function_bytes` (`compiler/backend/src/arch.rs`), declared on first
+  use like the runtime table, so a program that uses none carries none and the
+  object still imports only the contract. Stubs are never exported and use
+  only caller-saved registers (x86_64 rax/rcx/rdx, aarch64 x0). The `arch.rs`
+  tables hold bytes and the assembly they encode; a test emits every stub for
+  both architectures, disassembles with the host LLVM `objdump` and compares
+  (skipped without `objdump`). Using the other architecture's module is a
+  build error (`tarn check` has no target, so it surfaces at `tarn build
+  --target`); outside `unsafe` is E3071. A hosted run of `pause`/`rdtsc` (x86_64)
+  or `cntvct_el0` (aarch64) checks the call ABI. Limitations: each intrinsic
+  is a real call (no inlining, so a `cli` is separated from the next
+  instruction by a `ret`); the intrinsics are not compiler memory barriers
+  (use `ffi.fence()`/volatile access); no `eret` and no `write_cr2` (P7 builds
+  trampolines from stubs); no `cpuid`, `xsave`, `swapgs`, SIMD or MSR whitelist
+  (any `u32` MSR is accepted); aarch64 system registers are limited to the
+  whitelist and values are not validated; the encodings follow the
+  Intel SDM and Arm ARM and are checked only by disassembly, not on hardware
+  (P8 boots them under QEMU).
+
 ### P6 — Entry point, sections and linking
 
 - `#[entry]` names the symbol; `#[section(".text.boot")]`, `#[no_mangle]`,

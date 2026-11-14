@@ -430,7 +430,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         }
     }
     let task_adapters = emit_task_adapters(&mut module, p, t, &ids)?;
-    let mut runtime = Runtime { freestanding: target.os == crate::Os::None, ..Runtime::default() };
+    let mut runtime = Runtime { freestanding: target.os == crate::Os::None, target: Some(target), ..Runtime::default() };
     for (name, params, returns) in [
         ("tarn_rt_raw_canonical", vec![types::I64], vec![]),
         ("tarn_rt_net_main_error", vec![types::I32, types::I32], vec![]),
@@ -768,6 +768,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             }
         }
         literals.define(&mut module)?;
+        runtime.stubs.define(&mut module, target.arch)?;
         crate::freestanding::check(target, runtime.used())?;
         return module.finish().emit().map_err(|e| Error::bug(e.to_string()));
     }
@@ -832,6 +833,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     }
     module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
     literals.into_inner().define(&mut module)?;
+    runtime.stubs.define(&mut module, target.arch)?;
     module.finish().emit().map_err(|e| Error::bug(e.to_string()))
 }
 
@@ -844,6 +846,9 @@ struct Runtime {
     /// Freestanding: heap operations defined inside the object (crate::heap).
     freestanding: bool,
     local: RefCell<std::collections::BTreeSet<String>>,
+    /// Target being compiled and the CPU intrinsic stubs used (ADR 0101, P5).
+    target: Option<crate::Target>,
+    stubs: crate::arch::Stubs,
 }
 
 impl Runtime {
@@ -2301,6 +2306,7 @@ impl Cx<'_, '_> {
         if let Some(result) = self.synchronization(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.vector(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.ffi(name, args, dest)? { return Ok(result); }
+        if let Some(result) = self.arch(name, args, dest)? { return Ok(result); }
         // Explicit modular arithmetic (ADR 0060): no overflow check by design.
         if let ([x, y], Ty::Int(i)) = (args, dest)
             && let Some(op) = name.strip_prefix(i.name()).and_then(|rest| rest.strip_prefix('.'))

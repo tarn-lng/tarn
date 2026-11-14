@@ -41,6 +41,8 @@ const TRUSTED_STDLIB: &[(&str, &str)] = &[
     ("fs", include_str!("../../../stdlib/fs/fs.tarn")),
     ("process", include_str!("../../../stdlib/process/process.tarn")),
     ("ffi", include_str!("../../../stdlib/ffi/ffi.tarn")),
+    ("arch_x86_64", include_str!("../../../stdlib/arch_x86_64/arch_x86_64.tarn")),
+    ("arch_aarch64", include_str!("../../../stdlib/arch_aarch64/arch_aarch64.tarn")),
 ];
 
 fn trusted_source(name: &str) -> Option<&'static str> {

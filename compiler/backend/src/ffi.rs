@@ -134,4 +134,22 @@ impl Cx<'_, '_> {
         let want = scalar(ty).unwrap();
         if want == self.b.func.dfg.value_type(v) { v } else { self.b.ins().bitcast(want, cl::MemFlags::new(), v) }
     }
+
+    /// Calls to the `arch_*` CPU intrinsics (ADR 0101, P5): typed calls to
+    /// hand-assembled stubs defined in this object (see `crate::arch`).
+    pub(super) fn arch(&mut self, name: &str, args: &[Val], dest: &Ty) -> Result<Option<Val>> {
+        let Some((module_name, _)) = name.split_once('.') else { return Ok(None) };
+        if crate::arch::module_arch(module_name).is_none() { return Ok(None); }
+        let target = self.runtime.target.ok_or_else(|| Error::bug("no target"))?;
+        let (id, stub) = self.runtime.stubs.id(self.module, target, name)?;
+        if args.len() != stub.params.len() { return Err(Error::bug(format!("{name} arity"))); }
+        let values: Vec<cl::Value> = args.iter().map(|a| a.value.ok_or_else(|| Error::bug("CPU intrinsic operand"))).collect::<Result<_>>()?;
+        for (value, ty) in values.iter().zip(&stub.params) {
+            if self.b.func.dfg.value_type(*value) != *ty { return Err(Error::bug(format!("{name} operand type"))); }
+        }
+        let callee = self.module.declare_func_in_func(id, self.b.func);
+        let call = self.b.ins().call(callee, &values);
+        let value = self.b.inst_results(call).first().copied();
+        Ok(Some(Val { value, ty: dest.clone() }))
+    }
 }

@@ -8,6 +8,9 @@ pub mod mono;
 pub mod target;
 mod freestanding;
 mod heap;
+mod arch;
+#[doc(hidden)]
+pub use arch::{listing as cpu_stub_listing, operations as cpu_operations};
 pub use target::{Arch, Os, Target, TARGETS};
 pub use freestanding::CONTRACT as FREESTANDING_CONTRACT;
 use std::fmt;

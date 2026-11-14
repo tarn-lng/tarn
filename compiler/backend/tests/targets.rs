@@ -170,3 +170,98 @@ fn freestanding_large_copies_do_not_import_libc_memory_functions() {
         assert!(!undefined.iter().any(|s| ["memcpy", "memmove", "memset", "memcmp", "bcmp"].iter().any(|m| s.trim_start_matches('_') == *m)), "{target}: {undefined:?}");
     }
 }
+
+#[test]
+fn freestanding_cpu_intrinsics_import_only_the_contract() {
+    for (target, program) in [("x86_64-none", "arch_x86_64"), ("aarch64-none", "arch_aarch64")] {
+        let bytes = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
+        assert!(globals.contains(&"tarn_main".to_string()), "{target}: {globals:?}");
+        // Stubs are Local functions of the same object, never exported.
+        assert!(!globals.iter().any(|s| s.contains("tarn_arch_")), "{target}: {globals:?}");
+    }
+}
+
+#[test]
+fn cpu_intrinsics_of_the_other_architecture_are_a_compile_error() {
+    for (target, program, other) in [("aarch64-none", "arch_x86_64", "x86_64"), ("x86_64-none", "arch_aarch64", "aarch64"), ("aarch64-linux", "arch_x86_64", "x86_64")] {
+        let error = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap_err().to_string();
+        assert!(error.contains(&format!("is an {other} CPU intrinsic but the target is {target}")), "{target}: {error}");
+        assert!(error.contains("import `arch_"), "{error}");
+    }
+}
+
+#[test]
+fn only_the_stubs_a_program_calls_are_emitted() {
+    // A program without intrinsics carries no stub.
+    let bytes = freestanding("../../tests/freestanding/arithmetic.tarn", "x86_64-none").unwrap();
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-nostub-{}.o", std::process::id()));
+    std::fs::write(&path, &bytes).unwrap();
+    let out = std::process::Command::new("nm").arg(&path).output().unwrap();
+    let _ = std::fs::remove_file(path);
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("tarn_arch_"), "unused stubs emitted");
+}
+
+/// Disassemble `bytes` with the host `objdump` (llvm; reads either ELF
+/// architecture) in a stable syntax: `symbol -> lowercase instructions`.
+fn stub_disassembly(bytes: &[u8], tag: &str, intel: bool) -> Option<std::collections::HashMap<String, Vec<String>>> {
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-stubs-{tag}-{}.o", std::process::id()));
+    std::fs::write(&path, bytes).unwrap();
+    let mut command = std::process::Command::new("objdump");
+    command.args(["-d", "--no-show-raw-insn"]);
+    if intel { command.arg("--x86-asm-syntax=intel"); }
+    let out = command.arg(&path).output().ok();
+    let _ = std::fs::remove_file(path);
+    let text = String::from_utf8_lossy(&out.filter(|o| o.status.success())?.stdout).into_owned();
+    let mut map = std::collections::HashMap::new();
+    for block in text.split("\n\n") {
+        let Some(start) = block.find("<tarn_arch_") else { continue };
+        let name = block[start + 1..].split(">:").next().unwrap().to_string();
+        let instructions: Vec<String> = block.lines().skip_while(|l| !l.contains(">:")).skip(1)
+            .filter_map(|l| l.split_once(':').filter(|(address, _)| !address.trim().is_empty() && address.trim().bytes().all(|b| b.is_ascii_hexdigit())).map(|(_, i)| i))
+            .map(|i| i.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().replace(" ,", ","))
+            .collect();
+        map.insert(name, instructions);
+    }
+    Some(map)
+}
+
+#[test]
+fn cpu_stubs_disassemble_to_their_documented_assembly() {
+    for (target, program, arch, intel) in [("x86_64-none", "arch_x86_64", Arch::X86_64, true), ("aarch64-none", "arch_aarch64", Arch::Aarch64, false)] {
+        let bytes = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap();
+        let Some(disassembly) = stub_disassembly(&bytes, target, intel) else { eprintln!("objdump unavailable; skipping {target}"); continue };
+        let listing = tarn_backend::cpu_stub_listing(arch);
+        assert!(listing.len() >= 20, "{target}: {} stubs", listing.len());
+        let operations = tarn_backend::cpu_operations(arch);
+        assert_eq!(operations.len(), listing.len());
+        let mut checked = 0;
+        for (symbol, asm) in listing {
+            let Some(actual) = disassembly.get(&symbol) else { panic!("{target}: stub {symbol} missing from the object") };
+            // Alignment padding follows the stub; compare the documented prefix.
+            assert_eq!(&actual[..asm.len().min(actual.len())], asm.as_slice(), "{target}: {symbol}");
+            checked += 1;
+        }
+        assert_eq!(checked, operations.len());
+    }
+}
+
+#[test]
+fn hosted_build_runs_an_unprivileged_cpu_intrinsic() {
+    let Some(host) = Target::host() else { return };
+    let program = match host.arch {
+        Arch::X86_64 => "arch_host_x86_64",
+        Arch::Aarch64 => "arch_host_aarch64",
+    };
+    let res = tarn_driver::check(std::path::Path::new(&format!("../../tests/freestanding/{program}.tarn"))).unwrap();
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let dir = std::env::temp_dir().join(format!("tarn-cpu-host-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = dir.join("program");
+    tarn_backend::build(res.drops.as_ref().unwrap(), res.typed.as_ref().unwrap(), &exe).unwrap_or_else(|e| panic!("{e}"));
+    let out = std::process::Command::new(&exe).output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.status.success(), "{:?}", out);
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "cpu intrinsics ok");
+}

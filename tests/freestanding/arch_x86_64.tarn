@@ -1,0 +1,39 @@
+// Every x86_64 CPU intrinsic in a freestanding program (ADR 0101, P5).
+// Compiled only; running these needs ring 0.
+import "arch_x86_64"
+import "ffi"
+
+fn serial_write(byte u8) {
+    unsafe {
+        arch_x86_64.out8(1016, byte)
+        status := arch_x86_64.in8(1021)
+        wide := arch_x86_64.in16(1016) + 1
+        wider := arch_x86_64.in32(1016) + 1
+        arch_x86_64.out16(1016, wide)
+        arch_x86_64.out32(1016, wider)
+    }
+}
+
+fn main() {
+    serial_write(65)
+    unsafe {
+        arch_x86_64.cli()
+        arch_x86_64.pause()
+        cr0 := arch_x86_64.read_cr0()
+        cr2 := arch_x86_64.read_cr2()
+        cr3 := arch_x86_64.read_cr3()
+        cr4 := arch_x86_64.read_cr4()
+        arch_x86_64.write_cr0(cr0)
+        arch_x86_64.write_cr3(cr3)
+        arch_x86_64.write_cr4(cr4)
+        arch_x86_64.invlpg(cr2)
+        msr := arch_x86_64.rdmsr(192)
+        arch_x86_64.wrmsr(192, msr)
+        table: *mut u8 := ffi.from_address(4096)
+        arch_x86_64.lgdt(ffi.to_const(table))
+        arch_x86_64.lidt(ffi.to_const(table))
+        ticks := arch_x86_64.rdtsc()
+        arch_x86_64.sti()
+        arch_x86_64.hlt()
+    }
+}

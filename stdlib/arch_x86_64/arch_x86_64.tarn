@@ -1,0 +1,98 @@
+// x86_64 CPU intrinsics (ADR 0101, P5). Typed, `unsafe` wrappers over tiny
+// hand-assembled stubs that the compiler emits into the object of a program
+// that calls them (see docs/arch.md). Available only when compiling for an
+// x86_64 target; any other target is a compile error. Privileged instructions
+// fault (SIGSEGV/SIGILL) in user mode: that is the caller's `unsafe`
+// responsibility. Every function requires the documented CPU state.
+/// Read a u8 from I/O port `port` (`in`). Requires I/O privilege (ring 0 or IOPL/IO bitmap).
+pub unsafe fn in8(port u16) u8 { return _in8(port) }
+extern "intrinsic" fn _in8(port u16) u8
+
+/// Read a u16 from I/O port `port` (`in`). Requires I/O privilege (ring 0 or IOPL/IO bitmap).
+pub unsafe fn in16(port u16) u16 { return _in16(port) }
+extern "intrinsic" fn _in16(port u16) u16
+
+/// Read a u32 from I/O port `port` (`in`). Requires I/O privilege (ring 0 or IOPL/IO bitmap).
+pub unsafe fn in32(port u16) u32 { return _in32(port) }
+extern "intrinsic" fn _in32(port u16) u32
+
+/// Write a u8 to I/O port `port` (`out`). Requires I/O privilege.
+pub unsafe fn out8(port u16, value u8) { _out8(port, value) }
+extern "intrinsic" fn _out8(port u16, value u8)
+
+/// Write a u16 to I/O port `port` (`out`). Requires I/O privilege.
+pub unsafe fn out16(port u16, value u16) { _out16(port, value) }
+extern "intrinsic" fn _out16(port u16, value u16)
+
+/// Write a u32 to I/O port `port` (`out`). Requires I/O privilege.
+pub unsafe fn out32(port u16, value u32) { _out32(port, value) }
+extern "intrinsic" fn _out32(port u16, value u32)
+
+/// Clear the interrupt flag (`cli`): mask maskable interrupts. Ring 0 / IOPL.
+pub unsafe fn cli() { _cli() }
+extern "intrinsic" fn _cli()
+
+/// Set the interrupt flag (`sti`): interrupts are enabled after the next instruction. Ring 0 / IOPL.
+pub unsafe fn sti() { _sti() }
+extern "intrinsic" fn _sti()
+
+/// Halt until the next interrupt (`hlt`). Ring 0.
+pub unsafe fn hlt() { _hlt() }
+extern "intrinsic" fn _hlt()
+
+/// Spin-loop hint (`pause`). Unprivileged.
+pub unsafe fn pause() { _pause() }
+extern "intrinsic" fn _pause()
+
+/// Read the time-stamp counter (`rdtsc`). Unprivileged unless CR4.TSD is set.
+pub unsafe fn rdtsc() u64 { return _rdtsc() }
+extern "intrinsic" fn _rdtsc() u64
+
+/// Read control register CR0. Ring 0.
+pub unsafe fn read_cr0() u64 { return _read_cr0() }
+extern "intrinsic" fn _read_cr0() u64
+
+/// Read control register CR2. Ring 0.
+pub unsafe fn read_cr2() u64 { return _read_cr2() }
+extern "intrinsic" fn _read_cr2() u64
+
+/// Read control register CR3. Ring 0.
+pub unsafe fn read_cr3() u64 { return _read_cr3() }
+extern "intrinsic" fn _read_cr3() u64
+
+/// Read control register CR4. Ring 0.
+pub unsafe fn read_cr4() u64 { return _read_cr4() }
+extern "intrinsic" fn _read_cr4() u64
+
+/// Write control register CR0. Ring 0. A wrong value can crash the machine or break memory safety (paging, protection).
+pub unsafe fn write_cr0(value u64) { _write_cr0(value) }
+extern "intrinsic" fn _write_cr0(value u64)
+
+/// Write control register CR3. Ring 0. A wrong value can crash the machine or break memory safety (paging, protection).
+pub unsafe fn write_cr3(value u64) { _write_cr3(value) }
+extern "intrinsic" fn _write_cr3(value u64)
+
+/// Write control register CR4. Ring 0. A wrong value can crash the machine or break memory safety (paging, protection).
+pub unsafe fn write_cr4(value u64) { _write_cr4(value) }
+extern "intrinsic" fn _write_cr4(value u64)
+
+/// Invalidate the TLB entry of the page containing `address` (`invlpg`). Ring 0.
+pub unsafe fn invlpg(address u64) { _invlpg(address) }
+extern "intrinsic" fn _invlpg(address u64)
+
+/// Read model-specific register `msr` (`rdmsr`). Ring 0; an unsupported MSR raises #GP.
+pub unsafe fn rdmsr(msr u32) u64 { return _rdmsr(msr) }
+extern "intrinsic" fn _rdmsr(msr u32) u64
+
+/// Write model-specific register `msr` (`wrmsr`). Ring 0; an unsupported MSR or value raises #GP.
+pub unsafe fn wrmsr(msr u32, value u64) { _wrmsr(msr, value) }
+extern "intrinsic" fn _wrmsr(msr u32, value u64)
+
+/// Load the GDT register from the 10-byte descriptor (u16 limit, u64 base) at `descriptor` (`lgdt`). Ring 0.
+/// Segment registers keep their old values until reloaded.
+pub unsafe fn lgdt(descriptor *u8) { _lgdt(descriptor) }
+extern "intrinsic" fn _lgdt(descriptor *u8)
+
+/// Load the IDT register from the 10-byte descriptor (u16 limit, u64 base) at `descriptor` (`lidt`). Ring 0.
+pub unsafe fn lidt(descriptor *u8) { _lidt(descriptor) }
+extern "intrinsic" fn _lidt(descriptor *u8)

@@ -1,0 +1,8 @@
+error[E3071]: calling the unsafe function `hlt` requires `unsafe`
+ --> tests/types/fail/E3071_arch_intrinsic_outside_unsafe.tarn:4:5
+  |
+4 |     arch_x86_64.hlt()
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = help: wrap the call in `unsafe { ... }` after checking the function's documented requirements
+

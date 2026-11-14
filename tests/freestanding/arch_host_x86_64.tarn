@@ -1,0 +1,15 @@
+// Unprivileged x86_64 intrinsics on a hosted build: shows the stub call ABI
+// works (ADR 0101, P5).
+import "arch_x86_64"
+
+fn main() {
+    unsafe {
+        arch_x86_64.pause()
+        first := arch_x86_64.rdtsc()
+        arch_x86_64.pause()
+        second := arch_x86_64.rdtsc()
+        if first > 0 && second > 0 {
+            print("cpu intrinsics ok")
+        }
+    }
+}
