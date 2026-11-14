@@ -22,9 +22,11 @@ usage:
     tarn resolve [entry] [--json] print what every name resolves to
     tarn types [entry]           print the type of every local and parameter
     tarn ir [entry] [--drops]    print typed IR or executable drops
-    tarn build [entry] [-o path] [--link lib]... [--json]
-                                     emit a native Linux x86_64/ARM64 executable; each
-                                     --link grants a system C library
+    tarn build [entry] [-o path] [--target t] [--link lib]... [--json]
+                                     emit a native Linux/macOS x86_64/ARM64 executable; each
+                                     --link grants a system C library; --target for
+                                     another machine (x86_64|aarch64-linux|macos|none)
+                                     emits a relocatable object instead
     tarn run [entry] [--link lib]... [--json] [--watch] [-- args...]
                                      build temporarily and execute
     tarn test [entry] [--filter text] [--timeout milliseconds] [--json] [--watch]
@@ -313,12 +315,14 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
     // Arguments have already been validated by the shared parser.
     let json = tool_args(args).iter().any(|arg| arg == "--json");
     let mut explicit = None;
+    let mut target = None;
     let mut libraries = Vec::new();
     let mut program = Vec::new();
     let mut rest = args[1..].iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "-o" => explicit = rest.next().map(std::path::PathBuf::from),
+            "--target" => target = rest.next().and_then(|t| t.parse::<tarn_backend::Target>().ok()),
             "--link" => libraries.push(rest.next().expect("validated library").clone()),
             "--" => program.extend(rest.by_ref().cloned()),
             "--json" => {},
@@ -341,12 +345,21 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
         if json { println!("{}", d.to_json(&res.program.sources)); } else { eprint!("{}", d.render(&res.program.sources)); }
         return ExitCode::from(1);
     }
+    // Another target cannot be linked or run here: emit its relocatable
+    // object and stop (ADR 0101). The host target builds an executable.
+    let cross = target.filter(|t| !t.is_host());
+    if let Some(target) = cross && !libraries.is_empty() {
+        native_error(json, "target", &format!("--link and [native] links need a linker; target {target} only emits an object"));
+        return ExitCode::from(1);
+    }
     let output = if run { std::env::temp_dir().join(format!("tarn-run-{}", std::process::id())) }
+        else if let Some(target) = cross { explicit.unwrap_or_else(|| std::path::Path::new(path).with_extension(target.object_extension())) }
         else { explicit.unwrap_or_else(|| std::path::Path::new(path).with_extension("")) };
     if std::path::Path::new(path).canonicalize().ok() == output.canonicalize().ok() && output.exists() {
         native_error(json, "output", "output would overwrite the source file"); return ExitCode::from(1);
     }
-    if let Err(e) = tarn_backend::build_linked(p, t, &output, &libraries) { native_error(json, "native", &e.to_string()); return ExitCode::from(1); }
+    let built = match cross { Some(target) => tarn_backend::build_object(p, t, &output, target), None => tarn_backend::build_linked(p, t, &output, &libraries) };
+    if let Err(e) = built { native_error(json, "native", &e.to_string()); return ExitCode::from(1); }
     if !run { return ExitCode::SUCCESS; }
     let status = std::process::Command::new(&output).args(&program).status();
     let _ = std::fs::remove_file(&output);

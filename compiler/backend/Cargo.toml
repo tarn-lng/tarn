@@ -9,7 +9,8 @@ rust-version.workspace = true
 tarn_ir = { path = "../ir" }
 tarn_types = { path = "../types" }
 tarn_resolve = { path = "../resolve" }
-cranelift-codegen = { version = "=0.125.3", default-features = false, features = ["std", "host-arch"] }
+cranelift-codegen = { version = "=0.125.3", default-features = false, features = ["std", "host-arch", "x86", "arm64"] }
+target-lexicon = "=0.13.5"
 cranelift-frontend = "=0.125.3"
 cranelift-module = "=0.125.3"
 cranelift-object = "=0.125.3"

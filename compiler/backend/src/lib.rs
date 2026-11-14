@@ -5,6 +5,8 @@ pub mod layout;
 mod inline;
 mod integer_narrow;
 pub mod mono;
+pub mod target;
+pub use target::{Arch, Os, Target, TARGETS};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -41,14 +43,22 @@ pub fn verify_dynamic(p: &post_drop::Program, t: &Typed) -> Result<()> {
     codegen::verify_dynamic(p, t)
 }
 
+/// Object code for the machine running the compiler.
 pub fn emit_object(p: &post_drop::Program, t: &Typed) -> Result<Vec<u8>> {
-    emit_entry_object(p, t, None)
+    emit_entry_object(p, t, None, host()?)
 }
 
-fn emit_entry_object(p: &post_drop::Program, t: &Typed, entry: Option<tarn_ir::FunctionId>) -> Result<Vec<u8>> {
-    if !cfg!(all(any(target_os = "linux", target_os = "macos"), target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"))) {
-        return Err(Error::unsupported("target must be little-endian Linux or macOS on x86_64 or aarch64"));
-    }
+/// Relocatable object code for an explicit target (ADR 0101). The bytes are
+/// ELF for Linux and `none`, Mach-O for macOS; nothing is linked.
+pub fn emit_object_for(p: &post_drop::Program, t: &Typed, target: Target) -> Result<Vec<u8>> {
+    emit_entry_object(p, t, None, target)
+}
+
+fn host() -> Result<Target> {
+    Target::host().ok_or_else(|| Error::unsupported("target must be little-endian Linux or macOS on x86_64 or aarch64"))
+}
+
+fn emit_entry_object(p: &post_drop::Program, t: &Typed, entry: Option<tarn_ir::FunctionId>, target: Target) -> Result<Vec<u8>> {
     let bugs = post_drop::verify(p, t);
     if !bugs.is_empty() {
         return Err(Error::bug(bugs.join("\n")));
@@ -60,7 +70,18 @@ fn emit_entry_object(p: &post_drop::Program, t: &Typed, entry: Option<tarn_ir::F
     if !bugs.is_empty() {
         return Err(Error::bug(bugs.join("\n")));
     }
-    if entry.is_some() { codegen::emit_entry(&concrete, t, true) } else { codegen::emit(&concrete, t) }
+    codegen::emit_entry(&concrete, t, entry.is_some(), target)
+}
+
+/// Write a relocatable object for `target` to `output`, by atomic rename.
+pub fn build_object(p: &post_drop::Program, t: &Typed, output: &Path, target: Target) -> Result<()> {
+    let bytes = emit_object_for(p, t, target)?;
+    let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let publication = Scratch::in_directory(parent)?;
+    let object = publication.0.join("program.o");
+    std::fs::write(&object, bytes).map_err(io_error)?;
+    std::fs::rename(object, output).map_err(io_error)?;
+    Ok(())
 }
 
 /// Build to the requested executable path. Object/runtime intermediates live in
@@ -97,7 +118,7 @@ fn build_entry(p: &post_drop::Program, t: &Typed, output: &Path, libraries: &[St
             return Err(Error { message: format!("exact-file library `{exact}` is not supported on macOS: use the library name, e.g. `sqlite3` for `libsqlite3.dylib`") });
         }
     }
-    let bytes = emit_entry_object(p, t, entry)?;
+    let bytes = emit_entry_object(p, t, entry, host()?)?;
     let scratch = Scratch::new()?;
     let object = scratch.0.join("program.o");
     let runtime = scratch.0.join("runtime.c");

@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: proposed. Delivered as a series of 0.5.x patches; no new minor.
+Status: accepted; P1 implemented. Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -34,13 +34,17 @@ port, handles a timer interrupt and allocates from its own heap.
 Each patch lands with tests, docs and a changelog entry. Ordering is by
 dependency; numbering follows whatever 0.5.x is free when it ships.
 
-### P1 — Explicit target triple (`--target`)
+### P1 — Explicit target triple (`--target`) — implemented
 
 - `tarn build --target {x86_64,aarch64}-{linux,macos,none}`; default stays host.
 - Cranelift: replace `host-arch` with explicit `x86`/`arm64` ISA features;
   build the `TargetIsa` from the triple instead of `cranelift-native`.
 - `*-none` emits a relocatable ELF object only (no link step yet).
 - Tests: cross-emit both arches from one host; verify ELF headers.
+- Done: `tarn_backend::Target`, `emit_object_for`, `build_object`; the
+  backend's `cfg!` checks on OS/arch became target queries. Host builds keep
+  `cranelift-native` CPU detection; other targets use the baseline ISA.
+  `compiler/backend/tests/targets.rs` checks all six headers.
 
 ### P2 — `#![freestanding]` / `--freestanding` profile
 

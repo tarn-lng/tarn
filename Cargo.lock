@@ -679,6 +679,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "target-lexicon",
  "tarn_driver",
  "tarn_ir",
  "tarn_resolve",

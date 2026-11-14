@@ -18,7 +18,7 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
         "lex" | "resolve" => format!("tarn {command} [file.tarn | directory] [--json]"),
         "ir" => "tarn ir [file.tarn | directory] [--drops]".into(),
         "build" => {
-            "tarn build [file.tarn | directory] [-o path] [--link library]... [--json]".into()
+            "tarn build [file.tarn | directory] [-o path] [--target target] [--link library]... [--json]".into()
         }
         "run" => "tarn run [file.tarn | directory] [--link library]... [--json] [--watch] [-- program arguments...]".into(),
         "profile" => "tarn profile [file.tarn | directory] [--link library]... [-- program arguments...]".into(),
@@ -62,6 +62,11 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
             "-o" if command == "build" && !output_seen => {
                 let value = rest.next().filter(|v| !v.starts_with('-')).ok_or_else(|| fail("-o requires an output path".into()))?;
                 output_seen = true;
+                options.extend([arg.clone(), value.clone()]);
+            }
+            "--target" if command == "build" && !options.contains(arg) => {
+                let value = rest.next().ok_or_else(|| fail("--target requires a target".into()))?;
+                value.parse::<tarn_backend::Target>().map_err(fail)?;
                 options.extend([arg.clone(), value.clone()]);
             }
             "--link" if native => {

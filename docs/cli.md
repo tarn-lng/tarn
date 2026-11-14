@@ -1,7 +1,11 @@
 # Integrated CLI
 
-Tarn targets little-endian Linux x86_64 and ARM64. Native compilation uses the
-host architecture; cross-compilation is not implemented. `tarn build` and `tarn run` require `cc`
+Tarn targets little-endian Linux and macOS on x86_64 and ARM64. Native
+compilation uses the host by default. `tarn build --target <target>` names
+another machine (`x86_64-linux`, `aarch64-linux`, `x86_64-macos`,
+`aarch64-macos`, `x86_64-none`, `aarch64-none`); for a target other than the
+host it writes a relocatable object (default `<entry>.o`) and does not link,
+so `--link` is rejected there (ADR 0101). `tarn build` and `tarn run` require `cc`
 and system libraries granted by the package's `[native] links` in `tarn.toml`
 or by repeated `--link` flags.
 The standard library and native runtime source are embedded in the compiler.

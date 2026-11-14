@@ -331,11 +331,7 @@ pub(crate) fn verify_dynamic(p: &post::Program, t: &Typed) -> Result<()> {
     }
     Ok(())
 }
-pub fn emit(p: &post::Program, t: &Typed) -> Result<Vec<u8>> {
-    emit_entry(p, t, false)
-}
-
-pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
+pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Target) -> Result<Vec<u8>> {
     let main = if test { p.functions.first() } else { p.functions.iter().find(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0)) }.ok_or_else(|| Error::unsupported("program requires fn main()"))?;
     let result_main = matches!(&main.decl.ret, Ty::Adt(id, args) if Some(*id) == t.decls.result && args.len() == 2 && args[0] == Ty::Void && matches!(&args[1], Ty::Adt(e, ts) if Some(*e) == t.decls.net_error && ts.is_empty()));
     if test {
@@ -360,16 +356,17 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool) -> Result<Vec<u8>> {
     verify_dynamic(p, t)?;
     let mut settings = settings::builder();
     settings.set("opt_level", "speed").map_err(|e| Error::bug(e.to_string()))?;
-    // AArch64 non-PIC symbol addresses use relocations that cranelift-object
-    // 0.125.3 cannot emit. Its PIC/GOT relocations are supported by ELF.
-    // Mach-O executables are always position independent (ADR 0098).
-    settings.set("is_pic", if cfg!(any(target_arch = "aarch64", target_os = "macos")) { "true" } else { "false" }).map_err(|e| Error::bug(e.to_string()))?;
+    // See Target::is_pic (ADR 0098, ADR 0101).
+    settings.set("is_pic", if target.is_pic() { "true" } else { "false" }).map_err(|e| Error::bug(e.to_string()))?;
     // Cranelift's IR verifier checks this backend, not the user's program.
     // Debug builds of the compiler (and so every test run) keep it; release
     // builds skip its cost unless TARN_VERIFY_CODEGEN asks for it.
     let verify = cfg!(debug_assertions) || std::env::var_os("TARN_VERIFY_CODEGEN").is_some();
     settings.set("enable_verifier", if verify { "true" } else { "false" }).map_err(|e| Error::bug(e.to_string()))?;
-    let isa = cranelift_native::builder().map_err(|e| Error::unsupported(e.to_string()))?.finish(settings::Flags::new(settings)).map_err(|e| Error::bug(e.to_string()))?;
+    // The host keeps CPU feature detection; any other target gets the
+    // baseline ISA for its architecture, never the compiling machine's.
+    let isa = if target.is_host() { cranelift_native::builder().map_err(|e| Error::unsupported(e.to_string()))? } else { cranelift_codegen::isa::lookup(target.triple()).map_err(|e| Error::unsupported(format!("target {target}: {e}")))? }
+        .finish(settings::Flags::new(settings)).map_err(|e| Error::bug(e.to_string()))?;
     let builder = ObjectBuilder::new(isa, "tarn", cranelift_module::default_libcall_names()).map_err(|e| Error::bug(e.to_string()))?;
     let mut module = ObjectModule::new(builder);
     let mut ids = HashMap::new();
@@ -826,7 +823,7 @@ impl LiteralPool {
         data.define(self.image.into_boxed_slice());
         data.set_align(8);
         // Mach-O sections name a segment; __TEXT keeps literals read-only.
-        data.set_segment_section(if cfg!(target_os = "macos") { "__TEXT" } else { "" }, "tarn_strings");
+        data.set_segment_section(if module.isa().triple().binary_format == target_lexicon::BinaryFormat::Macho { "__TEXT" } else { "" }, "tarn_strings");
         module.define_data(self.id, &data).map_err(|e| Error::bug(e.to_string()))
     }
 }
@@ -1104,7 +1101,7 @@ impl Cx<'_, '_> {
     /// where they re-enter Tarn (ADR 0098).
     fn runtime_raw(&mut self, name: &str, args: &[cl::Value], out: cl::Value) {
         self.runtime(name, args);
-        if cfg!(target_os = "macos") {
+        if self.module.isa().triple().binary_format == target_lexicon::BinaryFormat::Macho {
             self.runtime("tarn_rt_raw_canonical", &[out]);
         }
     }
