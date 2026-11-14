@@ -319,6 +319,7 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
     let mut target = None;
     let mut linker_script: Option<std::path::PathBuf> = None;
     let mut entry_symbol: Option<String> = None;
+    let mut binary = false;
     let mut libraries = Vec::new();
     let mut program = Vec::new();
     let mut rest = args[1..].iter();
@@ -327,6 +328,7 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
             "-o" => explicit = rest.next().map(std::path::PathBuf::from),
             "--target" => target = rest.next().and_then(|t| t.parse::<tarn_backend::Target>().ok()),
             "--linker-script" => linker_script = rest.next().map(std::path::PathBuf::from),
+            "--binary" => binary = true,
             "--entry" => entry_symbol = rest.next().cloned(),
             "--link" => libraries.push(rest.next().expect("validated library").clone()),
             "--" => program.extend(rest.by_ref().cloned()),
@@ -367,7 +369,7 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
     let built = match cross {
         // `--linker-script`: build the object in a scratch file, link it, and
         // keep only the ELF (ADR 0101, P6).
-        Some(target) if linker_script.is_some() => link_kernel(p, t, &output, target, linker_script.as_deref().unwrap(), entry_symbol.as_deref(), res.missing_main().is_none()),
+        Some(target) if linker_script.is_some() => link_kernel(p, t, &output, target, linker_script.as_deref().unwrap(), entry_symbol.as_deref(), res.missing_main().is_none(), binary),
         Some(target) => tarn_backend::build_object(p, t, &output, target),
         None => tarn_backend::build_linked(p, t, &output, &libraries),
     };
@@ -383,13 +385,16 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
 
 /// Object, then static ELF. The entry is `--entry`, else the script's `ENTRY`,
 /// else `tarn_main` when the program has a `main`.
-fn link_kernel(p: &tarn_ir::post_drop::Program, t: &tarn_types::Typed, output: &std::path::Path, target: tarn_backend::Target, script: &std::path::Path, entry: Option<&str>, has_main: bool) -> tarn_backend::Result<()> {
+fn link_kernel(p: &tarn_ir::post_drop::Program, t: &tarn_types::Typed, output: &std::path::Path, target: tarn_backend::Target, script: &std::path::Path, entry: Option<&str>, has_main: bool, binary: bool) -> tarn_backend::Result<()> {
     let text = std::fs::read_to_string(script).map_err(|e| tarn_backend::Error { message: format!("cannot read linker script `{}`: {e}", script.display()) })?;
     let entry = entry.or_else(|| (has_main && !tarn_backend::link::script_names_entry(&text)).then_some("tarn_main"));
     let directory = std::env::temp_dir().join(format!("tarn-link-{}", std::process::id()));
     std::fs::create_dir_all(&directory).map_err(|e| tarn_backend::Error { message: format!("native build I/O: {e}") })?;
     let object = directory.join("kernel.o");
-    let result = tarn_backend::build_object(p, t, &object, target).and_then(|()| tarn_backend::link::link_freestanding(&object, output, target, script, entry));
+    let result = tarn_backend::build_object(p, t, &object, target).and_then(|()| {
+        let linker = tarn_backend::link::find_linker(target).ok_or_else(|| tarn_backend::Error { message: tarn_backend::link::missing_linker_message(target) })?;
+        tarn_backend::link::run_linker_format(&linker, &object, output, script, entry, binary)
+    });
     let _ = std::fs::remove_dir_all(&directory);
     result
 }

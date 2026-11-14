@@ -96,7 +96,7 @@ pub fn operations(arch: Arch) -> Vec<String> {
             "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt"]
             .iter().map(|s| s.to_string()).collect(),
         Arch::Aarch64 => {
-            let mut v: Vec<String> = ["wfi", "wfe", "isb", "dsb_sy", "dmb_sy", "irq_enable", "irq_disable"].iter().map(|s| s.to_string()).collect();
+            let mut v: Vec<String> = ["wfi", "wfe", "isb", "dsb_sy", "dmb_sy", "irq_enable", "irq_disable", "svc", "brk", "semihost_exit"].iter().map(|s| s.to_string()).collect();
             for (name, ..) in SYSREGS { v.push(format!("read_{name}")); }
             for (name, _, writable) in SYSREGS.iter().map(|(n, e, w)| (n, e, w)) { if *writable { v.push(format!("write_{name}")); } }
             v
@@ -177,6 +177,11 @@ pub(crate) const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
     ("cntv_ctl_el0", (3, 3, 14, 3, 1), true),
     ("cntv_tval_el0", (3, 3, 14, 3, 0), true),
     ("cntfrq_el0", (3, 3, 14, 0, 0), false),
+    ("icc_sre_el1", (3, 0, 12, 12, 5), true),
+    ("icc_pmr_el1", (3, 0, 4, 6, 0), true),
+    ("icc_igrpen1_el1", (3, 0, 12, 12, 7), true),
+    ("icc_iar1_el1", (3, 0, 12, 12, 0), false),
+    ("icc_eoir1_el1", (3, 0, 12, 12, 1), true),
     ("cntvct_el0", (3, 3, 14, 0, 2), false),
 ];
 
@@ -189,6 +194,11 @@ fn aarch64(op: &str) -> Option<Stub> {
     const RET: u32 = 0xd65f03c0;
     let fixed = |word: u32, asm: &str| Some(Stub { params: vec![], ret: None, code: words(&[word, RET]), asm: vec![asm.into(), "ret".into()] });
     match op {
+        "svc" => return fixed(0xd4000001, "svc #0"),
+        "brk" => return fixed(0xd4200000, "brk #0"),
+        "semihost_exit" => return Some(Stub { params: vec![I64], ret: None,
+            code: words(&[0xd10043ff, 0xf90007e0, 0xd28004c0, 0xf2a00040, 0xf90003e0, 0x910003e1, 0xd2800300, 0xd45e0000, 0x910043ff, RET]),
+            asm: vec!["sub sp, sp, #0x10", "str x0, [sp, #0x8]", "mov x0, #0x26", "movk x0, #0x2, lsl #16", "str x0, [sp]", "mov x1, sp", "mov x0, #0x18", "hlt #0xf000", "add sp, sp, #0x10", "ret"].into_iter().map(str::to_string).collect() }),
         "wfi" => return fixed(0xd503207f, "wfi"),
         "wfe" => return fixed(0xd503205f, "wfe"),
         "isb" => return fixed(0xd5033fdf, "isb"),

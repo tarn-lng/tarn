@@ -206,3 +206,53 @@ pub unsafe fn set_frame_elr(frame *mut ExceptionFrame, elr u64) { set_frame_word
 pub unsafe fn frame_spsr(frame *ExceptionFrame) u64 { return frame_word(frame, 32) }
 /// Change the PSTATE `eret` restores. Requires: the handler's own frame and a valid SPSR value.
 pub unsafe fn set_frame_spsr(frame *mut ExceptionFrame, spsr u64) { set_frame_word(frame, 32, spsr) }
+
+/// Synchronous EL1 exception, immediate zero; install a vector table first.
+pub unsafe fn svc() { _svc() }
+extern "intrinsic" fn _svc()
+
+/// Software breakpoint, immediate zero (ESR_EL1.EC 0x3c); the saved ELR points at the `brk` itself,
+/// so a handler that returns must advance it with `set_frame_elr`. Install a vector table first.
+pub unsafe fn brk() { _brk() }
+extern "intrinsic" fn _brk()
+
+/// AArch64 semihosting SYS_EXIT, application exit reason and process status.
+/// Requires a debugger/QEMU with semihosting enabled; otherwise traps.
+pub unsafe fn semihost_exit(status u64) { _semihost_exit(status) }
+extern "intrinsic" fn _semihost_exit(status u64)
+
+/// Read GICv3 icc_sre_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn read_icc_sre_el1() u64 { return _read_icc_sre_el1() }
+extern "intrinsic" fn _read_icc_sre_el1() u64
+
+/// Write GICv3 icc_sre_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn write_icc_sre_el1(value u64) { _write_icc_sre_el1(value) }
+extern "intrinsic" fn _write_icc_sre_el1(value u64)
+
+/// Read GICv3 icc_pmr_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn read_icc_pmr_el1() u64 { return _read_icc_pmr_el1() }
+extern "intrinsic" fn _read_icc_pmr_el1() u64
+
+/// Write GICv3 icc_pmr_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn write_icc_pmr_el1(value u64) { _write_icc_pmr_el1(value) }
+extern "intrinsic" fn _write_icc_pmr_el1(value u64)
+
+/// Read GICv3 icc_igrpen1_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn read_icc_igrpen1_el1() u64 { return _read_icc_igrpen1_el1() }
+extern "intrinsic" fn _read_icc_igrpen1_el1() u64
+
+/// Write GICv3 icc_igrpen1_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn write_icc_igrpen1_el1(value u64) { _write_icc_igrpen1_el1(value) }
+extern "intrinsic" fn _write_icc_igrpen1_el1(value u64)
+
+/// Read GICv3 icc_iar1_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn read_icc_iar1_el1() u64 { return _read_icc_iar1_el1() }
+extern "intrinsic" fn _read_icc_iar1_el1() u64
+
+/// Read GICv3 icc_eoir1_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn read_icc_eoir1_el1() u64 { return _read_icc_eoir1_el1() }
+extern "intrinsic" fn _read_icc_eoir1_el1() u64
+
+/// Write GICv3 icc_eoir1_el1; requires EL1 and enabled system-register interface.
+pub unsafe fn write_icc_eoir1_el1(value u64) { _write_icc_eoir1_el1(value) }
+extern "intrinsic" fn _write_icc_eoir1_el1(value u64)

@@ -76,13 +76,16 @@ Tarn intrinsic calls do not promise adjacency (including `sti(); hlt()`).
 |---|---|
 | `wfi()`, `wfe()`, `isb()`, `dsb_sy()`, `dmb_sy()` | same name (`dsb sy`, `dmb sy`) |
 | `irq_enable()`, `irq_disable()` | `msr daifclr, #2`, `msr daifset, #2` |
+| `svc()`, `brk()` | `svc #0`, `brk #0` (needs a vector table; `brk` leaves ELR on itself) |
+| `semihost_exit(status)` | semihosting `SYS_EXIT` (`hlt #0xf000`); QEMU needs `-semihosting` |
 | `read_<reg>() u64` | `mrs x0, <reg>` |
 | `write_<reg>(value u64)` | `msr <reg>, x0` |
 
 Registers (a whitelist, so a typo is a compile error, not a trap): `daif`,
 `vbar_el1`, `ttbr0_el1`, `ttbr1_el1`, `tcr_el1`, `mair_el1`, `sctlr_el1`, `cpacr_el1`,
-`esr_el1`, `far_el1`, `elr_el1`, `spsr_el1`, `cntv_ctl_el0`, `cntv_tval_el0`
-(read and write); `currentel`, `cntfrq_el0`, `cntvct_el0` (read only). A
+`esr_el1`, `far_el1`, `elr_el1`, `spsr_el1`, `cntv_ctl_el0`, `cntv_tval_el0`,
+`icc_sre_el1`, `icc_pmr_el1`, `icc_igrpen1_el1`, `icc_eoir1_el1` (GICv3 CPU interface; hardware reads of `icc_eoir1_el1` trap)
+(read and write); `currentel`, `cntfrq_el0`, `cntvct_el0`, `icc_iar1_el1` (read only). A
 system-register write takes effect only after a context-synchronization
 event: call `isb()` where it matters.
 

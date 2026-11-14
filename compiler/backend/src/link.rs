@@ -76,10 +76,16 @@ pub fn link_freestanding(object: &Path, output: &Path, target: Target, script: &
 
 /// `linker -nostdlib -static -T script [-e entry] -o output object`.
 pub fn run_linker(linker: &Path, object: &Path, output: &Path, script: &Path, entry: Option<&str>) -> Result<()> {
+    run_linker_format(linker, object, output, script, entry, false)
+}
+
+/// Link directly to a flat binary with lld/GNU ld, without objcopy.
+pub fn run_linker_format(linker: &Path, object: &Path, output: &Path, script: &Path, entry: Option<&str>, binary: bool) -> Result<()> {
     let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     let pending = parent.join(format!(".tarn-link-{}", std::process::id()));
     let mut command = Command::new(linker);
     command.env("LC_ALL", "C").args(["-nostdlib", "-static", "-T"]).arg(script);
+    if binary { command.arg("--oformat=binary"); }
     if let Some(entry) = entry {
         command.arg("-e").arg(entry);
     }

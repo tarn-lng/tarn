@@ -93,6 +93,31 @@ jobs:
           cargo build --locked --release -p tarn
           examples/kernel-x86_64/run.sh target/release/tarn "$RUNNER_TEMP/kernel.elf" | tee "$RUNNER_TEMP/serial.log"
           grep -q '^ticks ok$' "$RUNNER_TEMP/serial.log"
+  # aarch64 kernel (ADR 0106, T5): build the arm64 Image and boot it on QEMU virt.
+  kernel-qemu-aarch64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install QEMU and lld
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm lld
+          qemu-system-aarch64 --version
+          ld.lld --version
+      - name: Boot tests
+        run: cargo test --locked --release -p tarn_backend --test kernel_boot_aarch64 -- --nocapture
+        env:
+          TARN_VERIFY_CODEGEN: '1'
+      - name: Build and boot the example with the CLI
+        run: |
+          set -eo pipefail
+          cargo build --locked --release -p tarn
+          examples/kernel-aarch64/run.sh target/release/tarn "$RUNNER_TEMP/Image" | tee "$RUNNER_TEMP/serial.log"
+          grep -q '^ticks ok$' "$RUNNER_TEMP/serial.log"
   # macOS port (ADR 0098). Not a required check until the port is supported.
   test-macos:
     strategy:

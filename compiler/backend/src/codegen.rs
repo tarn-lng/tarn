@@ -379,7 +379,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     let mut builder = ObjectBuilder::new(isa, "tarn", cranelift_module::default_libcall_names()).map_err(|e| Error::bug(e.to_string()))?;
     // `#[section]` on a function: give every function its own section, then
     // name them in `finish_object` (cranelift-object has no per-function name).
-    let has_function_sections = p.functions.iter().any(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.section.is_some() || a.pvh_entry));
+    let has_function_sections = p.functions.iter().any(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.section.is_some() || a.pvh_entry || a.arm64_entry));
     if has_function_sections {
         if target.is_macos() {
             return Err(Error::unsupported(format!("`#[section]` is supported on ELF targets only, not {target}")));
@@ -608,6 +608,9 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     crate::statics::define(&mut module, t, &statics, &static_callbacks)?;
     if let Some(start) = ffi::emit_pvh(&mut module, p, t, target, &c_callbacks)? {
         function_sections.push((start, ".text.pvh.boot".into()));
+    }
+    if let Some(start) = ffi::emit_arm64(&mut module, p, t, target, &c_callbacks)? {
+        function_sections.push((start, ".text.arm64.boot".into()));
     }
     function_sections.extend(ffi::emit_exports(&mut module, p, t, &ids, target, &runtime.signatures)?);
     // Vector element destruction functions, declared on demand by drop_vector

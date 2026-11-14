@@ -414,6 +414,35 @@ to the attribute's offset. It prints its high function address and validates
 the physical boot information. [ADR 0105](adr/0105-configurable-pvh-hand-off.md)
 specifies the complete hand-off state, memory layout and limitations.
 
+## arm64 boot
+
+`#[arm64_entry]` is the aarch64 counterpart of `#[pvh_entry]` (ADR 0106). The
+compiler emits a Linux arm64 **Image header** and an EL2-to-EL1 / EL1 stub
+(`tarn_arm64_start`, section `.text.arm64.boot`) so `qemu-system-aarch64 -M virt
+-kernel Image` and U-Boot `booti` load the kernel; the entry gets the DTB
+physical address:
+
+```tarn
+#[arm64_entry]
+fn kmain(dtb u64) {      // zero or one parameter: u64 or a thin pointer
+    // EL1h, MMU and caches off, interrupts masked, FP/SIMD on, .bss zero
+}
+```
+
+```sh
+tarn build main.tarn --target aarch64-none --linker-script kernel.ld --binary -o Image
+qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a72 -nographic -semihosting -kernel Image
+```
+
+`--binary` links with `--oformat=binary` (no `objcopy`) and needs
+`--linker-script` and an `-none` target. The script must place
+`.text.arm64.boot` first at RAM base + 0x80000 (0x40080000 on QEMU virt),
+include `tarn_strings` in `.rodata`, and define `__arm64_image_size`,
+`__bss_start`, `__bss_end`, `__arm64_stack_top`; see
+`examples/kernel-aarch64/kernel.ld`. A kernel entered at EL2 is dropped to
+EL1. The exact hand-off state is in ADR 0106. `arch_aarch64.semihost_exit`
+ends QEMU with the kernel's status when `-semihosting` is given.
+
 ## Entry point
 
 The ELF entry comes from the linker script (`ENTRY(kmain)`), from

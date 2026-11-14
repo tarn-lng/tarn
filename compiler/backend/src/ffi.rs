@@ -8,7 +8,7 @@ pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program, t: &t
     let mut targets: Vec<_> = p.functions.iter().filter(|f| f.decl.symbol.is_some_and(|s| symbols.binary_search_by_key(&s.0, |s| s.0).is_ok())).map(|f| f.decl.id).collect();
     // Interrupt handlers always need a C-ABI adapter: their trampoline calls it.
     for f in &p.functions {
-        if fn_attrs(t, f).is_some_and(|a| a.interrupt || a.pvh_entry) { targets.push(f.decl.id); }
+        if fn_attrs(t, f).is_some_and(|a| a.interrupt || a.pvh_entry || a.arm64_entry) { targets.push(f.decl.id); }
     }
     for f in &p.functions { for b in &f.blocks {
         if let Terminator::Call { callee: Callee::Intrinsic(name), args, .. } = &b.term
@@ -370,4 +370,16 @@ impl Cx<'_, '_> {
         let value = self.b.inst_results(call).first().copied();
         Ok(Some(Val { value, ty: dest.clone() }))
     }
+}
+
+/// arm64 Linux Image entry (ADR 0106).
+pub(super) fn emit_arm64(module: &mut ObjectModule, p: &post::Program, t: &tarn_types::Typed, target: crate::Target,
+    callbacks: &HashMap<FunctionId, FuncId>) -> Result<Option<FuncId>> {
+    let entries: Vec<_> = p.functions.iter().filter(|f| fn_attrs(t, f).is_some_and(|a| a.arm64_entry)).collect();
+    let Some(first) = entries.first() else { return Ok(None) };
+    if target.os != crate::Os::None || target.arch != crate::Arch::Aarch64 {
+        return Err(Error::unsupported("`#[arm64_entry]` requires aarch64-none"));
+    }
+    if entries.len() != 1 { return Err(Error::unsupported("at most one `#[arm64_entry]` is allowed")); }
+    crate::arm64::emit(module, *callbacks.get(&first.decl.id).ok_or_else(|| Error::bug("arm64 adapter missing"))?).map(Some)
 }

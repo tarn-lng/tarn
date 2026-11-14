@@ -1,0 +1,396 @@
+// QEMU virt, PL011, FDT, GICv3 and generic virtual timer. See README.md.
+import "arch_aarch64"
+import "ffi"
+const EXIT_OK u32 = 0
+const EXIT_FAILED u32 = 1
+fn peek(address usize) u64 {
+    p: *u64 := ffi.from_address(address)
+    unsafe { return ffi.read_volatile(p) }
+}
+fn poke(address usize, value u64) {
+    p: *mut u64 := ffi.from_address(address)
+    unsafe { ffi.write_volatile(p, value) }
+}
+fn read32(address usize) u32 {
+    p: *u32 := ffi.from_address(address)
+    unsafe { return ffi.read_volatile(p) }
+}
+fn write32(address usize, value u32) {
+    p: *mut u32 := ffi.from_address(address)
+    unsafe { ffi.write_volatile(p, value) }
+}
+fn serial_byte(byte u8) {
+    for (read32(0x09000018) & 32) != 0 {}
+    write32(0x09000000, u32(byte))
+}
+fn print_text(text &string) {
+    bytes := text.bytes()
+    var i: usize = 0
+    for i < bytes.len() {
+        serial_byte(bytes[i])
+        i = i + 1
+    }
+}
+
+fn print_number(value u64) {
+    var divisor: u64 = 1
+    for value / divisor >= 10 {
+        divisor = divisor * 10
+    }
+    for divisor > 0 {
+        serial_byte(u8(48 + (value / divisor) % 10))
+        divisor = divisor / 10
+    }
+}
+
+fn print_hex(value u64) {
+    serial_byte(48)
+    serial_byte(120)
+    var shift: u64 = 60
+    var more = true
+    for more {
+        var digit: u64 = (value >> shift) & 15
+        if digit < 10 {
+            digit = digit + 48
+        } else {
+            digit = digit + 87
+        }
+        serial_byte(u8(digit))
+        if shift == 0 {
+            more = false
+        } else {
+            shift = shift - 4
+        }
+    }
+}
+
+fn newline() {
+    serial_byte(10)
+}
+
+fn println(text &string) {
+    print_text(text)
+    newline()
+}
+
+// Write the text of a Tarn string the compiler hands to the panic handler
+// (a pointer to `{ len u64, bytes... }`).
+fn print_raw(message *u8) {
+    address := ffi.address(message)
+    length := peek(address)
+    var i: u64 = 0
+    for i < length {
+        byte: *u8 := ffi.from_address(address + 8 + usize(i))
+        unsafe { serial_byte(ffi.read(byte)) }
+        i = i + 1
+    }
+}
+
+fn exit(code u32) {
+    unsafe {
+        arch_aarch64.semihost_exit(u64(code))
+        for true { arch_aarch64.wfi() }
+    }
+}
+#[export("tarn_rt_fault")]
+fn fault() {
+    println("FAULT: integer overflow, bad index or failed allocation")
+    exit(EXIT_FAILED)
+}
+
+#[export("tarn_rt_panic")]
+fn panic_message(message *u8) {
+    print_text("PANIC: ")
+    print_raw(message)
+    newline()
+    exit(EXIT_FAILED)
+}
+
+#[export("tarn_rt_panic_at")]
+fn panic_at(message *u8, location *u8) {
+    print_text("PANIC: ")
+    print_raw(message)
+    print_text(" at ")
+    print_raw(location)
+    newline()
+    exit(EXIT_FAILED)
+}
+
+const HEAP_SIZE usize = 1048576
+const HEADER usize = 16
+
+#[align(4096)]
+static mut HEAP[1048576]u8
+static mut HEAP_TOP usize = 0
+static mut FREE_LIST usize = 0
+static mut LIVE usize = 0
+
+fn heap_base() usize {
+    return ffi.address(HEAP)
+}
+
+fn round16(n usize) usize {
+    return ((n + 15) / 16) * 16
+}
+
+#[export("tarn_alloc")]
+fn alloc(size usize) *mut u8 {
+    need := round16(size)
+    top := ffi.address(HEAP_TOP)
+    free := ffi.address(FREE_LIST)
+    // First fit among freed blocks.
+    var previous: usize = 0
+    var block: usize = usize(peek(free))
+    for block != 0 {
+        if usize(peek(block)) >= need {
+            next := peek(block + 8)
+            if previous == 0 {
+                poke(free, next)
+            } else {
+                poke(previous + 8, next)
+            }
+            unsafe { ffi.write_volatile(ffi.from_address(ffi.address(LIVE)), usize(peek(ffi.address(LIVE))) + 1) }
+            result: *mut u8 := ffi.from_address(block + HEADER)
+            return result
+        }
+        previous = block
+        block = usize(peek(block + 8))
+    }
+    used := usize(peek(top))
+    if used + HEADER + need > HEAP_SIZE {
+        return ffi.null()
+    }
+    block = heap_base() + used
+    poke(block, u64(need))
+    poke(block + 8, 0)
+    poke(top, u64(used + HEADER + need))
+    poke(ffi.address(LIVE), peek(ffi.address(LIVE)) + 1)
+    result: *mut u8 := ffi.from_address(block + HEADER)
+    return result
+}
+
+#[export("tarn_free")]
+fn release(pointer *mut u8) {
+    if ffi.is_null(ffi.to_const(pointer)) {
+        return
+    }
+    block := ffi.address(pointer) - HEADER
+    free := ffi.address(FREE_LIST)
+    poke(block + 8, peek(free))
+    poke(free, u64(block))
+    poke(ffi.address(LIVE), peek(ffi.address(LIVE)) - 1)
+}
+
+#[export("tarn_realloc")]
+fn resize(pointer *mut u8, size usize) *mut u8 {
+    if ffi.is_null(ffi.to_const(pointer)) {
+        return alloc(size)
+    }
+    block := ffi.address(pointer) - HEADER
+    have := usize(peek(block))
+    if size <= have {
+        return pointer
+    }
+    fresh := alloc(size)
+    if ffi.is_null(ffi.to_const(fresh)) {
+        return fresh
+    }
+    var i: usize = 0
+    for i < have {
+        unsafe { ffi.write(ffi.offset_mut(fresh, i), ffi.read(ffi.to_const(ffi.offset_mut(pointer, i)))) }
+        i = i + 1
+    }
+    release(pointer)
+    return fresh
+}
+
+fn heap_demo() {
+    var numbers: Vec<i64> = Vec.new()
+    var n: i64 = 0
+    for n < 1000 {
+        numbers.push(n * n)
+        n = n + 1
+    }
+    var sum: i64 = 0
+    var i: usize = 0
+    for i < numbers.len() {
+        sum = sum + numbers.at(i)
+        i = i + 1
+    }
+    if sum != 332833500 {
+        panic("vec sum is wrong")
+    }
+    greeting := "hello, " + "heap " + "world"
+    println(&greeting)
+    print_text("vec of 1000 squares sums to ")
+    print_number(u64(sum))
+    newline()
+}
+
+fn heap_reuse() {
+    top := ffi.address(HEAP_TOP)
+    heap_demo()
+    after_first := peek(top)
+    heap_demo()
+    after_second := peek(top)
+    if after_second != after_first {
+        print_text("heap grew from ")
+        print_number(after_first)
+        print_text(" to ")
+        print_number(after_second)
+        newline()
+        panic("freed blocks are not reused")
+    }
+    print_text("heap ok: ")
+    print_number(after_second)
+    println(" bytes in use at the top, freed blocks reused")
+}
+
+
+// FDT integers are big endian and may be unaligned: use byte reads.
+fn byte_at(address usize) u8 {
+    p: *u8 := ffi.from_address(address)
+    unsafe { return ffi.read(p) }
+}
+fn be32(address usize) u64 {
+    return (u64(byte_at(address)) << 24) | (u64(byte_at(address + 1)) << 16) |
+        (u64(byte_at(address + 2)) << 8) | u64(byte_at(address + 3))
+}
+fn named(address usize, text &string) bool {
+    bytes := text.bytes()
+    var i: usize = 0
+    for i < bytes.len() {
+        if byte_at(address + i) != bytes[i] { return false }
+        i = i + 1
+    }
+    return byte_at(address + i) == 0
+}
+// Minimal QEMU FDT parser: root #address-cells = #size-cells = 2;
+// find a memory@... node, then its 16-byte reg property. Bounds checked.
+fn memory_size(dtb usize) u64 {
+    total := usize(be32(dtb + 4))
+    structure := usize(be32(dtb + 8))
+    strings := usize(be32(dtb + 12))
+    limit := structure + usize(be32(dtb + 36))
+    if total > 2097152 || limit > total || strings >= total { panic("bad FDT bounds") }
+    var at = structure
+    var depth: usize = 0
+    var memory_depth: usize = 0
+    for at + 4 <= limit {
+        token := be32(dtb + at)
+        at = at + 4
+        if token == 1 {
+            depth = depth + 1
+            if at + 7 < limit && byte_at(dtb + at) == 109 &&
+                byte_at(dtb + at + 1) == 101 && byte_at(dtb + at + 2) == 109 &&
+                byte_at(dtb + at + 3) == 111 && byte_at(dtb + at + 4) == 114 &&
+                byte_at(dtb + at + 5) == 121 && byte_at(dtb + at + 6) == 64 { memory_depth = depth }
+            for at < limit && byte_at(dtb + at) != 0 { at = at + 1 }
+            at = ((at + 4) / 4) * 4
+        } else if token == 2 {
+            if depth == memory_depth { memory_depth = 0 }
+            if depth == 0 { panic("bad FDT depth") }
+            depth = depth - 1
+        } else if token == 3 {
+            if at + 8 > limit { panic("bad FDT property") }
+            length := usize(be32(dtb + at))
+            name := strings + usize(be32(dtb + at + 4))
+            at = at + 8
+            if at + length > limit || name + 4 > total { panic("bad FDT property bounds") }
+            if memory_depth == depth && memory_depth != 0 && length == 16 && named(dtb + name, "reg") {
+                return (be32(dtb + at + 8) << 32) | be32(dtb + at + 12)
+            }
+            at = ((at + length + 3) / 4) * 4
+        } else if token == 9 { break
+        } else if token != 4 { panic("bad FDT token") }
+    }
+    panic("FDT has no QEMU memory node")
+}
+
+static mut TICKS u64
+static mut SYNC u64
+#[vector_table]
+fn vectors() {}
+#[interrupt(4)]
+fn synchronous(frame *mut arch_aarch64.ExceptionFrame) {
+    unsafe {
+        class := arch_aarch64.read_esr_el1() >> 26
+        if class == 21 {
+            poke(ffi.address(SYNC), peek(ffi.address(SYNC)) + 1)
+            println("svc: handler reached")
+        } else if class == 60 {
+            // brk leaves ELR at the instruction itself: step over it.
+            arch_aarch64.set_frame_elr(frame, arch_aarch64.frame_elr(frame) + 4)
+            poke(ffi.address(SYNC), peek(ffi.address(SYNC)) + 10)
+            println("brk: breakpoint handled")
+        } else { panic("unexpected synchronous exception") }
+    }
+}
+#[interrupt(5)]
+fn timer(frame *mut arch_aarch64.ExceptionFrame) {
+    unsafe {
+        irq := arch_aarch64.read_icc_iar1_el1()
+        if irq != 27 { panic("unexpected IRQ") }
+        arch_aarch64.write_cntv_ctl_el0(0)
+        poke(ffi.address(TICKS), peek(ffi.address(TICKS)) + 1)
+        arch_aarch64.write_cntv_tval_el0(arch_aarch64.read_cntfrq_el0() / 100)
+        if peek(ffi.address(TICKS)) < 10 { arch_aarch64.write_cntv_ctl_el0(1) }
+        arch_aarch64.write_icc_eoir1_el1(irq)
+    }
+}
+fn start_timer() {
+    // Single CPU GICv3 redistributor wake, SGI/PPI frame at GICR + 64KiB.
+    write32(0x08000000, 0x12) // ARE_NS + EnableGrp1NS
+    for (read32(0x08000000) & 0x80000000) != 0 {}
+    write32(0x080a0014, read32(0x080a0014) & 0xfffffffd)
+    for (read32(0x080a0014) & 4) != 0 {}
+    write32(0x080b0080, 0xffffffff) // all SGIs/PPIs group 1
+    write32(0x080b0418, 0x80808080) // priority for PPI 27
+    write32(0x080b0100, 0x08000000) // enable virtual timer PPI 27
+    unsafe {
+        arch_aarch64.write_icc_sre_el1(1)
+        arch_aarch64.isb()
+        arch_aarch64.write_icc_pmr_el1(255)
+        arch_aarch64.write_icc_igrpen1_el1(1)
+        arch_aarch64.write_cntv_tval_el0(arch_aarch64.read_cntfrq_el0() / 100)
+        arch_aarch64.write_cntv_ctl_el0(1)
+        arch_aarch64.isb()
+        arch_aarch64.irq_enable()
+    }
+}
+#[arm64_entry]
+fn kmain(dtb u64) {
+    // UARTEN | TXE | RXE; QEMU does not need baud setup, firmware may have left it off.
+    write32(0x09000030, 0x301)
+    println("tarn arm64: booted")
+    unsafe {
+        if arch_aarch64.read_currentel() != 4 { panic("expected EL1") }
+        if (arch_aarch64.read_cpacr_el1() & 0x300000) != 0x300000 { panic("FP disabled") }
+    }
+    if peek(ffi.address(TICKS)) != 0 || peek(ffi.address(HEAP_TOP)) != 0 { panic("BSS not zero") }
+    print_text("dtb magic: ")
+    print_hex(be32(usize(dtb)))
+    newline()
+    if be32(usize(dtb)) != 0xd00dfeed { panic("bad DTB magic") }
+    print_text("dtb memory bytes: ")
+    print_number(memory_size(usize(dtb)))
+    newline()
+    unsafe {
+        arch_aarch64.write_vbar_el1(u64(ffi.address(ffi.callback(vectors))))
+        arch_aarch64.isb()
+        arch_aarch64.svc()
+    }
+    if peek(ffi.address(SYNC)) != 1 { panic("svc handler did not return") }
+    println("svc: returned")
+    unsafe { arch_aarch64.brk() }
+    if peek(ffi.address(SYNC)) != 11 { panic("brk handler did not return") }
+    println("brk: returned")
+    heap_reuse()
+    start_timer()
+    for peek(ffi.address(TICKS)) < 10 { unsafe { arch_aarch64.wfi() } }
+    unsafe { arch_aarch64.irq_disable() }
+    println("10 timer interrupts")
+    println("ticks ok")
+    println("tarn arm64: done")
+    exit(EXIT_OK)
+}

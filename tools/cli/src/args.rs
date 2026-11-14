@@ -69,6 +69,7 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
                 value.parse::<tarn_backend::Target>().map_err(fail)?;
                 options.extend([arg.clone(), value.clone()]);
             }
+            "--binary" if command == "build" && !options.contains(arg) => { options.push(arg.clone()); }
             "--linker-script" | "--entry" if command == "build" && !options.contains(arg) => {
                 let value = rest.next().filter(|v| !v.starts_with('-')).ok_or_else(|| fail(format!("{arg} requires a value")))?;
                 if arg == "--entry" && !tarn_types::statics::valid_symbol(value) {
@@ -91,13 +92,15 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
     if !source {
         return Ok(args);
     }
-    if command == "build" && options.iter().any(|o| o == "--linker-script" || o == "--entry") {
+    if command == "build" && options.iter().any(|o| o == "--linker-script" || o == "--entry" || o == "--binary") {
         let target = options.iter().position(|o| o == "--target").map(|i| options[i + 1].parse::<tarn_backend::Target>().ok());
         if !matches!(target, Some(Some(t)) if t.os == tarn_backend::Os::None) {
             return Err(fail("--linker-script and --entry link a kernel and need a `--target` ending in `-none`".into()));
         }
-        if options.iter().any(|o| o == "--entry") && !options.iter().any(|o| o == "--linker-script") {
-            return Err(fail("--entry needs --linker-script".into()));
+        for flag in ["--entry", "--binary"] {
+            if options.iter().any(|o| o == flag) && !options.iter().any(|o| o == "--linker-script") {
+                return Err(fail(format!("{flag} needs --linker-script")));
+            }
         }
     }
     let default_entry = entry.is_none();

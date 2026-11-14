@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: implemented (P1 through P8); an aarch64 boot example is left as follow-up. Delivered as a series of 0.5.x patches; no new minor.
+Status: implemented (P1 through P8); the aarch64 boot example followed in ADR 0106 (T5). Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -346,8 +346,10 @@ extends its mapping and entry ABI for Cairn T4.
 - CI: the `kernel-qemu` job in `.github/workflows/ci.yml` installs
   `qemu-system-x86` and `lld` with apt and runs that test plus the example's
   `run.sh` with the release CLI.
-- aarch64 (`qemu -M virt`, PL011) was not done; the aarch64 trampolines and
-  vector table remain verified by disassembly only.
+- aarch64 (`qemu -M virt`, PL011) was not done here; see ADR 0106, where the
+  aarch64 stubs, trampolines and vector table are executed in QEMU (they held
+  up; the bugs found were a missing `svc`/`brk`/semihosting/GICv3 intrinsic set
+  and a linker-script orphan section).
 - Done: guide in [docs/freestanding.md](../freestanding.md#pvh-boot), example
   README in `examples/kernel-x86_64/README.md`.
   - **PVH instead of Limine.** The plan named Limine; it needs a bootloader

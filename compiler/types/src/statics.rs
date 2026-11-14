@@ -63,6 +63,7 @@ pub struct FnAttrs {
     /// `#[pvh_entry]` (ADR 0101, P8): the function is the 64-bit kernel entry
     /// that the generated PVH boot code calls (x86_64 only).
     pub pvh_entry: bool,
+    pub arm64_entry: bool,
     pub pvh: PvhConfig,
 }
 
@@ -106,7 +107,7 @@ fn pvh_options(args: &[(String, AttrArg)], span: Span, diags: &mut Vec<Diagnosti
 impl FnAttrs {
     /// Functions that must be compiled although nothing calls them.
     pub fn is_root(&self) -> bool {
-        self.export.is_some() || self.vector.is_some() || self.vector_table || self.pvh_entry
+        self.export.is_some() || self.vector.is_some() || self.vector_table || self.pvh_entry || self.arm64_entry
     }
 }
 
@@ -138,14 +139,15 @@ struct Parsed {
     vector: Option<u32>,
     vector_table: bool,
     pvh_entry: bool,
+    arm64_entry: bool,
     pvh: PvhConfig,
 }
 
 fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Parsed {
-    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false, pvh_entry: false, pvh: PvhConfig::default() };
+    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false, pvh_entry: false, arm64_entry: false, pvh: PvhConfig::default() };
     let what = if is_fn { "function" } else { "static" };
     for a in attrs {
-        let known: &[&str] = if is_fn { &["export", "section", "interrupt", "vector_table", "pvh_entry"] } else { &["export", "section", "align"] };
+        let known: &[&str] = if is_fn { &["export", "section", "interrupt", "vector_table", "pvh_entry", "arm64_entry"] } else { &["export", "section", "align"] };
         if !known.contains(&a.name.as_str()) {
             diags.push(invalid_attr(a.span, format!("unknown attribute `{}` on a {what}", a.name)).help(format!("a {what} accepts {}", known.iter().map(|k| format!("`#[{k}(..)]`")).collect::<Vec<_>>().join(", "))));
             continue;
@@ -156,6 +158,7 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
             "interrupt" => out.interrupt,
             "vector_table" => out.vector_table,
             "pvh_entry" => out.pvh_entry,
+            "arm64_entry" => out.arm64_entry,
             _ => out.align.is_some(),
         };
         if duplicate {
@@ -178,6 +181,8 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
             ("interrupt", _) => diags.push(invalid_attr(a.span, "`#[interrupt]` takes no argument or a vector table slot number").help("write `#[interrupt]` or `#[interrupt(5)]`")),
             ("vector_table", None) => out.vector_table = true,
             ("vector_table", _) => diags.push(invalid_attr(a.span, "`#[vector_table]` takes no argument")),
+            ("arm64_entry", None) => out.arm64_entry = true,
+            ("arm64_entry", _) => diags.push(invalid_attr(a.span, "`#[arm64_entry]` takes no options")),
             ("pvh_entry", None) => out.pvh_entry = true,
             ("pvh_entry", Some(AttrArg::Named(args))) => {
                 out.pvh_entry = true;
@@ -215,7 +220,7 @@ pub fn evaluate(env: &mut Env<'_>) {
                 }
             }
             env.diags.extend(diags);
-            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table, pvh_entry: parsed.pvh_entry, pvh: parsed.pvh });
+            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table, pvh_entry: parsed.pvh_entry, arm64_entry: parsed.arm64_entry, pvh: parsed.pvh });
         }
     }
     // ---- statics, pass 1: types and attributes
@@ -319,6 +324,17 @@ fn function_problems(env: &Env<'_>, f: &FnDecl, sym: SymbolId, parsed: &Parsed) 
         }
         if parsed.vector_table && parsed.vector.is_some() {
             out.push(invalid_attr(span, "a slot number belongs to `#[interrupt(n)]`"));
+        }
+    }
+    if parsed.arm64_entry {
+        if parsed.pvh_entry || parsed.interrupt || parsed.vector_table || f.is_unsafe {
+            out.push(invalid_attr(span, "`#[arm64_entry]` requires an ordinary safe function, without other entry/interrupt attributes"));
+        }
+        if let Some(sig) = env.decls.fns.get(&sym) {
+            let valid = |t: &Ty| *t == Ty::Int(IntTy::U64) || matches!(t, Ty::Ptr(_, inner) if !matches!(**inner, Ty::Slice(_) | Ty::Any(_) | Ty::Str));
+            if sig.ret != Ty::Void || !(sig.params.is_empty() || sig.params.len() == 1 && valid(&sig.params[0])) {
+                out.push(invalid_attr(span, "`#[arm64_entry]` takes zero or one u64/thin pointer parameter (DTB physical address) and returns nothing"));
+            }
         }
     }
     if parsed.pvh_entry {

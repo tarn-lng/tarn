@@ -14,6 +14,7 @@ mod heap;
 mod arch;
 mod interrupt;
 mod pvh;
+mod arm64;
 #[doc(hidden)]
 pub use arch::{listing as cpu_stub_listing, operations as cpu_operations};
 pub use interrupt::listing as interrupt_listing;

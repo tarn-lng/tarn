@@ -227,7 +227,7 @@ fn disassembly_of(bytes: &[u8], tag: &str, intel: bool, prefix: &str) -> Option<
         let name = block[start + 1..].split(">:").next().unwrap().to_string();
         let instructions: Vec<String> = block.lines().skip_while(|l| !l.contains(">:")).skip(1)
             .filter_map(|l| l.split_once(':').filter(|(address, _)| !address.trim().is_empty() && address.trim().bytes().all(|b| b.is_ascii_hexdigit())).map(|(_, i)| i))
-            .map(|i| i.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().replace(" ,", ","))
+            .map(|i| i.split("//").next().unwrap().split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().replace(" ,", ","))
             .collect();
         map.insert(name, instructions);
     }
@@ -328,7 +328,11 @@ fn cpu_stubs_disassemble_to_their_documented_assembly() {
         for (symbol, asm) in listing {
             let Some(actual) = disassembly.get(&symbol) else { panic!("{target}: stub {symbol} missing from the object") };
             // Alignment padding follows the stub; compare the documented prefix.
-            assert_eq!(&actual[..asm.len().min(actual.len())], asm.as_slice(), "{target}: {symbol}");
+            // Disassemblers differ in knowing the GICv3 register names; compare the encodings.
+            let generic = |i: &String| [("icc_sre_el1", "s3_0_c12_c12_5"), ("icc_pmr_el1", "s3_0_c4_c6_0"), ("icc_igrpen1_el1", "s3_0_c12_c12_7"), ("icc_iar1_el1", "s3_0_c12_c12_0"), ("icc_eoir1_el1", "s3_0_c12_c12_1")]
+                .iter().fold(i.clone(), |i, (name, encoding)| i.replace(name, encoding));
+            let (actual, expected): (Vec<_>, Vec<_>) = (actual.iter().map(generic).collect(), asm.iter().map(generic).collect());
+            assert_eq!(&actual[..expected.len().min(actual.len())], expected.as_slice(), "{target}: {symbol}");
             checked += 1;
         }
         assert_eq!(checked, operations.len());
