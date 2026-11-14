@@ -208,6 +208,33 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
         }
         for b in &f.blocks {
             if let Terminator::Call { callee: Callee::Intrinsic(name), args, dest, .. } = &b.term {
+                if name.starts_with("ffi.project_") {
+                    let operand_ty = |op: &Operand| match op {
+                        Operand::Copy(p) | Operand::Move(p) => place_ty(&f.decl, t, p),
+                        Operand::Const(Const::Static(s)) => t.decls.statics.get(s).map(|s| Ty::Ptr(s.mutable, Box::new(s.ty.clone()))),
+                        Operand::Const(Const::Int(_, kind)) => Some(Ty::Int(*kind)),
+                        _ => None,
+                    };
+                    let projected = args.first().and_then(operand_ty).and_then(|ty| {
+                        let Ty::Ptr(mutable, inner) = ty else { return None };
+                        let element = if let Some(index) = name.strip_prefix("ffi.project_field.") {
+                            if args.len() != 1 { return None; }
+                            let Ty::Adt(s, types) = inner.as_ref() else { return None };
+                            let def = t.decls.structs.get(s)?;
+                            let field = def.fields.get(index.parse::<usize>().ok()?)?;
+                            let map = def.generics.iter().copied().zip(types.iter().cloned()).collect();
+                            tarn_types::subst(&field.ty, &map)
+                        } else if name == "ffi.project_index" {
+                            if args.len() != 2 || operand_ty(&args[1]) != Some(Ty::Int(tarn_types::IntTy::Usize)) { return None; }
+                            let Ty::Array(element, _) = *inner else { return None };
+                            *element
+                        } else { return None; };
+                        Some(Ty::Ptr(mutable, Box::new(element)))
+                    });
+                    if projected.is_none() || projected != place_ty(&f.decl, t, dest) {
+                        err("invalid raw pointer projection metadata".into());
+                    }
+                }
                 if name == "ffi.callback" {
                     let valid = matches!(args.as_slice(), [Operand::Const(Const::Fn(id, ts))]
                         if ts.is_empty() && p.functions.get(id.0 as usize).is_some_and(|target|

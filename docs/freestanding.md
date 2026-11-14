@@ -402,3 +402,23 @@ of these is used:
 If none exists the build fails naming what to install, and nothing is
 written. If the linker fails its stderr is shown and no output is left. Tarn
 does not pass `--gc-sections`; use `KEEP(...)` or `/DISCARD/` in the script.
+
+### Accessing static fields and elements
+
+Raw-pointer field and fixed-array projection (ADR 0103) uses C layout without
+loading an aggregate or manufacturing a reference:
+
+```tarn
+import "ffi"
+
+struct PageTable { entries [512]u64 }
+static mut ROOT PageTable
+fn map(slot usize, entry u64) {
+    unsafe { ffi.write(ROOT.entries[slot], entry) }
+}
+```
+
+The result preserves pointer mutability. Projection and access require
+`unsafe`; indices are bounds checked. Use `ffi.read_volatile` and
+`ffi.write_volatile` on the projected pointers for MMIO. The example kernel
+uses projection for its handler table and PVH boot-info prefix.

@@ -800,3 +800,12 @@ fn static_callbacks_resolve_module_paths_and_vector_tables() {
     let data = elf.local_static("ADDRESS");
     assert!(elf.relocations(data.section).iter().any(|(o, k, name)| *o == data.value && *k == 257 && name == "vectors"));
 }
+
+#[test]
+fn raw_projections_emit_on_both_freestanding_targets() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/raw_projections.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, _) = symbols(&bytes, &format!("raw-projection-{target}"));
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{undefined:?}");
+    }
+}

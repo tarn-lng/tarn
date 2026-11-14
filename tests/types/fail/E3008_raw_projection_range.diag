@@ -1,0 +1,6 @@
+error[E3008]: raw pointer projection requires a single fixed-array index
+ --> tests/types/fail/E3008_raw_projection_range.tarn:2:32
+  |
+2 | fn main() { unsafe { p := DATA[0..2] } }
+  |                                ^^^^
+

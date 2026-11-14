@@ -1,0 +1,14 @@
+warning[W2003]: unused import `ffi`
+ --> tests/types/fail/E3008_raw_index_non_array.tarn:1:8
+  |
+1 | import "ffi"
+  |        ^^^^^
+  |
+  = help: remove the import
+
+error[E3008]: cannot index into a value of type `u64`
+ --> tests/types/fail/E3008_raw_index_non_array.tarn:3:27
+  |
+3 | fn main() { unsafe { p := DATA[0] } }
+  |                           ^^^^
+

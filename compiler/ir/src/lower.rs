@@ -1064,6 +1064,9 @@ impl<'a, 'l> Builder<'a, 'l> {
 
     /// Is `e` a place expression (named storage), as opposed to a value?
     fn is_place(&self, e: &Expr) -> bool {
+        if let ExprKind::Field { base, .. } | ExprKind::Index { base, .. } = &e.kind
+            && matches!(self.ty(base), Ty::Ptr(..))
+        { return false; }
         match &e.kind {
             ExprKind::Ident(_) => {
                 matches!(self.res(e.id), Some(Res::Symbol(s)) if self.symbol_place(*s).is_some())
@@ -1326,6 +1329,17 @@ impl<'a, 'l> Builder<'a, 'l> {
             }
             ExprKind::Closure { params, body, .. } => self.closure(e, params, body, dest),
             ExprKind::Match(m) => self.match_stmt(m, Some(dest)),
+            ExprKind::Field { base, name } if matches!(self.ty(base), Ty::Ptr(..)) && self.res(e.id).is_none() => {
+                let Ty::Ptr(_, inner) = self.ty(base) else { unreachable!() };
+                let (field, _) = self.struct_field(&inner, &name.name).expect("checked raw field");
+                let pointer = self.operand(base);
+                self.finish_call(Callee::Intrinsic(format!("ffi.project_field.{field}")), vec![pointer], vec![base.span], dest, false, false, span);
+            }
+            ExprKind::Index { base, index } if matches!(self.ty(base), Ty::Ptr(..)) => {
+                let pointer = self.operand(base);
+                let index_op = self.operand(index);
+                self.finish_call(Callee::Intrinsic("ffi.project_index".into()), vec![pointer, index_op], vec![base.span, index.span], dest, false, false, span);
+            }
             ExprKind::Ident(_) | ExprKind::Field { .. } if !self.is_place(e) => {
                 let rv = self.static_value(e, &ty);
                 self.assign(dest, rv, span);
@@ -1381,6 +1395,7 @@ impl<'a, 'l> Builder<'a, 'l> {
         }
         match self.res(e.id) {
             Some(Res::Symbol(s)) => match &self.lx.r.symbol(*s).kind {
+                SymbolKind::Static => Rvalue::Use(Operand::Const(Const::Static(*s))),
                 SymbolKind::Variant { parent } => {
                     if let Ty::Fn(_, params, result) = ty {
                         return self.variant_constructor(*parent, *s, params, result, e.span);

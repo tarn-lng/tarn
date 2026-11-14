@@ -1,0 +1,4 @@
+import "ffi"
+struct S { x u64 }
+static mut DATA S
+fn main() { p := DATA.x }

@@ -1,0 +1,4 @@
+fn invalid(pointer *&[2]u64) {
+    unsafe { address := pointer[0] }
+}
+fn main() {}

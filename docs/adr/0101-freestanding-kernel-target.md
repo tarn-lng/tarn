@@ -241,8 +241,9 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
     covered with a recording stand-in linker. The link was not run
     against lld or GNU ld by the author of this patch.
   - **Limitations.** Function addresses in static initializers were added
-    by ADR 0102; x86_64 IDT gates still need runtime encoding. No field-access
-    syntax on statics (offsets by address arithmetic); same-named
+    by ADR 0102; x86_64 IDT gates still need runtime encoding. Field and
+    fixed-array address projection on statics and raw pointers was added by
+    ADR 0103; same-named
     sections from several items stay separate input sections; no `#[used]`
     for functions, no `#[naked]`, no `#[link_section]` on locals; no
     `--gc-sections`; a static's alignment above the section's is raised for

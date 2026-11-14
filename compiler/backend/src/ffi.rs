@@ -244,7 +244,30 @@ impl Cx<'_, '_> {
         {
             return Err(Error::unsupported("ffi.of on a slice or dynamic reference; use ffi.slice"));
         }
+        // Compiler-generated address projections use the same unrestricted
+        // C layout as static emission, including large fixed arrays.
+        if let Some(field) = operation.strip_prefix("project_field.") {
+            let index: usize = field.parse().map_err(|_| Error::bug("raw field index"))?;
+            let [pointer] = args else { return Err(Error::bug("raw field operands")) };
+            let Ty::Ptr(mutable, inner) = &pointer.ty else { return Err(Error::bug("raw field pointer")) };
+            let layout = tarn_ir::layout::static_layout(self.t, inner).map_err(|e| Error::unsupported(e.message))?;
+            let (offset, field_ty) = layout.fields.get(index).ok_or_else(|| Error::bug("raw field layout"))?;
+            if *dest != Ty::Ptr(*mutable, Box::new(field_ty.clone())) { return Err(Error::bug("raw field result")); }
+            let value = self.b.ins().iadd_imm(word(pointer)?, i64::from(*offset));
+            return Ok(Some(Val { value: Some(value), ty: dest.clone() }));
+        }
         let value = match (operation, args, dest) {
+            ("project_index", [pointer, index], Ty::Ptr(mutable, element)) => {
+                let Ty::Ptr(source_mutable, inner) = &pointer.ty else { return Err(Error::bug("raw index pointer")) };
+                let Ty::Array(source_element, len) = inner.as_ref() else { return Err(Error::bug("raw index array")) };
+                if mutable != source_mutable || element != source_element || index.ty != Ty::Int(IntTy::Usize) { return Err(Error::bug("raw index result")); }
+                let index = word(index)?;
+                let bad = self.b.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, index, *len as i64);
+                self.fault_if(bad);
+                let stride = tarn_ir::layout::static_layout(self.t, element).map_err(|e| Error::unsupported(e.message))?.size;
+                let bytes = self.b.ins().imul_imm(index, i64::from(stride));
+                self.b.ins().iadd(word(pointer)?, bytes)
+            }
             ("_read", [pointer], ty) => {
                 if c_type(ty).is_none() { return Err(Error::unsupported("ffi.read supports only scalars and raw pointers")); }
                 if !matches!(&pointer.ty, Ty::Ptr(false, inner) if inner.as_ref() == ty) { return Err(Error::bug("ffi.read pointer type")); }

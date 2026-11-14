@@ -205,3 +205,31 @@ API's contracts, but cannot prove the library implementation correct. A C bug
 can corrupt the same process. Use a separate process and IPC when a native
 dependency requires isolation; `unsafe` and `--link` do not provide a sandbox.
 
+
+## Raw field and array element pointers
+
+Inside `unsafe`, field syntax on a raw pointer computes the field's address;
+index syntax on a pointer to a fixed array computes an element's address.
+Static names are raw pointers, so they use the same syntax (ADR 0103):
+
+```tarn
+import "ffi"
+
+struct Registers {
+    status u32
+    data [4]u64
+}
+static mut DEVICE Registers
+fn update(index usize, value u64) {
+    unsafe { ffi.write_volatile(DEVICE.data[index], value) }
+}
+```
+
+`*mut Struct` projects to `*mut Field`; `*Struct` projects to `*Field`.
+Nested projections never read the enclosing value or create Tarn references.
+Fields keep normal visibility and C layout, including padding. Array indices
+are `usize` and bounds checked; ranges and pointers to non-arrays cannot be
+indexed. Use `ffi.read`/`write` or the volatile variants to access the projected
+scalar. Projections cannot be assigned to directly. Validity, alignment,
+aliasing, initialized bytes and synchronization remain the unsafe caller's
+responsibility; volatile access does not provide atomic synchronization.

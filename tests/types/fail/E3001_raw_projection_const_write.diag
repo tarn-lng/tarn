@@ -1,0 +1,6 @@
+error[E3001]: expected `*mut _`, found `*u64`
+ --> tests/types/fail/E3001_raw_projection_const_write.tarn:4:32
+  |
+4 | fn main() { unsafe { ffi.write(DATA.x, 1) } }
+  |                                ^^^^^^ this is `*u64`
+

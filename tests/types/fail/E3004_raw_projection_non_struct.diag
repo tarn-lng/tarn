@@ -1,0 +1,14 @@
+warning[W2003]: unused import `ffi`
+ --> tests/types/fail/E3004_raw_projection_non_struct.tarn:1:8
+  |
+1 | import "ffi"
+  |        ^^^^^
+  |
+  = help: remove the import
+
+error[E3004]: `u64` has no field `x`
+ --> tests/types/fail/E3004_raw_projection_non_struct.tarn:3:32
+  |
+3 | fn main() { unsafe { p := DATA.x } }
+  |                                ^
+

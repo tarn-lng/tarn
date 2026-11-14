@@ -1,0 +1,16 @@
+warning[W2003]: unused import `ffi`
+ --> tests/types/fail/E3004_raw_projection_field.tarn:1:8
+  |
+1 | import "ffi"
+  |        ^^^^^
+  |
+  = help: remove the import
+
+error[E3004]: `S` has no field `missing`
+ --> tests/types/fail/E3004_raw_projection_field.tarn:4:32
+  |
+4 | fn main() { unsafe { p := DATA.missing } }
+  |                                ^^^^^^^
+  |
+  = note: its fields are: x
+

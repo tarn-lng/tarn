@@ -1,0 +1,2 @@
+static DATA [3]u64
+fn main() { unsafe { p := DATA[0..2] } }

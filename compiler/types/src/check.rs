@@ -1063,6 +1063,11 @@ impl<'e, 'a> FnCx<'e, 'a> {
             ExprKind::Unary { op: UnaryOp::Deref, operand: base } | ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
                 let bt = self.tables.expr_types.get(&base.id).map(|t| self.infer.zonk(t)).unwrap_or(Ty::Error);
                 match bt {
+                    Ty::Ptr(..) => {
+                        self.err(Diagnostic::error(code, kind, "a raw pointer projection is an address value, not assignable storage")
+                            .primary(whole.span, "use `ffi.write` or `ffi.write_volatile` inside `unsafe`"));
+                        false
+                    }
                     Ty::Ref(true, _) | Ty::Opaque | Ty::Error => true,
                     Ty::Ref(false, _) => {
                         let shown = self.show(&bt);
@@ -1325,7 +1330,24 @@ impl<'e, 'a> FnCx<'e, 'a> {
 
     fn field(&mut self, e: &Expr, base: &Expr, name: &Ident) -> Ty {
         let bt = self.expr(base, None);
+        if let Ty::Ptr(mutable, inner) = self.infer.zonk(&bt) {
+            self.raw_projection(e);
+            // Raw projection crosses exactly one pointer, never an implicit
+            // reference dereference inside its pointee.
+            let target = if matches!(*inner, Ty::Ref(..)) { bt } else { *inner };
+            let field = self.field_of(e, target, name);
+            return Ty::Ptr(mutable, Box::new(field));
+        }
         self.field_of(e, bt, name)
+    }
+
+    /// Projection computes an address only; it never creates a reference or
+    /// accesses the aggregate. Keep the operation explicit at unsafe sites.
+    fn raw_projection(&mut self, e: &Expr) {
+        if self.unsafe_depth == 0 {
+            self.err(Diagnostic::error("E3071", "unsafe_call_outside_unsafe", "raw pointer projection requires `unsafe`")
+                .primary(e.span, "project the pointer inside an `unsafe` block"));
+        }
     }
 
     /// Field type given the already-checked type `bt` of its base.
@@ -1374,9 +1396,16 @@ impl<'e, 'a> FnCx<'e, 'a> {
 
     fn index(&mut self, e: &Expr, base: &Expr, index: &Expr) -> Ty {
         let bt = self.expr(base, None);
-        let (inner, _) = peel(&self.infer.zonk(&bt));
+        let zonked = self.infer.zonk(&bt);
+        let raw = if let Ty::Ptr(mutable, inner) = &zonked { Some((*mutable, inner.as_ref().clone())) } else { None };
+        let inner = match &raw {
+            Some((_, inner)) => inner.clone(),
+            None => peel(&zonked).0,
+        };
+        if raw.is_some() { self.raw_projection(e); }
         let elem = match &inner {
-            Ty::Array(e, _) | Ty::Slice(e) => (**e).clone(),
+            Ty::Array(e, _) => (**e).clone(),
+            Ty::Slice(e) if raw.is_none() => (**e).clone(),
             Ty::Opaque | Ty::Error => Ty::Opaque,
             other => {
                 let shown = self.show(other);
@@ -1386,6 +1415,10 @@ impl<'e, 'a> FnCx<'e, 'a> {
         };
         let usize_ = Ty::Int(IntTy::Usize);
         if let ExprKind::Range { start, end, .. } = &index.kind {
+            if raw.is_some() {
+                self.err(Diagnostic::error("E3008", "not_indexable", "raw pointer projection requires a single fixed-array index").primary(index.span, ""));
+                return Ty::Error;
+            }
             for b in [start, end].into_iter().flatten() {
                 let t = self.expr(b, Some(&usize_));
                 self.coerce(&t, &usize_, b.span, Some(b.id));
@@ -1405,7 +1438,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
         }
         let it = self.expr(index, Some(&usize_));
         self.coerce(&it, &usize_, index.span, Some(index.id));
-        elem
+        if let Some((mutable, _)) = raw { Ty::Ptr(mutable, Box::new(elem)) } else { elem }
     }
 
     fn unary(&mut self, e: &Expr, op: UnaryOp, operand: &Expr, expected: Option<&Ty>) -> Ty {

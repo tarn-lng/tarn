@@ -1,0 +1,6 @@
+error[E3015]: a raw pointer projection is an address value, not assignable storage
+ --> tests/types/fail/E3015_raw_projection_assignment.tarn:4:10
+  |
+4 | unsafe { p.x = ffi.null() } }
+  |          ^^^ use `ffi.write` or `ffi.write_volatile` inside `unsafe`
+

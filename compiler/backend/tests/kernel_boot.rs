@@ -94,7 +94,8 @@ fn example() -> String {
 fn the_example_kernel_boots_and_reports_success() {
     let Some((qemu, linker)) = tools() else { return };
     let dir = scratch("ok");
-    // int3 and the PIT exercise trampolines read from the static HANDLERS
+    // int3 and the PIT exercise trampolines read through checked raw-array
+    // projection from the static HANDLERS
     // table: a relocation to an ordinary body cannot return from an interrupt.
     let elf = build(&dir, &example(), &linker);
     let (output, status) = boot(&qemu, &elf);

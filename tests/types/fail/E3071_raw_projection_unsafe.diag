@@ -1,0 +1,14 @@
+warning[W2003]: unused import `ffi`
+ --> tests/types/fail/E3071_raw_projection_unsafe.tarn:1:8
+  |
+1 | import "ffi"
+  |        ^^^^^
+  |
+  = help: remove the import
+
+error[E3071]: raw pointer projection requires `unsafe`
+ --> tests/types/fail/E3071_raw_projection_unsafe.tarn:4:18
+  |
+4 | fn main() { p := DATA.x }
+  |                  ^^^^^^ project the pointer inside an `unsafe` block
+

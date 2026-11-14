@@ -1,0 +1,6 @@
+error[E3016]: a raw pointer projection is an address value, not assignable storage
+ --> tests/types/fail/E3016_raw_projection_borrow.tarn:5:24
+  |
+5 |     unsafe { r := &mut p.x }
+  |                        ^^^ use `ffi.write` or `ffi.write_volatile` inside `unsafe`
+

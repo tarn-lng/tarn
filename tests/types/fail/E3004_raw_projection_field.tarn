@@ -1,0 +1,4 @@
+import "ffi"
+struct S { x u64 }
+static DATA S
+fn main() { unsafe { p := DATA.missing } }

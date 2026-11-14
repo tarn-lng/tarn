@@ -1,0 +1,6 @@
+error[E3004]: `*&S` has no field `x`
+ --> tests/types/fail/E3004_raw_projection_reference.tarn:3:33
+  |
+3 |     unsafe { address := pointer.x }
+  |                                 ^
+

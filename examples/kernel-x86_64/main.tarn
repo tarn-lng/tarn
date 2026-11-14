@@ -298,8 +298,7 @@ fn invalid_opcode(frame *mut arch_x86_64.InterruptFrame) {
 static HANDLERS [6]*u8 = [6]*u8{ffi.callback(breakpoint), ffi.callback(invalid_opcode), ffi.callback(double_fault), ffi.callback(general_protection), ffi.callback(page_fault), ffi.callback(timer)}
 
 fn handler_address(slot usize) *u8 {
-    address: **u8 := ffi.from_address(ffi.address(HANDLERS) + slot * 8)
-    unsafe { return ffi.read(address) }
+    unsafe { return ffi.read(HANDLERS[slot]) }
 }
 
 fn install_idt() {
@@ -384,14 +383,25 @@ fn heap_reuse() {
     println(" bytes in use at the top, freed blocks reused")
 }
 
+// Prefix of Xen's hvm_start_info, using the C layout supplied by PVH.
+struct PvhStartInfo {
+    magic u32
+    version u32
+    flags u32
+    nr_modules u32
+    modlist_paddr u64
+    cmdline_paddr u64
+    rsdp_paddr u64
+}
+
 #[pvh_entry]
 #[export("kmain")]
 fn kmain(info u64) {
     serial_init()
     println("tarn kernel: booted")
-    magic: *u32 := ffi.from_address(usize(info))
+    boot: *PvhStartInfo := ffi.from_address(usize(info))
     unsafe {
-        if ffi.read(magic) == 0x336ec578 {
+        if ffi.read(boot.magic) == 0x336ec578 {
             println("pvh start info: magic ok")
         } else {
             panic("no hvm_start_info from the loader")

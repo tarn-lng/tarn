@@ -1,0 +1,4 @@
+import "ffi"
+struct S { x u64 }
+fn main() { var p: *mut S = ffi.null()
+unsafe { p.x = ffi.null() } }

@@ -450,3 +450,36 @@ int32_t call_table(void) {
     assert_eq!(output.stdout, b"static callback table passed\n");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn raw_projections_use_c_layout_and_never_load_aggregates() {
+    let source = std::fs::read_to_string("../../tests/freestanding/raw_projections.tarn").unwrap();
+    let (dir, mut result) = fixture("raw-projections", &source);
+    checked(&result);
+    let exe = dir.join("program");
+    tarn_backend::build(result.drops.as_ref().unwrap(), result.typed.as_ref().unwrap(), &exe).unwrap();
+    let out = Command::new(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // Corrupted compiler-only metadata must be rejected before codegen.
+    let mut corrupt = result.drops.take().unwrap();
+    let mut changed = false;
+    for function in &mut corrupt.functions { for block in &mut function.blocks {
+        if let tarn_ir::Terminator::Call { callee: tarn_ir::Callee::Intrinsic(name), .. } = &mut block.term
+            && name.starts_with("ffi.project_field.")
+        {
+            *name = "ffi.project_field.9999".into();
+            changed = true;
+        }
+    }}
+    assert!(changed);
+    assert!(tarn_ir::post_drop::verify(&corrupt, result.typed.as_ref().unwrap()).iter().any(|e| e.contains("invalid raw pointer projection metadata")));
+    // Even forming an out-of-range element pointer must fault.
+    let bad = source.replace("entry(STATE, 1)", "entry(STATE, 3)");
+    let (bad_dir, bad_result) = fixture("raw-projection-bounds", &bad);
+    checked(&bad_result);
+    let bad_exe = bad_dir.join("program");
+    tarn_backend::build(bad_result.drops.as_ref().unwrap(), bad_result.typed.as_ref().unwrap(), &bad_exe).unwrap();
+    assert!(!Command::new(&bad_exe).output().unwrap().status.success());
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(bad_dir).unwrap();
+}

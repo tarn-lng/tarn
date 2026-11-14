@@ -1,0 +1,54 @@
+import "ffi"
+
+struct Inner {
+    tag u8
+    value u64
+}
+struct State {
+    prefix u8
+    inner Inner
+    entries [3]u64
+}
+static mut STATE State = State{prefix: 1, inner: Inner{tag: 2, value: 7}, entries: [3]u64{10, 20, 30}}
+static READ_ONLY State = State{prefix: 3, inner: Inner{tag: 4, value: 9}, entries: [3]u64{40, 50, 60}}
+static mut LARGE [8192]u64
+struct Box<T> { value T }
+static mut CALLS usize
+fn state_once() *mut State {
+    unsafe { ffi.write(CALLS, ffi.read(CALLS) + 1) }
+    return STATE
+}
+fn index_once() usize {
+    unsafe { ffi.write(CALLS, ffi.read(CALLS) + 1) }
+    return 2
+}
+
+fn box_value<T>(pointer *mut Box<T>) *mut T {
+    unsafe { return pointer.value }
+}
+fn entry(pointer *mut State, index usize) *mut u64 {
+    unsafe { return pointer.entries[index] }
+}
+fn main() {
+    var local = Box{value: [2][2]u32{[2]u32{0, 0}, [2]u32{0, 0}}}
+    generic := ffi.of_mut(&mut local)
+    unsafe {
+        // Projection of a null pointer does not access the struct.
+        null_state: *State := ffi.null()
+        if ffi.address(null_state.inner.value) != 16 { panic("address only") }
+        ffi.write(box_value(generic)[1][1], 55)
+        if ffi.read(generic.value[1][1]) != 55 { panic("generic nested arrays") }
+        ffi.write(state_once().entries[index_once()], 99)
+        if ffi.read(CALLS) != 2 { panic("evaluate once") }
+        nested: *mut u64 := STATE.inner.value
+        shared: *u64 := READ_ONLY.inner.value
+        ffi.write(nested, ffi.read(shared))
+        ffi.write_volatile(entry(STATE, 1), 77)
+        ffi.write(LARGE[8191], 88)
+        if ffi.read(STATE.inner.value) != 9 { panic("nested") }
+        if ffi.read_volatile(STATE.entries[1]) != 77 { panic("array") }
+        if ffi.read(LARGE[8191]) != 88 { panic("large") }
+        if ffi.address(STATE.inner.value) - ffi.address(STATE) != 16 { panic("C field layout") }
+        if ffi.address(STATE.entries[2]) - ffi.address(STATE) != 40 { panic("C array layout") }
+    }
+}

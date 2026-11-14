@@ -1,0 +1,6 @@
+error[E3008]: cannot index into a value of type `&[2]u64`
+ --> tests/types/fail/E3008_raw_index_reference.tarn:2:25
+  |
+2 |     unsafe { address := pointer[0] }
+  |                         ^^^^^^^
+

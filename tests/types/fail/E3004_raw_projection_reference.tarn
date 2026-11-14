@@ -1,0 +1,5 @@
+struct S { x u64 }
+fn invalid(pointer *&S) {
+    unsafe { address := pointer.x }
+}
+fn main() {}
