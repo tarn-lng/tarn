@@ -62,11 +62,41 @@ a pointer is an `unsafe fn`:
 | `string_from_c(*u8) Option<string>` | non-null, NUL-terminated; None if not UTF-8 |
 | `read<T: Copy>(*T) T` | one initialized scalar/raw pointer at a valid, aligned address |
 | `write<T: Copy>(*mut T, T)` | valid, aligned writable scalar/raw-pointer storage |
+| `read_volatile<T: Copy>(*T) T`, `write_volatile<T: Copy>(*mut T, T)` | same as `read`/`write`; the access always happens (see below) |
 
 `read`/`write` require appropriate access, respect for active loans, and
 synchronization against concurrent access. A bool read requires a 0 or 1 byte.
 They do not expose aggregate layout or convert raw pointers into Tarn
 references. Unsupported types fail native builds.
+
+### Volatile access and fences (ADR 0101)
+
+For memory-mapped device registers: `ffi.read_volatile(p)` and
+`ffi.write_volatile(p, v)` perform exactly one access each, in program order
+relative to every other volatile access and `ffi.fence()`. They are never
+merged, forwarded from an earlier store, hoisted or deleted, even when the
+value is unused. Calling them outside `unsafe` is error E3071. `ffi.fence()`
+(safe) is a full memory fence for compiler and CPU (`mfence` / `dmb ish`) and
+needs no runtime, so it works on `*-none` targets.
+
+```
+import "ffi"
+fn main() {
+    uart: *mut u32 := ffi.from_address(0x10000000)
+    unsafe {
+        ffi.write_volatile(uart, 65)
+        ffi.write_volatile(uart, 65)   // both writes are emitted
+        ffi.fence()
+        status := ffi.read_volatile(ffi.to_const(uart))
+    }
+}
+```
+
+Volatile accesses are lowered to sequentially consistent atomic loads and
+stores (the only Cranelift memory operations its optimizer never merges or
+forwards), so they cost a fence after each store on x86_64 (`mfence`) and use
+`ldar`/`stlr` on aarch64. The address must be naturally aligned; `bool`,
+integers, floats and raw pointers are supported, aggregates are not.
 
 `CString.new(&string) Option<CString>` makes an owned NUL-terminated copy
 (None for interior NUL); `as_ptr()` is valid while the CString is alive and

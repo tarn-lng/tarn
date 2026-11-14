@@ -1405,6 +1405,7 @@ impl Cx<'_, '_> {
         }
         Ok(!matches!(self.locals[dest.local.0 as usize], Slot::Ssa(_)))
     }
+    const UNROLLED_COPY_LIMIT: u32 = 256;
     fn copy(&mut self, dest: cl::Value, source: cl::Value, size: u32) {
         // Small internal copy, no dependency on libc memcpy signature. Load all
         // bytes before writing so overlapping aggregate assignments are safe.
@@ -1412,6 +1413,34 @@ impl Cx<'_, '_> {
         // narrower widths. Byte-wise copies dominated aggregate-heavy code.
         let mut chunks = Vec::new();
         let mut offset = 0u32;
+        // Large aggregates (arrays, page-sized buffers): a word loop instead of
+        // thousands of unrolled moves, and never a libc `memcpy` call, which a
+        // freestanding object could not resolve (ADR 0101, P4). Source and
+        // destination are the same place or disjoint here, so a forward copy
+        // is exact.
+        if size > Self::UNROLLED_COPY_LIMIT {
+            let bytes = i64::from(size / 8 * 8);
+            let (head, body, exit) = (self.b.create_block(), self.b.create_block(), self.b.create_block());
+            self.b.append_block_param(head, types::I64);
+            let zero = self.b.ins().iconst(types::I64, 0);
+            self.b.ins().jump(head, &[cl::BlockArg::Value(zero)]);
+            self.b.switch_to_block(head);
+            let index = self.b.block_params(head)[0];
+            let more = self.b.ins().icmp_imm(IntCC::UnsignedLessThan, index, bytes);
+            self.b.ins().brif(more, body, &[], exit, &[]);
+            self.b.switch_to_block(body);
+            let from = self.b.ins().iadd(source, index);
+            let to = self.b.ins().iadd(dest, index);
+            let word = self.b.ins().load(types::I64, cl::MemFlags::new(), from, 0);
+            self.b.ins().store(cl::MemFlags::new(), word, to, 0);
+            let next = self.b.ins().iadd_imm(index, 8);
+            self.b.ins().jump(head, &[cl::BlockArg::Value(next)]);
+            self.b.seal_block(body);
+            self.b.seal_block(head);
+            self.b.switch_to_block(exit);
+            self.b.seal_block(exit);
+            offset = size / 8 * 8;
+        }
         while offset < size {
             let width = [8u32, 4, 2, 1].into_iter().find(|w| offset + w <= size).unwrap();
             let ty = match width { 8 => types::I64, 4 => types::I32, 2 => types::I16, _ => types::I8 };

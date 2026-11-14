@@ -86,3 +86,18 @@ pub unsafe fn write<T: Copy>(pointer *mut T, value T) { _write(pointer, value) }
 
 extern "intrinsic" fn _read<T: Copy>(pointer *T) T
 extern "intrinsic" fn _write<T: Copy>(pointer *mut T, value T)
+
+/// Volatile read (ADR 0101, P4): the access is performed exactly once, in
+/// program order relative to other volatile accesses and fences, and is never
+/// merged, forwarded from an earlier store, hoisted or removed. For
+/// memory-mapped device registers. Same requirements as `read`.
+pub unsafe fn read_volatile<T: Copy>(pointer *T) T { return _read_volatile(pointer) }
+/// Volatile write; never merged with, reordered with or dropped in favour of
+/// another volatile access to the same address. Same requirements as `write`.
+pub unsafe fn write_volatile<T: Copy>(pointer *mut T, value T) { _write_volatile(pointer, value) }
+/// Full memory fence: no memory access moves across it, at compile time or at
+/// run time. Needs no runtime, so it also works on `*-none` targets.
+pub extern "intrinsic" fn fence()
+
+extern "intrinsic" fn _read_volatile<T: Copy>(pointer *T) T
+extern "intrinsic" fn _write_volatile<T: Copy>(pointer *mut T, value T)

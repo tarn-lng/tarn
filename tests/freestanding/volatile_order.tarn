@@ -1,0 +1,12 @@
+// Two writes and two reads of one register: all four accesses must be emitted,
+// in order, even though a plain optimizer would merge or forward them.
+import "ffi"
+fn main() {
+    register: *mut u32 := ffi.from_address(4096)
+    unsafe {
+        ffi.write_volatile(register, 5)
+        a := ffi.read_volatile(ffi.to_const(register))
+        b := ffi.read_volatile(ffi.to_const(register))
+        ffi.write_volatile(register, a + b)
+    }
+}

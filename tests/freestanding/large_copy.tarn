@@ -1,0 +1,23 @@
+// Large aggregates move by value in a freestanding program: the copies must
+// not call libc memcpy/memmove (ADR 0101, P4).
+struct Big {
+    data [64]i64
+    tag i64
+}
+fn fill(b &mut Big) {
+    var i: usize = 0
+    for i < 64 {
+        b.data[i] = 7
+        i = i + 1
+    }
+}
+fn take(b Big) i64 { return b.data[10] + b.tag }
+fn make(tag i64) Big { return Big{data: [64]i64{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}, tag: tag} }
+fn main() {
+    var a = make(3)
+    fill(&mut a)
+    var c = a
+    c.tag = 4
+    x := take(c)
+    if x == 0 { }
+}

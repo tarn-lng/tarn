@@ -1,0 +1,28 @@
+// Volatile reads and writes round-trip scalars and raw pointers (ADR 0101, P4).
+import "ffi"
+
+fn main() {
+    var small: u8 = 0
+    var wide: i64 = 0
+    var real: f64 = 0.0
+    var single: f32 = 0.0
+    var flag = false
+    var link: *mut u8 = ffi.null()
+    unsafe {
+        ffi.write_volatile(ffi.of_mut(&mut small), 200)
+        ffi.write_volatile(ffi.of_mut(&mut wide), -9000000000)
+        ffi.write_volatile(ffi.of_mut(&mut real), 2.5)
+        ffi.write_volatile(ffi.of_mut(&mut single), 1.5)
+        ffi.write_volatile(ffi.of_mut(&mut flag), true)
+        ffi.write_volatile(ffi.of_mut(&mut link), ffi.of_mut(&mut small))
+        print(ffi.read_volatile(ffi.of(&small)).to_string())
+        print(ffi.read_volatile(ffi.of(&wide)).to_string())
+        print(ffi.read_volatile(ffi.of(&real)))
+        print(ffi.read_volatile(ffi.of(&single)))
+        print(ffi.read_volatile(ffi.of(&flag)))
+        target := ffi.read_volatile(ffi.of(&link))
+        ffi.write_volatile(target, 7)
+        ffi.fence()
+        print(ffi.read_volatile(ffi.of(&small)).to_string())
+    }
+}

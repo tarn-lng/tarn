@@ -138,7 +138,7 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
     errors.extend(crate::async_frame::verify(p, t));
     // Only this trusted, structurally verified primitive may read an owned
     // scalar from a raw pointer without inventing reference provenance.
-    for (id, write) in [(t.decls.ffi_read, false), (t.decls.ffi_write, true)] {
+    for (id, write) in [(t.decls.ffi_read, false), (t.decls.ffi_write, true), (t.decls.ffi_read_volatile, false), (t.decls.ffi_write_volatile, true)] {
         if let Some(id) = id {
             let valid = t.decls.fns.get(&id).is_some_and(|sig| {
                 let [parameter] = sig.generics.as_slice() else { return false };

@@ -91,13 +91,38 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   `#[global_allocator]` attribute, the symbols are plain link-time names
   until P6 adds exported names.
 
-### P4 — Volatile and memory intrinsics
+### P4 — Volatile and memory intrinsics — implemented
 
 - `ptr.read_volatile()`, `ptr.write_volatile(v)` (unsafe), lowered to
   Cranelift loads/stores with `MemFlags` that forbid elision/reordering.
 - `memcpy`/`memset`/`memmove` emitted in Tarn for freestanding (no libc).
 - Compiler fences: `atomic.fence(order)`.
 - Tests: IR inspection proves volatile ops are not merged or removed.
+- Done: the API follows the existing `ffi` helpers instead of pointer methods:
+  `unsafe ffi.read_volatile(p *T) T`, `unsafe ffi.write_volatile(p *mut T, v T)`
+  (`T: Copy` scalar, bool, float or raw pointer) and safe `ffi.fence()`. The
+  checker treats them like `ffi.read`/`ffi.write` (E3071 outside `unsafe`).
+  Cranelift has no volatile `MemFlags`: its alias analysis forwards stores to
+  loads and merges repeated loads of plain memory operations whatever the
+  flags. Volatile accesses are therefore emitted as `atomic_load`/
+  `atomic_store`, which that analysis treats as memory fences and which Tarn's
+  IR passes already keep as opaque intrinsic calls. `ffi.fence()` is
+  Cranelift `fence` (`mfence`, `dmb ish`); there is no ordering parameter.
+  Tests disassemble the object: two writes and two reads of one address give
+  exactly `stlr, ldar, ldar, stlr` on aarch64 and two `mfence` plus two loads
+  on x86_64. Limitations: volatile access is sequentially consistent, so each
+  x86_64 volatile store costs an `mfence`; no sub-word-misaligned or
+  aggregate volatile access; no weaker or compiler-only fence (P5 can add
+  `dmb`/`dsb` stubs).
+  Memory operations: Cranelift never emitted `memcpy` itself and Tarn code
+  never calls it for aggregates, but copies larger than 256 bytes were
+  unrolled into thousands of moves (30 s to compile a 16 KB struct in a debug
+  build). They are now a word loop (also on hosted targets), so no libc
+  `memcpy`/`memmove`/`memset`/`memcmp` is imported by freestanding objects (a
+  test checks a large struct move). The loop assumes source and destination are
+  identical or disjoint, which holds for Tarn aggregate assignments. User code
+  that declares `extern "C" fn memcpy` (as `ffi.copy_bytes` does) still imports
+  it, by its own choice.
 
 ### P5 — CPU intrinsics (instead of free-form `asm`)
 

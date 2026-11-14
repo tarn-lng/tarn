@@ -15,7 +15,9 @@ work on an allocator the program provides: the object then also imports
 `tarn_free(ptr)` and `tarn_realloc(ptr, size) -> ptr` (`ptr` may be null);
 without them the link fails. Programs that do not use the heap import none of
 the three. `print`, async and other operating-system services are a compile error
-naming the feature. `tarn build` and `tarn run` require `cc`
+naming the feature. Device registers use `ffi.read_volatile`/`ffi.write_volatile`
+and `ffi.fence()` (docs/ffi.md); the object never imports libc `memcpy`/`memset`/`memmove`.
+`tarn build` and `tarn run` require `cc`
 and system libraries granted by the package's `[native] links` in `tarn.toml`
 or by repeated `--link` flags.
 The standard library and native runtime source are embedded in the compiler.

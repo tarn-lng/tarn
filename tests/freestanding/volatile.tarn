@@ -1,0 +1,25 @@
+// Volatile accesses and fences in a freestanding program (ADR 0101, P4).
+import "ffi"
+
+// A device register block at a fixed address; each access must happen.
+fn poke(register *mut u32) u32 {
+    unsafe {
+        ffi.write_volatile(register, 1)
+        ffi.write_volatile(register, 1)
+        ffi.write_volatile(register, 2)
+        ffi.fence()
+        first := ffi.read_volatile(ffi.to_const(register))
+        second := ffi.read_volatile(ffi.to_const(register))
+        return first + second
+    }
+}
+
+fn main() {
+    register: *mut u32 := ffi.from_address(4096)
+    var byte: u8 = 0
+    flag: *mut u8 := ffi.of_mut(&mut byte)
+    unsafe { ffi.write_volatile(flag, 7) }
+    if byte == 7 {
+        total := poke(register)
+    }
+}

@@ -53,7 +53,8 @@ fn freestanding(path: &str, target: &str) -> tarn_backend::Result<Vec<u8>> {
 
 /// (undefined, defined global) symbols, via the system `nm`.
 fn symbols(bytes: &[u8], tag: &str) -> (Vec<String>, Vec<String>) {
-    let path = std::env::temp_dir().join(format!("tarn-freestanding-{tag}-{}.o", std::process::id()));
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-{tag}-{}-{}.o", std::process::id(), COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     std::fs::write(&path, bytes).unwrap();
     let list = |flag: &str| -> Vec<String> {
         let out = std::process::Command::new("nm").args([flag]).arg(&path).output().unwrap();
@@ -111,4 +112,61 @@ fn freestanding_program_without_heap_does_not_import_the_allocator() {
     let bytes = freestanding("../../tests/freestanding/arithmetic.tarn", "x86_64-none").unwrap();
     let (undefined, _) = symbols(&bytes, "no-heap");
     assert!(!undefined.contains(&"tarn_alloc".to_string()), "{undefined:?}");
+}
+
+/// Disassembly of the `tarn_fn_0__main` body, via the system `objdump`.
+fn main_disassembly(bytes: &[u8], tag: &str) -> Option<String> {
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-dis-{tag}-{}.o", std::process::id()));
+    std::fs::write(&path, bytes).unwrap();
+    let out = std::process::Command::new("objdump").args(["-d", "--no-show-raw-insn"]).arg(&path).output().ok();
+    let _ = std::fs::remove_file(path);
+    let text = String::from_utf8_lossy(&out.filter(|o| o.status.success())?.stdout).into_owned();
+    let start = text.find("<tarn_fn_0__main>:")?;
+    Some(text[start..].split("\n\n").next().unwrap().to_string())
+}
+
+#[test]
+fn freestanding_volatile_imports_only_the_contract() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/volatile.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
+        assert!(globals.contains(&"tarn_main".to_string()), "{target}: {globals:?}");
+    }
+}
+
+#[test]
+fn volatile_accesses_are_never_merged_forwarded_or_reordered() {
+    // 2 writes + 2 reads of the same address, with no fence between them.
+    let bytes = freestanding("../../tests/freestanding/volatile_order.tarn", "aarch64-none").unwrap();
+    let Some(code) = main_disassembly(&bytes, "arm") else { return };
+    let mnemonics: Vec<&str> = code.lines().filter_map(|l| l.split('\t').nth(1)).filter_map(|i| i.split_whitespace().next()).filter(|m| ["stlr", "ldar"].contains(m)).collect();
+    assert_eq!(mnemonics, ["stlr", "ldar", "ldar", "stlr"], "{code}");
+
+    let bytes = freestanding("../../tests/freestanding/volatile_order.tarn", "x86_64-none").unwrap();
+    let Some(code) = main_disassembly(&bytes, "x86") else { return };
+    let fences = code.lines().filter(|l| l.contains("mfence")).count();
+    let loads = code.lines().filter(|l| l.contains("movl\t(%")).count();
+    assert_eq!((fences, loads), (2, 2), "{code}");
+}
+
+#[test]
+fn volatile_fence_lowers_to_a_machine_fence() {
+    let bytes = freestanding("../../tests/freestanding/volatile.tarn", "aarch64-none").unwrap();
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-fence-{}.o", std::process::id()));
+    std::fs::write(&path, &bytes).unwrap();
+    let out = std::process::Command::new("objdump").args(["-d", "--no-show-raw-insn"]).arg(&path).output();
+    let _ = std::fs::remove_file(path);
+    let Some(out) = out.ok().filter(|o| o.status.success()) else { return };
+    assert!(String::from_utf8_lossy(&out.stdout).contains("dmb"), "no dmb in the aarch64 object");
+}
+
+#[test]
+fn freestanding_large_copies_do_not_import_libc_memory_functions() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/large_copy.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, _) = symbols(&bytes, target);
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
+        assert!(!undefined.iter().any(|s| ["memcpy", "memmove", "memset", "memcmp", "bcmp"].iter().any(|m| s.trim_start_matches('_') == *m)), "{target}: {undefined:?}");
+    }
 }

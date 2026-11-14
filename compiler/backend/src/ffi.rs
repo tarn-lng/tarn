@@ -71,6 +71,33 @@ impl Cx<'_, '_> {
                 self.b.ins().store(cl::MemFlags::new(), word(value)?, word(pointer)?, 0);
                 return Ok(Some(Val { value: None, ty: Ty::Void }));
             }
+            // Volatile twins (ADR 0101, P4). Cranelift's alias analysis forwards
+            // stores to loads and merges repeated loads of one address for
+            // plain memory operations, so volatile accesses are emitted as
+            // atomic ones: those are memory fences for that analysis and are
+            // never forwarded, merged, reordered or dropped (SeqCst, which is
+            // stronger than volatile requires). Only 8..64-bit integers and
+            // pointers have atomic forms; floats go through an integer bitcast.
+            ("_read_volatile", [pointer], ty) => {
+                if c_type(ty).is_none() { return Err(Error::unsupported("ffi.read_volatile supports only scalars and raw pointers")); }
+                if !matches!(&pointer.ty, Ty::Ptr(false, inner) if inner.as_ref() == ty) { return Err(Error::bug("ffi.read_volatile pointer type")); }
+                let (clt, bits) = Self::volatile_type(ty)?;
+                let v = self.b.ins().atomic_load(clt, cl::MemFlags::new(), word(pointer)?);
+                self.volatile_finish(v, bits, ty)
+            }
+            ("_write_volatile", [pointer, value], Ty::Void) => {
+                if c_type(&value.ty).is_none() { return Err(Error::unsupported("ffi.write_volatile supports only scalars and raw pointers")); }
+                if !matches!(&pointer.ty, Ty::Ptr(true, inner) if inner.as_ref() == &value.ty) { return Err(Error::bug("ffi.write_volatile pointer type")); }
+                let (clt, _) = Self::volatile_type(&value.ty)?;
+                let raw = word(value)?;
+                let raw = if self.b.func.dfg.value_type(raw) == clt { raw } else { self.b.ins().bitcast(clt, cl::MemFlags::new(), raw) };
+                self.b.ins().atomic_store(cl::MemFlags::new(), raw, word(pointer)?);
+                return Ok(Some(Val { value: None, ty: Ty::Void }));
+            }
+            ("fence", [], Ty::Void) => {
+                self.b.ins().fence();
+                return Ok(Some(Val { value: None, ty: Ty::Void }));
+            }
             ("null", [], Ty::Ptr(true, _)) => self.b.ins().iconst(types::I64, 0),
             ("of", [a], Ty::Ptr(false, _)) if matches!(a.ty, Ty::Ref(false, _)) => word(a)?,
             ("of_mut", [a], Ty::Ptr(true, _)) if matches!(a.ty, Ty::Ref(true, _)) => word(a)?,
@@ -95,5 +122,16 @@ impl Cx<'_, '_> {
             _ => return Err(Error::bug(format!("ffi intrinsic {name} shape"))),
         };
         Ok(Some(Val { value: Some(value), ty: dest.clone() }))
+    }
+
+    fn volatile_type(ty: &Ty) -> Result<(cl::Type, u32)> {
+        let t = scalar(ty).ok_or_else(|| Error::unsupported("volatile access to this type"))?;
+        let int = match t { types::F32 => types::I32, types::F64 => types::I64, other => other };
+        Ok((int, int.bits()))
+    }
+
+    fn volatile_finish(&mut self, v: cl::Value, _bits: u32, ty: &Ty) -> cl::Value {
+        let want = scalar(ty).unwrap();
+        if want == self.b.func.dfg.value_type(v) { v } else { self.b.ins().bitcast(want, cl::MemFlags::new(), v) }
     }
 }

@@ -1,0 +1,6 @@
+// Volatile access through a raw pointer needs `unsafe`, like `ffi.read`.
+import "ffi"
+fn main() {
+    var register: u32 = 0
+    ffi.write_volatile(ffi.of_mut(&mut register), 1)
+}

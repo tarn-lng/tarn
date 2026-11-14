@@ -100,6 +100,9 @@ pub struct Decls {
     /// Scalar-only unsafe memory bridge; never returns a Tarn reference.
     pub ffi_read: Option<SymbolId>,
     pub ffi_write: Option<SymbolId>,
+    /// Volatile twins of the scalar bridge (ADR 0101, P4); same contract.
+    pub ffi_read_volatile: Option<SymbolId>,
+    pub ffi_write_volatile: Option<SymbolId>,
     pub task: Option<SymbolId>,
     pub net_sockets: Vec<SymbolId>,
     pub fs_file: Option<SymbolId>,
@@ -224,6 +227,8 @@ impl<'a> Env<'a> {
             env.decls.ffi_callback = ffi.get("callback");
             env.decls.ffi_read = ffi.get("_read");
             env.decls.ffi_write = ffi.get("_write");
+            env.decls.ffi_read_volatile = ffi.get("_read_volatile");
+            env.decls.ffi_write_volatile = ffi.get("_write_volatile");
         }
         if let Some((_, io)) = stdlib("io") {
             env.decls.exec_waker = io.get("Waker");
@@ -287,7 +292,7 @@ impl<'a> Env<'a> {
             for id in &scope.symbols {
                 let symbol = r.symbol(*id);
                 let separate_abi = Some(*id) == env.decls.exec_async_waker || Some(*id) == env.decls.exec_async_park || env.decls.task_intrinsics.contains(id)
-                    || Some(*id) == env.decls.ffi_read || Some(*id) == env.decls.ffi_write;
+                    || [env.decls.ffi_read, env.decls.ffi_write, env.decls.ffi_read_volatile, env.decls.ffi_write_volatile].contains(&Some(*id));
                 if !separate_abi && symbol.name.starts_with("_") && env.decls.fns.get(id).is_some_and(|sig| sig.abi.as_deref() == Some("intrinsic")) {
                     let catalog = if *module == "fs" { &mut env.decls.fs_intrinsics } else if *module == "process" { &mut env.decls.process_intrinsics } else { &mut env.decls.net_intrinsics };
                     catalog.insert(format!("{module}.{}", symbol.name), *id);
@@ -504,7 +509,7 @@ impl<'a> Env<'a> {
             && matches!(&self_ty, Some(Ty::Adt(id, _)) if Some(*id) == self.decls.mutex || Some(*id) == self.decls.vec || self.decls.atomics.contains_key(id));
         // This trusted primitive only executes for scalars/raw pointers. Native
         // ABI validation rejects every loan-bearing instantiation (ADR 0080).
-        let scalar_read = Some(sym) == self.decls.ffi_read;
+        let scalar_read = Some(sym) == self.decls.ffi_read || Some(sym) == self.decls.ffi_read_volatile;
         let result = if scalar_read { ResultContract::Copy } else if task_join || sync_constructor { ResultContract::Owned } else if !holds(&ret) {
             if self.decls.is_copy(&ret) { ResultContract::Copy } else { ResultContract::Owned }
         } else if f.body.is_some() {
