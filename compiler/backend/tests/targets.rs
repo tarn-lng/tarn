@@ -91,3 +91,24 @@ fn hosted_objects_import_only_the_runtime_they_use() {
     let runtime: Vec<_> = undefined.iter().map(|s| s.trim_start_matches('_')).filter(|s| s.starts_with("tarn_rt_")).collect();
     assert!(runtime.len() <= 3, "{runtime:?}");
 }
+
+#[test]
+fn freestanding_heap_imports_only_the_allocator_contract() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/heap.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
+        for needed in ["tarn_alloc", "tarn_free", "tarn_realloc"] {
+            assert!(undefined.contains(&needed.to_string()), "{target}: {needed} in {undefined:?}");
+        }
+        assert!(!undefined.iter().any(|s| s.starts_with("tarn_rt_string") || s.starts_with("tarn_rt_vec") || s.starts_with("tarn_rt_env")), "{target}: {undefined:?}");
+        assert!(globals.contains(&"tarn_main".to_string()), "{target}: {globals:?}");
+    }
+}
+
+#[test]
+fn freestanding_program_without_heap_does_not_import_the_allocator() {
+    let bytes = freestanding("../../tests/freestanding/arithmetic.tarn", "x86_64-none").unwrap();
+    let (undefined, _) = symbols(&bytes, "no-heap");
+    assert!(!undefined.contains(&"tarn_alloc".to_string()), "{undefined:?}");
+}

@@ -430,7 +430,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         }
     }
     let task_adapters = emit_task_adapters(&mut module, p, t, &ids)?;
-    let mut runtime = Runtime::default();
+    let mut runtime = Runtime { freestanding: target.os == crate::Os::None, ..Runtime::default() };
     for (name, params, returns) in [
         ("tarn_rt_raw_canonical", vec![types::I64], vec![]),
         ("tarn_rt_net_main_error", vec![types::I32, types::I32], vec![]),
@@ -545,6 +545,10 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         ("tarn_rt_panic", vec![types::I64], vec![]),
         ("tarn_rt_panic_at", vec![types::I64, types::I64], vec![]),
         ("tarn_rt_fault", vec![], vec![]),
+        // Allocator the freestanding boot code provides (ADR 0101, P3).
+        ("tarn_alloc", vec![types::I64], vec![types::I64]),
+        ("tarn_free", vec![types::I64], vec![]),
+        ("tarn_realloc", vec![types::I64, types::I64], vec![types::I64]),
     ] {
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(runtime_param).collect();
@@ -747,7 +751,23 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             b.finalize();
         }
         module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
-        literals.into_inner().define(&mut module)?;
+        // Heap operations the program used, implemented here over the
+        // allocator the boot code provides. Helpers may need further helpers.
+        let literals = literals.into_inner();
+        let pool = (literals.id, literals.image.len() as u64);
+        let mut defined = HashSet::new();
+        loop {
+            let pending: Vec<String> = runtime.local.borrow().iter().filter(|n| !defined.contains(*n)).cloned().collect();
+            if pending.is_empty() { break; }
+            for name in pending {
+                let wanted: Vec<(&'static str, FuncId)> = crate::heap::callees(&name).iter().map(|n| runtime.id(&mut module, n).map(|id| (*n, id))).collect::<Result<_>>()?;
+                let ids = wanted.into_iter().collect();
+                let id = runtime.id(&mut module, &name)?;
+                crate::heap::define(&mut module, id, &name, &ids, pool)?;
+                defined.insert(name);
+            }
+        }
+        literals.define(&mut module)?;
         crate::freestanding::check(target, runtime.used())?;
         return module.finish().emit().map_err(|e| Error::bug(e.to_string()));
     }
@@ -821,6 +841,9 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
 struct Runtime {
     signatures: HashMap<String, cl::Signature>,
     ids: RefCell<HashMap<String, FuncId>>,
+    /// Freestanding: heap operations defined inside the object (crate::heap).
+    freestanding: bool,
+    local: RefCell<std::collections::BTreeSet<String>>,
 }
 
 impl Runtime {
@@ -829,13 +852,18 @@ impl Runtime {
             return Ok(*id);
         }
         let sig = self.signatures.get(name).ok_or_else(|| Error::bug(format!("undeclared runtime function {name}")))?;
-        let id = module.declare_function(name, Linkage::Import, sig).map_err(|e| Error::bug(e.to_string()))?;
+        let local = self.freestanding && crate::heap::LOCAL.contains(&name);
+        if local {
+            self.local.borrow_mut().insert(name.to_owned());
+        }
+        let id = module.declare_function(name, if local { Linkage::Local } else { Linkage::Import }, sig).map_err(|e| Error::bug(e.to_string()))?;
         self.ids.borrow_mut().insert(name.to_owned(), id);
         Ok(id)
     }
 
     fn used(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.ids.borrow().keys().cloned().collect();
+        let local = self.local.borrow();
+        let mut names: Vec<String> = self.ids.borrow().keys().filter(|n| !local.contains(*n)).cloned().collect();
         names.sort();
         names
     }

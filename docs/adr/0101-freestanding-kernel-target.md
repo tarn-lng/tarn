@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: accepted; P1 and P2 implemented. Delivered as a series of 0.5.x patches; no new minor.
+Status: accepted; P1, P2 and P3 implemented. Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -67,14 +67,29 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   Diagnostics carry no source span yet; `#[panic_handler]` in Tarn waits for
   P6 (exported symbol names).
 
-### P3 — User allocator
+### P3 — User allocator — implemented
 
-- `#[global_allocator]`-style hook: the program provides `alloc`/`free`.
-  Without one, heap-using code (Vec, String, Box) is a compile error in
-  freestanding.
+- The program provides the allocator; the object imports it only if the
+  program uses the heap. Without the symbols, the link fails.
 - Lines up with the C-free runtime work: the hosted runtime becomes one
   implementation of the same interface.
-- Tests: bump allocator over a static array; Vec/String work.
+- Tests: heap program (strings, vectors, closure environment) compiles for
+  both `*-none` targets and imports only the contract.
+- Done: the contract grew by `tarn_alloc(size) -> ptr` (16-byte aligned, null
+  on exhaustion), `tarn_free(ptr)` and `tarn_realloc(ptr, size) -> ptr`
+  (`ptr` may be null); malloc-style, no size or alignment is passed to
+  `tarn_free` because strings and closure environments do not record theirs.
+  A bump allocator may ignore `tarn_free`. The heap runtime operations
+  (`string`, `string_utf8/add/compare/range`, `drop_string`, `env_alloc/free/drop`,
+  `vec_grow/extend`) are emitted as Cranelift functions inside the freestanding
+  object (`compiler/backend/src/heap.rs`), mirror `runtime/native.c`, and
+  fault via `tarn_rt_fault` on overflow or a null allocation. `drop_string`
+  recognizes static literals by their address range in the object instead of
+  linker section symbols. The helpers were run on the host with a malloc
+  based harness (all allocations freed); no automated execution test yet
+  (P8 boots under QEMU). Limitations: no custom alignment above 16; no
+  `#[global_allocator]` attribute, the symbols are plain link-time names
+  until P6 adds exported names.
 
 ### P4 — Volatile and memory intrinsics
 

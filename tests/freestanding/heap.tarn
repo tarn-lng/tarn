@@ -1,0 +1,38 @@
+// Heap use in a freestanding program: strings, vectors and closure
+// environments run on the allocator the boot code provides (ADR 0101, P3).
+import "string"
+fn total(values &Vec<i64>) i64 {
+    var sum: i64 = 0
+    var i: usize = 0
+    for i < values.len() {
+        sum = sum + values.at(i)
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() {
+    var numbers: Vec<i64> = Vec.new()
+    var n: i64 = 0
+    for n < 100 {
+        numbers.push(n)
+        n = n + 1
+    }
+    data := [3]i64{5, -6, 7}
+    numbers.extend_from_slice(&data)
+    var names: Vec<string> = Vec.new()
+    names.push("ana" + "bel")
+    names.push("añb".copy_range(0, 1))
+    var bytes: Vec<u8> = Vec.new()
+    bytes.extend_from_slice("héllo".bytes())
+    var ok = false
+    match string.from_utf8(bytes.as_slice()) {
+        Some(s) => { ok = s == "héllo" }
+        None => { ok = false }
+    }
+    offset := total(&numbers)
+    add := fn(x i64) i64 { return x + offset }
+    if !ok || add(1) < 0 || names.get(0) != "anabel" {
+        panic("heap check failed")
+    }
+}

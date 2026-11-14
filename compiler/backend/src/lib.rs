@@ -7,6 +7,7 @@ mod integer_narrow;
 pub mod mono;
 pub mod target;
 mod freestanding;
+mod heap;
 pub use target::{Arch, Os, Target, TARGETS};
 pub use freestanding::CONTRACT as FREESTANDING_CONTRACT;
 use std::fmt;

@@ -4,9 +4,12 @@
 
 use crate::{Error, Result, Target};
 
-/// Runtime symbols the freestanding program's boot code must define. Panics,
-/// bounds and overflow checks stay on: these decide what a failure does.
-pub const CONTRACT: [&str; 3] = ["tarn_rt_fault", "tarn_rt_panic", "tarn_rt_panic_at"];
+/// Symbols the freestanding program's boot code must define. Panics, bounds
+/// and overflow checks stay on: the first three decide what a failure does.
+/// The allocator (ADR 0101, P3) is only imported by programs that use the
+/// heap: `tarn_alloc(size) -> ptr` (16-byte aligned, null on exhaustion),
+/// `tarn_free(ptr)` and `tarn_realloc(ptr, size) -> ptr` (`ptr` may be null).
+pub const CONTRACT: [&str; 6] = ["tarn_rt_fault", "tarn_rt_panic", "tarn_rt_panic_at", "tarn_alloc", "tarn_free", "tarn_realloc"];
 
 /// The Tarn feature behind a hosted runtime symbol, for the diagnostic.
 fn feature(symbol: &str) -> &'static str {

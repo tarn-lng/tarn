@@ -9,8 +9,12 @@ so `--link` is rejected there (ADR 0101). A `*-none` target is freestanding: the
 object has no libc `main` and exports `tarn_main` (no arguments, no result)
 for the boot code to call. It may import only `tarn_rt_panic`,
 `tarn_rt_panic_at` and `tarn_rt_fault`, which the boot code defines, and
-`extern "C"` functions; using `print`, heap strings or vectors, closures with
-environments, async or other operating-system services is a compile error
+`extern "C"` functions. Heap strings, vectors and closures with environments
+work on an allocator the program provides: the object then also imports
+`tarn_alloc(size) -> ptr` (16-byte aligned, null on exhaustion),
+`tarn_free(ptr)` and `tarn_realloc(ptr, size) -> ptr` (`ptr` may be null);
+without them the link fails. Programs that do not use the heap import none of
+the three. `print`, async and other operating-system services are a compile error
 naming the feature. `tarn build` and `tarn run` require `cc`
 and system libraries granted by the package's `[native] links` in `tarn.toml`
 or by repeated `--link` flags.
