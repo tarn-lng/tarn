@@ -29,6 +29,8 @@ pub enum StaticInit {
     Address(u64),
     /// Address of another static.
     Static(SymbolId),
+    /// C callback address (ADR 0102), resolved before code generation.
+    Function(SymbolId),
     /// Struct fields or array elements, in order.
     Aggregate(Vec<StaticInit>),
 }
@@ -339,7 +341,7 @@ type Fail = Box<Diagnostic>;
 
 fn init(env: &mut Env<'_>, m: ModuleId, e: &tarn_ast::Expr, ty: &Ty) -> Result<StaticInit, Fail> {
     let bad = |what: &str| -> Fail {
-        Box::new(invalid_static(e.span, format!("{what} is not a valid initializer here")).note("static initializers are literals, constants, struct and array literals of those, `ffi.null()`, `ffi.from_address(n)` and the names of other statics"))
+        Box::new(invalid_static(e.span, format!("{what} is not a valid initializer here")).note("static initializers are literals, constants, struct and array literals of those, `ffi.null()`, `ffi.from_address(n)`, `ffi.callback(function)` and the names of other statics"))
     };
     if let ExprKind::Paren(inner) = &e.kind {
         return init(env, m, inner, ty);
@@ -370,6 +372,20 @@ fn init(env: &mut Env<'_>, m: ModuleId, e: &tarn_ast::Expr, ty: &Ty) -> Result<S
             if let ExprKind::Call { callee, args } = &e.kind
                 && let Some(Res::Symbol(f)) = env.r.tables[m.0 as usize].uses.get(&callee.id).map(|u| u.res.clone())
             {
+                if Some(f) == env.decls.ffi_callback {
+                    let fail = || Box::new(invalid_static(e.span, "a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result"));
+                    if *pointer_mut || **pointee != Ty::Int(IntTy::U8) { return Err(Box::new(invalid_static(e.span, "`ffi.callback(function)` has type `*u8`"))); }
+                    let [argument] = args.as_slice() else { return Err(fail()); };
+                    let mut argument = argument;
+                    while let ExprKind::Paren(inner) = &argument.kind { argument = inner; }
+                    let Some(Res::Symbol(s)) = env.r.tables[m.0 as usize].uses.get(&argument.id).map(|u| &u.res) else { return Err(fail()); };
+                    let Some(sig) = env.decls.fns.get(s) else { return Err(fail()); };
+                    let scalar = |ty: &Ty| matches!(ty, Ty::Bool | Ty::Int(_) | Ty::Float(_) | Ty::Ptr(..));
+                    if !callback_function(sig) || !sig.params.iter().all(scalar) || !(sig.ret == Ty::Void || scalar(&sig.ret)) {
+                        return Err(fail());
+                    }
+                    return Ok(StaticInit::Function(*s));
+                }
                 if Some(f) == env.decls.ffi_null && args.is_empty() {
                     return Ok(StaticInit::Address(0));
                 }
@@ -417,4 +433,25 @@ fn init(env: &mut Env<'_>, m: ModuleId, e: &tarn_ast::Expr, ty: &Ty) -> Result<S
         }
         _ => Err(bad("this expression")),
     }
+}
+
+/// The named-function contract shared by runtime and static callbacks.
+pub(crate) fn callback_function(f: &crate::env::FnSig) -> bool {
+    f.abi.is_none() && !f.is_async && !f.is_unsafe && f.generics.is_empty() && f.receiver.is_none()
+}
+
+/// All static callback targets, deterministic and deduplicated, including nested aggregates.
+pub fn function_targets(decls: &crate::env::Decls) -> Vec<SymbolId> {
+    fn visit(init: &StaticInit, out: &mut Vec<SymbolId>) {
+        match init {
+            StaticInit::Function(s) => out.push(*s),
+            StaticInit::Aggregate(items) => { for item in items { visit(item, out); } }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for def in decls.statics.values() { visit(&def.init, &mut out); }
+    out.sort_by_key(|s| s.0);
+    out.dedup();
+    out
 }

@@ -2044,7 +2044,7 @@ impl<'e, 'a> FnCx<'e, 'a> {
             while let ExprKind::Paren(inner) = &argument.kind { argument = inner; }
             let valid = match self.res(argument.id) {
                 Some(Res::Symbol(id)) => self.env.decls.fns.get(&id).is_some_and(|f| {
-                    f.abi.is_none() && !f.is_async && !f.is_unsafe && f.generics.is_empty() && f.receiver.is_none()
+                    crate::statics::callback_function(f)
                 }),
                 _ => false,
             };

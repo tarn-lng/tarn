@@ -23,7 +23,8 @@ fn qemu() -> Option<PathBuf> {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tarn-kernel-boot-{tag}-{}", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!("tarn-kernel-boot-{tag}-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -93,6 +94,8 @@ fn example() -> String {
 fn the_example_kernel_boots_and_reports_success() {
     let Some((qemu, linker)) = tools() else { return };
     let dir = scratch("ok");
+    // int3 and the PIT exercise trampolines read from the static HANDLERS
+    // table: a relocation to an ordinary body cannot return from an interrupt.
     let elf = build(&dir, &example(), &linker);
     let (output, status) = boot(&qemu, &elf);
     let _ = std::fs::remove_dir_all(&dir);

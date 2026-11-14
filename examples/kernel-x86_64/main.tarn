@@ -294,15 +294,23 @@ fn invalid_opcode(frame *mut arch_x86_64.InterruptFrame) {
     crash("invalid opcode", frame, 0)
 }
 
+// Link-time relocations name interrupt trampolines, not their ordinary bodies.
+static HANDLERS [6]*u8 = [6]*u8{ffi.callback(breakpoint), ffi.callback(invalid_opcode), ffi.callback(double_fault), ffi.callback(general_protection), ffi.callback(page_fault), ffi.callback(timer)}
+
+fn handler_address(slot usize) *u8 {
+    address: **u8 := ffi.from_address(ffi.address(HANDLERS) + slot * 8)
+    unsafe { return ffi.read(address) }
+}
+
 fn install_idt() {
     idt: *mut u8 := ffi.from_address(ffi.address(IDT))
     unsafe {
-        arch_x86_64.idt_set_gate(idt, 3, ffi.callback(breakpoint), 8, 0, arch_x86_64.gate_trap())
-        arch_x86_64.idt_set_gate(idt, 6, ffi.callback(invalid_opcode), 8, 0, arch_x86_64.gate_interrupt())
-        arch_x86_64.idt_set_gate(idt, 8, ffi.callback(double_fault), 8, 0, arch_x86_64.gate_interrupt())
-        arch_x86_64.idt_set_gate(idt, 13, ffi.callback(general_protection), 8, 0, arch_x86_64.gate_interrupt())
-        arch_x86_64.idt_set_gate(idt, 14, ffi.callback(page_fault), 8, 0, arch_x86_64.gate_interrupt())
-        arch_x86_64.idt_set_gate(idt, 32, ffi.callback(timer), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 3, handler_address(0), 8, 0, arch_x86_64.gate_trap())
+        arch_x86_64.idt_set_gate(idt, 6, handler_address(1), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 8, handler_address(2), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 13, handler_address(3), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 14, handler_address(4), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 32, handler_address(5), 8, 0, arch_x86_64.gate_interrupt())
         arch_x86_64.idt_load(ffi.to_const(idt), 256)
     }
 }

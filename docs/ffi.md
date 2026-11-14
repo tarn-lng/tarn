@@ -117,6 +117,22 @@ non-generic Tarn function. Qualified names such as `handlers.clicked` work.
 Closures, callable locals, async, unsafe and foreign handlers are rejected
 (E3081). Arguments/results use the scalar C ABI above; a void result works.
 
+`ffi.callback(handler)` also works in static initializers, including arrays
+and struct fields ([ADR 0102](adr/0102-static-function-addresses.md)):
+
+```tarn
+import "ffi"
+fn first() {}
+fn second() {}
+static HANDLERS [3]*u8 = [3]*u8{ffi.callback(first), ffi.callback(second), ffi.null()}
+```
+
+These are linker relocations to the same adapters as runtime callbacks;
+otherwise unused functions are retained. Static callbacks reject nonconstant
+targets and unsupported signatures with E3085. An exported function still
+uses its C adapter; a freestanding interrupt handler uses its trampoline.
+Calling an erased pointer from C still requires the exact prototype.
+
 The [complete GLib example](../examples/glib_callback/main.tarn) registers
 `ffi.callback(tick)` with an explicit `ffi.of_mut(&mut count)` context. Its
 handler reads/writes the count and returns 0 after three dispatches, removing

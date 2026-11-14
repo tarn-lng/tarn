@@ -1,0 +1,4 @@
+import "ffi"
+import "handlers"
+static CALLBACK *u8 = ffi.callback((handlers.run))
+fn main() {}

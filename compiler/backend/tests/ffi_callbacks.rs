@@ -2,7 +2,8 @@
 use std::{path::PathBuf, process::Command};
 
 fn fixture(tag: &str, source: &str) -> (PathBuf, tarn_driver::CheckResult) {
-    let dir = std::env::temp_dir().join(format!("tarn-c-callback-{}-{tag}", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!("tarn-c-callback-{}-{tag}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("main.tarn");
     std::fs::write(&path, source).unwrap();
@@ -404,4 +405,48 @@ fn unsafe_requirements_cannot_be_erased_by_callable_values() {
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
+}
+
+#[test]
+fn c_calls_functions_through_a_link_initialized_static_table() {
+    let (dir, result) = fixture("link-initialized-table", r#"
+import "ffi"
+extern "C" fn call_table() i32
+fn add(x i32) i32 { return x + 7 }
+#[export("multiply_export")]
+fn multiply(x i32) i32 { return x * 3 }
+#[export("callback_table")]
+static TABLE [3]*u8 = [3]*u8{ffi.callback(add), ffi.callback(multiply), ffi.null()}
+fn main() {
+    unsafe { if call_table() != 42 { panic("static callback table") } }
+    base: **u8 := ffi.from_address(ffi.address(TABLE))
+    unsafe {
+        if ffi.address(ffi.read(base)) != ffi.address(ffi.callback(add)) { panic("callback identity") }
+    }
+    print("static callback table passed")
+}
+"#);
+    checked(&result);
+    std::fs::write(dir.join("caller.c"), r#"
+#include <stdint.h>
+typedef int32_t (*handler)(int32_t);
+extern handler const callback_table[3];
+int32_t call_table(void) {
+    if (callback_table[2] != 0) return -1;
+    return callback_table[1](callback_table[0](7));
+}
+"#).unwrap();
+    let bytes = tarn_backend::emit_object(result.drops.as_ref().unwrap(), result.typed.as_ref().unwrap()).unwrap();
+    std::fs::write(dir.join("main.o"), bytes).unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let executable = dir.join("program");
+    let linked = Command::new("cc").args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-pthread"])
+        .arg(if cfg!(target_os = "macos") { "-pthread" } else { "-no-pie" })
+        .arg(dir.join("main.o")).arg(dir.join("caller.c")).arg(root.join("runtime/native.c"))
+        .arg("-lm").arg("-o").arg(&executable).output().unwrap();
+    assert!(linked.status.success(), "{}", String::from_utf8_lossy(&linked.stderr));
+    let output = Command::new("timeout").arg("10s").arg(&executable).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"static callback table passed\n");
+    std::fs::remove_dir_all(dir).unwrap();
 }

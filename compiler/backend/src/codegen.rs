@@ -388,7 +388,6 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     }
     let mut module = ObjectModule::new(builder);
     let statics = crate::statics::declare(&mut module, t, target)?;
-    crate::statics::define(&mut module, t, &statics)?;
     let mut ids = HashMap::new();
     let mut ordered: Vec<_> = reachable.into_iter().collect();
     ordered.sort();
@@ -603,6 +602,10 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         }
     }
     function_sections.extend(ffi::emit_interrupts(&mut module, p, t, target, &mut c_callbacks)?);
+    // Interrupt emission replaces callback adapters with hardware trampolines.
+    // Data relocations must use the final addresses, just like runtime callbacks.
+    let static_callbacks = p.functions.iter().filter_map(|f| Some((f.decl.symbol?, *c_callbacks.get(&f.decl.id)?))).collect();
+    crate::statics::define(&mut module, t, &statics, &static_callbacks)?;
     ffi::emit_pvh(&mut module, p, t, target, &c_callbacks)?;
     function_sections.extend(ffi::emit_exports(&mut module, p, t, &ids, target, &runtime.signatures)?);
     // Vector element destruction functions, declared on demand by drop_vector

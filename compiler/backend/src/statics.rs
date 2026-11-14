@@ -2,7 +2,7 @@
 //! the checker's evaluated initializer and the shared C-compatible layout, so
 //! a `static` is exactly what a linker script or boot loader expects to find.
 use crate::{Error, Result, Target};
-use cranelift_module::{DataDescription, DataId, Linkage, Module};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 use tarn_resolve::SymbolId;
@@ -61,7 +61,7 @@ pub(crate) fn declare(module: &mut ObjectModule, t: &Typed, target: Target) -> R
     Ok(ids)
 }
 
-pub(crate) fn define(module: &mut ObjectModule, t: &Typed, ids: &HashMap<SymbolId, DataId>) -> Result<()> {
+pub(crate) fn define(module: &mut ObjectModule, t: &Typed, ids: &HashMap<SymbolId, DataId>, functions: &HashMap<SymbolId, FuncId>) -> Result<()> {
     for sym in sorted(t) {
         let def = &t.decls.statics[&sym];
         let layout = tarn_ir::layout::static_layout(t, &def.ty).map_err(|e| Error::unsupported(format!("static `{}`: {}", def.name, e.message)))?;
@@ -78,9 +78,19 @@ pub(crate) fn define(module: &mut ObjectModule, t: &Typed, ids: &HashMap<SymbolI
             description.define_zeroinit(layout.size as usize);
         }
         for (offset, target) in relocs {
-            let id = *ids.get(&target).ok_or_else(|| Error::bug("address of an undeclared static"))?;
-            let gv = module.declare_data_in_data(id, &mut description);
-            description.write_data_addr(offset, gv, 0);
+            match target {
+                StaticInit::Static(target) => {
+                    let id = *ids.get(&target).ok_or_else(|| Error::bug("address of an undeclared static"))?;
+                    let gv = module.declare_data_in_data(id, &mut description);
+                    description.write_data_addr(offset, gv, 0);
+                }
+                StaticInit::Function(target) => {
+                    let id = *functions.get(&target).ok_or_else(|| Error::bug("address of an undeclared callback"))?;
+                    let f = module.declare_func_in_data(id, &mut description);
+                    description.write_function_addr(offset, f);
+                }
+                _ => unreachable!(),
+            }
         }
         let align = def.align.unwrap_or(1).max(layout.align);
         description.set_align(u64::from(align));
@@ -95,7 +105,7 @@ pub(crate) fn define(module: &mut ObjectModule, t: &Typed, ids: &HashMap<SymbolI
     Ok(())
 }
 
-fn fill(t: &Typed, ty: &Ty, init: &StaticInit, at: usize, buf: &mut [u8], relocs: &mut Vec<(u32, SymbolId)>) -> Result<()> {
+fn fill(t: &Typed, ty: &Ty, init: &StaticInit, at: usize, buf: &mut [u8], relocs: &mut Vec<(u32, StaticInit)>) -> Result<()> {
     let size = |ty: &Ty| tarn_ir::layout::static_layout(t, ty).map(|l| l.size as usize).map_err(|e| Error::unsupported(e.message));
     match (init, ty) {
         (StaticInit::Zero, _) => {}
@@ -112,7 +122,7 @@ fn fill(t: &Typed, ty: &Ty, init: &StaticInit, at: usize, buf: &mut [u8], relocs
             }
         }
         (StaticInit::Address(a), Ty::Ptr(..)) => buf[at..at + 8].copy_from_slice(&a.to_le_bytes()),
-        (StaticInit::Static(s), Ty::Ptr(..)) => relocs.push((at as u32, *s)),
+        (StaticInit::Static(_) | StaticInit::Function(_), Ty::Ptr(..)) => relocs.push((at as u32, init.clone())),
         (StaticInit::Aggregate(items), Ty::Array(elem, _)) => {
             let step = size(elem)?;
             for (i, item) in items.iter().enumerate() {

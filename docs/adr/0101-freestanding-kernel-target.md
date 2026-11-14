@@ -224,7 +224,8 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
     storage can exist, every access is an `unsafe` raw-pointer read or
     write, and races and aliasing are the author's (documented). Immutable
     statics go to read-only memory. All statics are emitted even if unused.
-    No enums, strings, generics or functions in initializers (E3085).
+    No enums, strings or generics in initializers (E3085). ADR 0102 adds
+    `ffi.callback(function)` with real function-address relocations.
   - **Linking.** `--linker-script` (with `--entry`) is valid only for `*-none`
     and runs an existing ELF linker: `TARN_LD`, `ld.lld`, a cross GNU `ld`, or
     the host `ld` on a same-architecture Linux host, as
@@ -239,8 +240,8 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
     invocation, entry selection, failure handling and publication are
     covered with a recording stand-in linker. The link was not run
     against lld or GNU ld by the author of this patch.
-  - **Limitations.** No function addresses in static initializers (an IDT
-    must be filled at run time, P7 adds handler addresses); no field-access
+  - **Limitations.** Function addresses in static initializers were added
+    by ADR 0102; x86_64 IDT gates still need runtime encoding. No field-access
     syntax on statics (offsets by address arithmetic); same-named
     sections from several items stay separate input sections; no `#[used]`
     for functions, no `#[naked]`, no `#[link_section]` on locals; no
@@ -279,9 +280,9 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
   - **Addresses.** `ffi.callback(handler)` returns the trampoline for an
     `#[interrupt]` function (and the table for the `#[vector_table]` one) rather
     than a C adapter; no new intrinsic was needed. `#[export("name")]` on a
-    handler exports the trampoline. Addresses are therefore available at run
-    time only: statics still cannot hold function addresses (a data relocation
-    to a function is not in P6's initializer set), so an IDT is filled by
+    handler exports the trampoline. ADR 0102 also permits these addresses in
+    static initializers through function-address data relocations. An x86_64
+    IDT gate splits the address across fields, so the gate is filled by
     `arch_x86_64.idt_set_gate`, which writes the 16-byte gate with volatile
     stores, and loaded with `idt_load`. The aarch64 table has real relocations
     (`b` with `R_AARCH64_CALL26`) because it is code.
@@ -311,9 +312,8 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
     pushed general registers are restored but not exposed, so a preemptive
     scheduler needs a context-switch routine of its own); no IST/stack
     switching helpers, no `swapgs` or ring-3 entry; interrupts stay disabled
-    (interrupt gates) during handlers; no function addresses in static
-    initializers; one slot per handler (a handler for several vectors is
-    installed through `ffi.callback`, not slots); the aarch64 table reaches
+    (interrupt gates) during handlers; one slot per handler (a handler for
+    several vectors is installed through `ffi.callback`, not slots); the aarch64 table reaches
     handlers within +-128 MiB; no GIC/APIC/PIC drivers; the encodings follow
     the Intel SDM and Arm ARM and are verified by disassembly only.
   - **Notes for P8.** Limine x86_64 enters `kmain` in long mode with paging on

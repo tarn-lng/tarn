@@ -1,0 +1,48 @@
+== static_function_addresses
+7:10 x: u64
+9:13 x: u64
+11:12 frame: *mut u64
+== ffi
+10:33 value: &T
+11:37 value: &mut T
+12:36 data: &[]T
+13:40 data: &mut []T
+16:15 data: &Vec<T>
+17:19 data: &mut Vec<T>
+19:39 pointer: *mut T
+21:38 pointer: *T
+22:43 value: usize
+26:37 pointer: *T
+26:49 count: usize
+27:41 pointer: *mut T
+27:57 count: usize
+29:19 pointer: *T
+31:22 text: *u8
+32:22 target: *mut u8
+32:38 source: *u8
+32:50 count: usize
+36:26 source: *u8
+36:38 count: usize
+37:9 bytes: Vec<u8>
+38:9 index: usize
+44:18 copied: *mut u8
+50:29 text: *u8
+51:9 bytes: Vec<u8>
+61:20 text: &string
+62:9 bytes: Vec<u8>
+63:9 byte: u8
+71:23 self: &CString
+73:20 self: &CString
+78:39 function: F
+82:29 pointer: *T
+85:30 pointer: *mut T
+85:46 value: T
+87:38 pointer: *T
+88:39 pointer: *mut T
+88:55 value: T
+94:38 pointer: *T
+97:39 pointer: *mut T
+97:55 value: T
+102:47 pointer: *T
+103:48 pointer: *mut T
+103:64 value: T

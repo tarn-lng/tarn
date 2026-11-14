@@ -120,6 +120,11 @@ fn specialize_roots(p: &post::Program, t: &Typed, roots: &[FunctionId]) -> Resul
     for root in roots {
         cx.intern(*root, Vec::new())?;
     }
+    // Every static is emitted, so its function relocations are roots too.
+    for symbol in tarn_types::statics::function_targets(&t.decls) {
+        let id = p.by_symbol.get(&symbol).ok_or_else(|| Error::bug("static callback target missing"))?;
+        cx.intern(*id, Vec::new())?;
+    }
     let mut i = 0;
     while i < cx.keys.len() {
         let key = cx.keys[i].clone();

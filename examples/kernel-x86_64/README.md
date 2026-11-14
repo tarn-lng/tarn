@@ -80,3 +80,7 @@ need the same kind of boot note or request section; Limine is a natural next
 example), no APIC, no SMP, no user mode, no paging beyond the boot mapping and
 no memory-map parsing: the heap is a fixed 1 MiB static. The PVH boot code
 maps only the first GiB.
+
+The IDT installer reads trampoline addresses from the link-initialized static
+`HANDLERS` table (`ffi.callback`, ADR 0102). Only the split gate fields are
+encoded at runtime; no runtime callback construction populates the table.

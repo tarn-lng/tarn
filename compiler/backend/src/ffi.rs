@@ -4,7 +4,8 @@ use super::*;
 /// classifier used by external calls; Tarn bodies keep their private ABI.
 pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program, t: &tarn_types::Typed,
     ids: &HashMap<FunctionId, FuncId>) -> Result<HashMap<FunctionId, FuncId>> {
-    let mut targets = Vec::new();
+    let symbols = tarn_types::statics::function_targets(&t.decls);
+    let mut targets: Vec<_> = p.functions.iter().filter(|f| f.decl.symbol.is_some_and(|s| symbols.binary_search_by_key(&s.0, |s| s.0).is_ok())).map(|f| f.decl.id).collect();
     // Interrupt handlers always need a C-ABI adapter: their trampoline calls it.
     for f in &p.functions {
         if fn_attrs(t, f).is_some_and(|a| a.interrupt || a.pvh_entry) { targets.push(f.decl.id); }

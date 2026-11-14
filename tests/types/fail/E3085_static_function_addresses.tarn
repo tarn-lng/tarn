@@ -1,0 +1,29 @@
+import "ffi"
+fn generic<T>(x T) T { return x }
+async fn asynchronous() {}
+unsafe fn unchecked() {}
+extern "C" fn foreign()
+fn reference(x &u32) {}
+copy struct Pair { x u32 }
+fn aggregate() Pair { return Pair{x: 1} }
+fn plain() {}
+fn computed() *u8 { return ffi.callback(plain) }
+struct Owner {}
+fn Owner.method(&self) {}
+static GENERIC *u8 = ffi.callback(generic)
+static ASYNC *u8 = ffi.callback(asynchronous)
+static UNSAFE *u8 = ffi.callback(unchecked)
+static FOREIGN *u8 = ffi.callback(foreign)
+static REFERENCE *u8 = ffi.callback(reference)
+static AGGREGATE *u8 = ffi.callback(aggregate)
+static CLOSURE *u8 = ffi.callback(fn() {})
+static COMPUTED *u8 = computed()
+static METHOD *u8 = ffi.callback(Owner.method)
+static WRONG *mut u8 = ffi.callback(plain)
+static WRONG_POINTEE *u64 = ffi.callback(plain)
+static WRONG_ARITY *u8 = ffi.callback(plain, plain)
+static NESTED [1]*u8 = [1]*u8{computed()}
+static ADDRESS *u8 = ffi.callback(plain)
+static INDIRECT *u8 = ffi.callback(ADDRESS)
+static NO_ARGUMENT *u8 = ffi.callback()
+fn main() {}

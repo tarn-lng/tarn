@@ -1,0 +1,15 @@
+import "ffi"
+
+struct Dispatch {
+    tag u8
+    handlers [3]*u8
+}
+fn plain(x u64) u64 { return x + 1 }
+#[export("static_exported")]
+fn exported(x u64) u64 { return x + 2 }
+#[interrupt]
+fn handler(frame *mut u64) {}
+static TABLE Dispatch = Dispatch{tag: 7, handlers: [3]*u8{ffi.callback((plain)), ffi.callback(exported), ffi.null()}}
+static mut IRQ *u8 = ffi.callback(handler)
+static CONST *u8 = ffi.to_const(ffi.null())
+fn main() {}

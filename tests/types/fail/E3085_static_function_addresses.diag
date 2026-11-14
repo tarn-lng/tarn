@@ -1,0 +1,94 @@
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:13:22
+   |
+13 | static GENERIC *u8 = ffi.callback(generic)
+   |                      ^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:14:20
+   |
+14 | static ASYNC *u8 = ffi.callback(asynchronous)
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:15:21
+   |
+15 | static UNSAFE *u8 = ffi.callback(unchecked)
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:16:22
+   |
+16 | static FOREIGN *u8 = ffi.callback(foreign)
+   |                      ^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:17:24
+   |
+17 | static REFERENCE *u8 = ffi.callback(reference)
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:18:24
+   |
+18 | static AGGREGATE *u8 = ffi.callback(aggregate)
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:19:22
+   |
+19 | static CLOSURE *u8 = ffi.callback(fn() {})
+   |                      ^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: this expression is not a valid initializer here
+  --> tests/types/fail/E3085_static_function_addresses.tarn:20:23
+   |
+20 | static COMPUTED *u8 = computed()
+   |                       ^^^^^^^^^^
+   |
+   = note: static initializers are literals, constants, struct and array literals of those, `ffi.null()`, `ffi.from_address(n)`, `ffi.callback(function)` and the names of other statics
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:21:21
+   |
+21 | static METHOD *u8 = ffi.callback(Owner.method)
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: `ffi.callback(function)` has type `*u8`
+  --> tests/types/fail/E3085_static_function_addresses.tarn:22:24
+   |
+22 | static WRONG *mut u8 = ffi.callback(plain)
+   |                        ^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: `ffi.callback(function)` has type `*u8`
+  --> tests/types/fail/E3085_static_function_addresses.tarn:23:29
+   |
+23 | static WRONG_POINTEE *u64 = ffi.callback(plain)
+   |                             ^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:24:26
+   |
+24 | static WRONG_ARITY *u8 = ffi.callback(plain, plain)
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: this expression is not a valid initializer here
+  --> tests/types/fail/E3085_static_function_addresses.tarn:25:31
+   |
+25 | static NESTED [1]*u8 = [1]*u8{computed()}
+   |                               ^^^^^^^^^^
+   |
+   = note: static initializers are literals, constants, struct and array literals of those, `ffi.null()`, `ffi.from_address(n)`, `ffi.callback(function)` and the names of other statics
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:27:23
+   |
+27 | static INDIRECT *u8 = ffi.callback(ADDRESS)
+   |                       ^^^^^^^^^^^^^^^^^^^^^
+
+error[E3085]: a static callback must directly name a safe, synchronous, non-generic Tarn function with scalar/pointer C ABI parameters and result
+  --> tests/types/fail/E3085_static_function_addresses.tarn:28:26
+   |
+28 | static NO_ARGUMENT *u8 = ffi.callback()
+   |                          ^^^^^^^^^^^^^^
+

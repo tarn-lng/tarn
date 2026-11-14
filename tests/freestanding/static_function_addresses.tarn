@@ -1,0 +1,14 @@
+import "ffi"
+struct Dispatch {
+    tag u8
+    handlers [4]*u8
+}
+fn plain(x u64) u64 { return x + 1 }
+#[export("exported_callback")]
+fn exported(x u64) u64 { return x + 2 }
+#[interrupt]
+#[export("irq_callback")]
+fn irq(frame *mut u64) {}
+static TABLE Dispatch = Dispatch{tag: 7, handlers: [4]*u8{ffi.callback(plain), ffi.callback(exported), ffi.callback(irq), ffi.null()}}
+static mut REPEATED [2]*u8 = [2]*u8{ffi.callback((plain)), ffi.callback(irq)}
+fn main() {}

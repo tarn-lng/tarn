@@ -362,7 +362,8 @@ impl<'a> Elf<'a> {
 }
 
 fn freestanding_source(tag: &str, source: &str, target: &str) -> tarn_backend::Result<Vec<u8>> {
-    let dir = std::env::temp_dir().join(format!("tarn-freestanding-src-{tag}-{}", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!("tarn-freestanding-src-{tag}-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.tarn");
     std::fs::write(&file, source).unwrap();
@@ -746,4 +747,56 @@ fn a_handler_without_attributes_beyond_interrupt_stays_private() {
     let elf = Elf::parse(&bytes);
     let trampoline = symbol_named(&elf, "_h");
     assert!(!trampoline.global);
+}
+
+// ADR 0102: addresses retain otherwise-unused bodies and relocate to callbacks.
+#[test]
+fn static_function_addresses_relocate_to_adapters_and_interrupt_trampolines() {
+    for (target, absolute) in [("x86_64-none", 1u32), ("aarch64-none", 257)] {
+        let bytes = freestanding("../../tests/freestanding/static_function_addresses.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let elf = Elf::parse(&bytes);
+        let table = elf.local_static("TABLE");
+        assert_eq!(elf.contents(table, 40)[0], 7);
+        assert_eq!(&elf.contents(table, 40)[8..], &[0; 32]);
+        let relocations = elf.relocations(table.section);
+        let at = |offset| relocations.iter().find(|(o, ..)| *o == table.value + offset).unwrap();
+        let plain = at(8);
+        let exported = at(16);
+        let irq = at(24);
+        for r in [plain, exported, irq] { assert_eq!(r.1, absolute, "{target}: {r:?}"); }
+        assert!(plain.2.starts_with("tarn_c_callback_"), "{plain:?}");
+        assert!(exported.2.starts_with("tarn_c_callback_"), "{exported:?}");
+        assert_ne!(plain.2, exported.2);
+        assert_eq!(irq.2, "irq_callback");
+        assert_eq!(elf.symbol(&irq.2).kind, 2, "STT_FUNC");
+        assert!(!relocations.iter().any(|(o, ..)| *o == table.value + 32), "null has no relocation");
+        let repeated = elf.local_static("REPEATED");
+        let rs = elf.relocations(repeated.section);
+        assert!(rs.iter().any(|(o, k, name)| *o == repeated.value && *k == absolute && name == &plain.2));
+        assert!(rs.iter().any(|(o, k, name)| *o == repeated.value + 8 && *k == absolute && name == "irq_callback"));
+        assert!(elf.symbols.iter().filter(|s| s.section == 0).all(|s| s.name.is_empty() || ["tarn_rt_fault", "tarn_rt_panic", "tarn_rt_panic_at"].contains(&s.name.as_str())), "{target}: unexpected imports: {:?}", elf.symbols);
+    }
+}
+
+#[test]
+fn static_function_addresses_emit_on_all_hosted_object_formats() {
+    let source = "import \"ffi\"\nfn f() {}\nstatic ADDRESS *u8 = ffi.callback(f)\nfn main() {}\n";
+    for target in ["x86_64-linux", "aarch64-linux", "x86_64-macos", "aarch64-macos"] {
+        let bytes = freestanding_source(&format!("static-callback-{target}"), source, target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        assert_eq!(header(&bytes).0, if target.ends_with("macos") { "macho" } else { "elf" });
+    }
+}
+
+#[test]
+fn static_callbacks_resolve_module_paths_and_vector_tables() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/types/pass/static_function_paths/main.tarn", target).unwrap();
+        let elf = Elf::parse(&bytes);
+        let data = elf.local_static("CALLBACK");
+        assert!(elf.relocations(data.section).iter().any(|(o, _, name)| *o == data.value && name.starts_with("tarn_c_callback_")));
+    }
+    let bytes = freestanding_source("static-vector-address", "import \"ffi\"\n#[vector_table]\n#[export(\"vectors\")]\nfn vectors() {}\nstatic ADDRESS *u8 = ffi.callback(vectors)\nfn main() {}\n", "aarch64-none").unwrap();
+    let elf = Elf::parse(&bytes);
+    let data = elf.local_static("ADDRESS");
+    assert!(elf.relocations(data.section).iter().any(|(o, k, name)| *o == data.value && *k == 257 && name == "vectors"));
 }
