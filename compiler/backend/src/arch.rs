@@ -71,7 +71,7 @@ pub(crate) fn lookup(arch: Arch, op: &str) -> Option<Stub> {
 /// Every operation of an architecture, for documentation and tests.
 pub fn operations(arch: Arch) -> Vec<String> {
     let names: Vec<String> = match arch {
-        Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "hlt", "pause", "rdtsc",
+        Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "hlt", "pause", "int3", "rdtsc",
             "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt"]
             .iter().map(|s| s.to_string()).collect(),
         Arch::Aarch64 => {
@@ -110,6 +110,7 @@ fn x86_64(op: &str) -> Option<Stub> {
         "cli" => stub(&[], None, &[0xfa, 0xc3], &["cli", "ret"]),
         "sti" => stub(&[], None, &[0xfb, 0xc3], &["sti", "ret"]),
         "hlt" => stub(&[], None, &[0xf4, 0xc3], &["hlt", "ret"]),
+        "int3" => stub(&[], None, &[0xcc, 0xc3], &["int3", "ret"]),
         "pause" => stub(&[], None, &[0xf3, 0x90, 0xc3], &["pause", "ret"]),
         // rdtsc leaves edx:eax; combine into rax.
         "rdtsc" => stub(&[], Some(I64), &[0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0xc3], &["rdtsc", "shl rdx, 0x20", "or rax, rdx", "ret"]),

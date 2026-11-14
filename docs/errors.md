@@ -247,4 +247,5 @@ code has one meaning.
   integers, floats, `bool` or raw pointers. `#[interrupt]` (P7) also reports a
   signature other than `(*mut Frame)` / `(*mut Frame, u64)`, a result, an
   `unsafe fn`, a slot above 15, and `#[vector_table]` with parameters or an
-  argument.
+  argument. `#[pvh_entry]` (P8) reports parameters other than none or one `u64`/raw
+  pointer, a result, an argument and `unsafe fn`.

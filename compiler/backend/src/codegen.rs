@@ -603,6 +603,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         }
     }
     function_sections.extend(ffi::emit_interrupts(&mut module, p, t, target, &mut c_callbacks)?);
+    ffi::emit_pvh(&mut module, p, t, target, &c_callbacks)?;
     function_sections.extend(ffi::emit_exports(&mut module, p, t, &ids, target, &runtime.signatures)?);
     // Vector element destruction functions, declared on demand by drop_vector
     // and defined after ordinary functions (see Cx::element_glue).
@@ -1972,21 +1973,29 @@ impl Cx<'_, '_> {
                 }
             }
             (Ty::Float(_), Ty::Int(dst)) => {
-                let truncated = self.b.ins().trunc(value);
+                // The range check works on the untruncated value, so no `trunc`
+                // libcall is needed (a freestanding object has no libm, and
+                // Cranelift lowers `trunc` to one without SSE4.1). Truncation
+                // is toward zero: `value` is below the range iff `value <= lo - 1`
+                // (or `value < lo` where `lo - 1` is not representable) and above
+                // it iff `value >= hi`. `fcvt_to_*int` truncates by itself.
                 let source_ty = scalar(&v.ty).unwrap();
                 let lo = if dst.signed() { -(2f64).powi(i32::from(int_bits(*dst)) - 1) } else { 0.0 };
                 let hi = (2f64).powi(i32::from(int_bits(*dst)) - i32::from(dst.signed()));
-                let (lo, hi) = if source_ty == types::F32 {
-                    (self.b.ins().f32const(lo as f32), self.b.ins().f32const(hi as f32))
+                let representable = |x: f64| if source_ty == types::F32 { f64::from(x as f32) == x } else { true };
+                let (low_edge, low_cc) = if representable(lo - 1.0) && lo - 1.0 != lo { (lo - 1.0, FloatCC::LessThanOrEqual) } else { (lo, FloatCC::LessThan) };
+                let (low_edge, hi) = if source_ty == types::F32 {
+                    (self.b.ins().f32const(low_edge as f32), self.b.ins().f32const(hi as f32))
                 } else {
-                    (self.b.ins().f64const(lo), self.b.ins().f64const(hi))
+                    (self.b.ins().f64const(low_edge), self.b.ins().f64const(hi))
                 };
                 let bad = self.b.ins().fcmp(FloatCC::Unordered, value, value);
                 self.fault_if(bad);
-                let bad = self.b.ins().fcmp(FloatCC::LessThan, truncated, lo);
+                let bad = self.b.ins().fcmp(low_cc, value, low_edge);
                 self.fault_if(bad);
-                let bad = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, truncated, hi);
+                let bad = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, value, hi);
                 self.fault_if(bad);
+                let truncated = value;
                 let integer = if dst.signed() { self.b.ins().fcvt_to_sint(types::I64, truncated) } else { self.b.ins().fcvt_to_uint(types::I64, truncated) };
                 if target.bits() < 64 { self.b.ins().ireduce(target, integer) } else { integer }
             }

@@ -4,7 +4,7 @@ error[E3086]: unknown attribute `bogus` on a function
 1 | #[bogus]
   | ^^^^^^^^
   |
-  = help: a function accepts `#[export(..)]`, `#[section(..)]`, `#[interrupt(..)]`, `#[vector_table(..)]`
+  = help: a function accepts `#[export(..)]`, `#[section(..)]`, `#[interrupt(..)]`, `#[vector_table(..)]`, `#[pvh_entry(..)]`
 
 error[E3086]: `#[export]` needs a symbol name
  --> tests/types/fail/E3086_invalid_attributes.tarn:4:1
@@ -42,7 +42,7 @@ error[E3086]: unknown attribute `align` on a function
 16 | #[align(16)]
    | ^^^^^^^^^^^^
    |
-   = help: a function accepts `#[export(..)]`, `#[section(..)]`, `#[interrupt(..)]`, `#[vector_table(..)]`
+   = help: a function accepts `#[export(..)]`, `#[section(..)]`, `#[interrupt(..)]`, `#[vector_table(..)]`, `#[pvh_entry(..)]`
 
 error[E3086]: symbol `twice` is exported twice
   --> tests/types/fail/E3086_invalid_attributes.tarn:23:4

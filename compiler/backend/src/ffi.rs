@@ -7,7 +7,7 @@ pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program, t: &t
     let mut targets = Vec::new();
     // Interrupt handlers always need a C-ABI adapter: their trampoline calls it.
     for f in &p.functions {
-        if fn_attrs(t, f).is_some_and(|a| a.interrupt) { targets.push(f.decl.id); }
+        if fn_attrs(t, f).is_some_and(|a| a.interrupt || a.pvh_entry) { targets.push(f.decl.id); }
     }
     for f in &p.functions { for b in &f.blocks {
         if let Terminator::Call { callee: Callee::Intrinsic(name), args, .. } = &b.term
@@ -189,6 +189,22 @@ pub(super) fn emit_interrupts(module: &mut ObjectModule, p: &post::Program, t: &
         }
     }
     Ok(sections)
+}
+
+/// `#[pvh_entry]` (ADR 0101, P8): the 32-bit boot stub, its page tables and
+/// the ELF note that tells a PVH loader where it is (see `crate::pvh`).
+pub(super) fn emit_pvh(module: &mut ObjectModule, p: &post::Program, t: &tarn_types::Typed, target: crate::Target,
+    c_callbacks: &HashMap<FunctionId, FuncId>) -> Result<()> {
+    let entries: Vec<&post::Function> = p.functions.iter().filter(|f| fn_attrs(t, f).is_some_and(|a| a.pvh_entry)).collect();
+    let Some(first) = entries.first() else { return Ok(()) };
+    if target.os != crate::Os::None || target.arch != crate::Arch::X86_64 {
+        return Err(Error::unsupported(format!("`#[pvh_entry]` builds x86_64 PVH boot code and needs the `x86_64-none` target, not {target}")));
+    }
+    if entries.len() > 1 {
+        return Err(Error::unsupported(format!("a program has at most one `#[pvh_entry]` function; found `{}` and `{}`", first.decl.name, entries[1].decl.name)));
+    }
+    let adapter = *c_callbacks.get(&first.decl.id).ok_or_else(|| Error::bug("PVH entry adapter missing"))?;
+    crate::pvh::emit(module, adapter)
 }
 
 /// A function with `sig` that forwards its arguments to `target`.

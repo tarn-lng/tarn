@@ -51,6 +51,7 @@ Rules
 | `in8/in16/in32(port u16) u8/u16/u32` | `in al/ax/eax, dx` |
 | `out8/out16/out32(port u16, value)` | `out dx, al/ax/eax` |
 | `cli()`, `sti()`, `hlt()`, `pause()` | same name |
+| `int3()` | `int3` (software breakpoint, vector 3) |
 | `rdtsc() u64` | `rdtsc` (edx:eax combined) |
 | `read_cr0/cr2/cr3/cr4() u64` | `mov rax, crN` |
 | `write_cr0/cr3/cr4(value u64)` | `mov crN, value` |

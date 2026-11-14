@@ -1,0 +1,30 @@
+error[E3086]: a `#[pvh_entry]` function takes no parameters or one `u64` or raw pointer (the address of the `hvm_start_info` the boot loader passes); found (u64, u64)
+ --> tests/types/fail/E3086_invalid_pvh_entry.tarn:2:4
+  |
+2 | fn two(info u64, extra u64) {}
+  |    ^^^
+
+error[E3086]: a `#[pvh_entry]` function takes no parameters or one `u64` or raw pointer (the address of the `hvm_start_info` the boot loader passes); found (string)
+ --> tests/types/fail/E3086_invalid_pvh_entry.tarn:5:4
+  |
+5 | fn by_value(info string) {}
+  |    ^^^^^^^^
+
+error[E3086]: a `#[pvh_entry]` function returns nothing, found `u64`
+ --> tests/types/fail/E3086_invalid_pvh_entry.tarn:8:14
+  |
+8 | fn returns() u64 {
+  |              ^^^
+
+error[E3086]: `#[pvh_entry]` takes no argument
+  --> tests/types/fail/E3086_invalid_pvh_entry.tarn:12:1
+   |
+12 | #[pvh_entry(1)]
+   | ^^^^^^^^^^^^^^^
+
+error[E3086]: `#[pvh_entry]` functions cannot be `unsafe fn`; use `unsafe` blocks inside
+  --> tests/types/fail/E3086_invalid_pvh_entry.tarn:15:1
+   |
+15 | #[pvh_entry]
+   | ^^^^^^^^^^^^
+

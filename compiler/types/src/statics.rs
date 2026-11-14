@@ -58,12 +58,15 @@ pub struct FnAttrs {
     pub vector: Option<u32>,
     /// `#[vector_table]`: the function stands for the generated aarch64 vector table.
     pub vector_table: bool,
+    /// `#[pvh_entry]` (ADR 0101, P8): the function is the 64-bit kernel entry
+    /// that the generated PVH boot code calls (x86_64 only).
+    pub pvh_entry: bool,
 }
 
 impl FnAttrs {
     /// Functions that must be compiled although nothing calls them.
     pub fn is_root(&self) -> bool {
-        self.export.is_some() || self.vector.is_some() || self.vector_table
+        self.export.is_some() || self.vector.is_some() || self.vector_table || self.pvh_entry
     }
 }
 
@@ -94,13 +97,14 @@ struct Parsed {
     interrupt: bool,
     vector: Option<u32>,
     vector_table: bool,
+    pvh_entry: bool,
 }
 
 fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Parsed {
-    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false };
+    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false, pvh_entry: false };
     let what = if is_fn { "function" } else { "static" };
     for a in attrs {
-        let known: &[&str] = if is_fn { &["export", "section", "interrupt", "vector_table"] } else { &["export", "section", "align"] };
+        let known: &[&str] = if is_fn { &["export", "section", "interrupt", "vector_table", "pvh_entry"] } else { &["export", "section", "align"] };
         if !known.contains(&a.name.as_str()) {
             diags.push(invalid_attr(a.span, format!("unknown attribute `{}` on a {what}", a.name)).help(format!("a {what} accepts {}", known.iter().map(|k| format!("`#[{k}(..)]`")).collect::<Vec<_>>().join(", "))));
             continue;
@@ -110,6 +114,7 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
             "section" => out.section.is_some(),
             "interrupt" => out.interrupt,
             "vector_table" => out.vector_table,
+            "pvh_entry" => out.pvh_entry,
             _ => out.align.is_some(),
         };
         if duplicate {
@@ -132,6 +137,8 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
             ("interrupt", _) => diags.push(invalid_attr(a.span, "`#[interrupt]` takes no argument or a vector table slot number").help("write `#[interrupt]` or `#[interrupt(5)]`")),
             ("vector_table", None) => out.vector_table = true,
             ("vector_table", _) => diags.push(invalid_attr(a.span, "`#[vector_table]` takes no argument")),
+            ("pvh_entry", None) => out.pvh_entry = true,
+            ("pvh_entry", _) => diags.push(invalid_attr(a.span, "`#[pvh_entry]` takes no argument")),
             ("align", Some(AttrArg::Int(n))) if n.is_power_of_two() && *n <= 65536 => out.align = Some(*n as u32),
             ("align", Some(AttrArg::Int(n))) => diags.push(invalid_attr(a.span, format!("alignment {n} is not a power of two up to 65536"))),
             ("align", _) => diags.push(invalid_attr(a.span, "`#[align]` needs a number").help("write `#[align(4096)]`")),
@@ -163,7 +170,7 @@ pub fn evaluate(env: &mut Env<'_>) {
                 }
             }
             env.diags.extend(diags);
-            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table });
+            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table, pvh_entry: parsed.pvh_entry });
         }
     }
     // ---- statics, pass 1: types and attributes
@@ -267,6 +274,24 @@ fn function_problems(env: &Env<'_>, f: &FnDecl, sym: SymbolId, parsed: &Parsed) 
         }
         if parsed.vector_table && parsed.vector.is_some() {
             out.push(invalid_attr(span, "a slot number belongs to `#[interrupt(n)]`"));
+        }
+    }
+    if parsed.pvh_entry {
+        let show = |t: &Ty| crate::show(t, env.r, &env.decls.param_names, &|_| "_");
+        if f.is_unsafe {
+            out.push(invalid_attr(span, "`#[pvh_entry]` functions cannot be `unsafe fn`; use `unsafe` blocks inside"));
+        }
+        if let Some(sig) = env.decls.fns.get(&sym) {
+            if sig.ret != Ty::Void && sig.ret != Ty::Error {
+                out.push(invalid_attr(f.ret.as_ref().map(|t| t.span).unwrap_or(f.name.span), format!("a `#[pvh_entry]` function returns nothing, found `{}`", show(&sig.ret))));
+            }
+            let info_ok = |t: &Ty| matches!(t, Ty::Ptr(_, inner) if !matches!(**inner, Ty::Slice(_) | Ty::Any(_) | Ty::Str)) || *t == Ty::Int(IntTy::U64) || *t == Ty::Error;
+            match sig.params.as_slice() {
+                [] => {}
+                [info] if info_ok(info) => {}
+                other => out.push(invalid_attr(f.name.span, format!("a `#[pvh_entry]` function takes no parameters or one `u64` or raw pointer (the address of the `hvm_start_info` the boot loader passes); found ({})",
+                    other.iter().map(|t| show(t)).collect::<Vec<_>>().join(", ")))),
+            }
         }
     }
     if parsed.export.is_some()

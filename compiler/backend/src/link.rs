@@ -2,8 +2,9 @@
 //!
 //! Tarn does not bundle a linker. A `*-none` object is linked with an ELF
 //! linker the user already has: `TARN_LD` if set, otherwise the first of
-//! `ld.lld` (LLVM), a cross GNU `ld` for the architecture, or the host `ld`
-//! when the host is Linux of the same architecture. Nothing is downloaded.
+//! `ld.lld` (LLVM), a cross GNU `ld` for the architecture, the host `ld`
+//! when the host is Linux of the same architecture, or, last, the `ld.lld`
+//! inside the Rust toolchain's sysroot. Nothing is downloaded.
 use crate::{Arch, Error, Os, Result, Target};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,7 +27,7 @@ const EXTRA_DIRECTORIES: [&str; 4] = ["/opt/homebrew/opt/lld/bin", "/usr/local/o
 
 /// The linker to use for `target`, if one exists.
 pub fn find_linker(target: Target) -> Option<PathBuf> {
-    find_linker_in(target, std::env::var_os("TARN_LD"), &std::env::var_os("PATH").unwrap_or_default(), &EXTRA_DIRECTORIES)
+    find_linker_in(target, std::env::var_os("TARN_LD"), &std::env::var_os("PATH").unwrap_or_default(), &EXTRA_DIRECTORIES).or_else(rust_lld)
 }
 
 fn find_linker_in(target: Target, explicit: Option<std::ffi::OsString>, path: &std::ffi::OsStr, extra: &[&str]) -> Option<PathBuf> {
@@ -35,6 +36,15 @@ fn find_linker_in(target: Target, explicit: Option<std::ffi::OsString>, path: &s
     }
     let directories: Vec<PathBuf> = std::env::split_paths(path).chain(extra.iter().map(PathBuf::from)).collect();
     linker_candidates(target).into_iter().find_map(|name| directories.iter().map(|d| d.join(name)).find(|c| c.is_file()))
+}
+
+/// The `ld.lld` that ships with a Rust toolchain
+/// (`<sysroot>/lib/rustlib/<host>/bin/gcc-ld/ld.lld`): every machine that can
+/// build Tarn has it, though it is on no `PATH`.
+fn rust_lld() -> Option<PathBuf> {
+    let output = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())).args(["--print", "sysroot"]).output().ok()?;
+    let sysroot = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
+    std::fs::read_dir(sysroot.join("lib/rustlib")).ok()?.filter_map(|e| e.ok()).map(|e| e.path().join("bin/gcc-ld/ld.lld")).find(|p| p.is_file())
 }
 
 /// What to tell a user who has no linker.

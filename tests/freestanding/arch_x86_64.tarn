@@ -19,6 +19,7 @@ fn main() {
     unsafe {
         arch_x86_64.cli()
         arch_x86_64.pause()
+        arch_x86_64.int3()
         cr0 := arch_x86_64.read_cr0()
         cr2 := arch_x86_64.read_cr2()
         cr3 := arch_x86_64.read_cr3()

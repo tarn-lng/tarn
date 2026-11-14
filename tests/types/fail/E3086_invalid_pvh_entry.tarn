@@ -1,0 +1,19 @@
+#[pvh_entry]
+fn two(info u64, extra u64) {}
+
+#[pvh_entry]
+fn by_value(info string) {}
+
+#[pvh_entry]
+fn returns() u64 {
+    return 0
+}
+
+#[pvh_entry(1)]
+fn argument() {}
+
+#[pvh_entry]
+unsafe fn raw() {}
+
+#[pvh_entry]
+fn fine(info u64) {}

@@ -13,3 +13,4 @@ sqlite needs libsqlite3 and --link flags
 glib_callback needs libglib2.0 and --link glib-2.0
 textstats needs input: reads text from stdin
 ticket_classifier needs arguments and an HTTPS service
+kernel-x86_64 freestanding kernel: boots under QEMU in the kernel-qemu CI job

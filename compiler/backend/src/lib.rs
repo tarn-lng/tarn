@@ -13,9 +13,11 @@ pub mod link;
 mod heap;
 mod arch;
 mod interrupt;
+mod pvh;
 #[doc(hidden)]
 pub use arch::{listing as cpu_stub_listing, operations as cpu_operations};
 pub use interrupt::listing as interrupt_listing;
+pub use pvh::listing as pvh_listing;
 pub use target::{Arch, Os, Target, TARGETS};
 pub use freestanding::CONTRACT as FREESTANDING_CONTRACT;
 use std::fmt;

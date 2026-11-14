@@ -12,7 +12,7 @@ item        = { attribute NL } [ "pub" ]
               | enum_decl | interface | impl_decl | static_decl ) ;
 attribute   = "#" "[" IDENT [ "(" ( STRING | INT ) ")" ] "]" ;
               (* only on fn_decl and static_decl: export, section, align, and on
-                 functions interrupt[(slot)] and vector_table (ADR 0101) *)
+                 functions interrupt[(slot)], vector_table and pvh_entry (ADR 0101) *)
 static_decl = "static" [ "mut" ] IDENT type [ "=" expr ] ;
               (* `static` is contextual: an identifier at item position *)
 import      = "import" STRING ;

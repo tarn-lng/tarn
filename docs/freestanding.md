@@ -67,6 +67,7 @@ tarn build kernel.tarn --target x86_64-none --linker-script kernel.ld -o kernel.
 | `#[align(n)]` | static | At least `n`-byte alignment; a power of two up to 65536. |
 | `#[interrupt]`, `#[interrupt(n)]` | function | An interrupt or exception handler (see [Interrupt handlers](#interrupt-handlers)). `n` is an aarch64 vector table slot. |
 | `#[vector_table]` | function | Stands for the generated aarch64 exception vector table. |
+| `#[pvh_entry]` | function | The 64-bit kernel entry of an x86_64 PVH boot (see [PVH boot](#pvh-boot)). |
 
 Rules, all reported as E3086 (E1023 for a malformed attribute):
 
@@ -296,6 +297,62 @@ The sequences are generated in `compiler/backend/src/interrupt.rs`, and the
 test `trampolines_disassemble_to_the_documented_sequence` disassembles them
 with the host `objdump`.
 
+## PVH boot
+
+QEMU's `-kernel`, Xen and Cloud Hypervisor start an ELF that has a PVH note
+(`XEN_ELFNOTE_PHYS32_ENTRY`) in 32-bit protected mode with paging off; no
+bootloader image, ISO or download is needed. Tarn emits only 64-bit code, so
+`#[pvh_entry]` on the kernel's entry function makes the compiler generate the
+rest:
+
+```tarn
+import "ffi"
+
+#[pvh_entry]
+#[export("kmain")]
+fn kmain(info u64) {        // or `fn kmain()`; `info` is the hvm_start_info address
+    // long mode, paging on, SSE on, interrupts off
+}
+```
+
+- `tarn_pvh_start`, a global 32-bit code symbol (the ELF entry; name it in
+  `ENTRY(tarn_pvh_start)`): sets a 16 KiB stack, builds identity-mapped page
+  tables for the first GiB (2 MiB pages), sets `CR4.PAE|OSFXSR|OSXMMEXCPT` and
+  `EFER.LME`, loads a GDT (selector `0x08` 64-bit code, `0x10` data), enables
+  paging, clears `CR0.EM/TS` (sets `MP`, `NE`) and far-jumps to a 64-bit part
+  that loads the data segments and calls the function with `edi` = the
+  `ebx` the loader passed. The bytes and their assembly are in
+  `compiler/backend/src/pvh.rs`.
+- Tables, stack and GDT are compiler-made local data (`tarn_pvh_tables`,
+  `tarn_pvh_stack` in `.bss`, `tarn_pvh_gdt`), so the linker script must keep
+  `.bss` and `.rodata`; the stub reaches them with 32-bit absolute
+  relocations, hence the image must be linked below 4 GiB (1 MiB is usual).
+- The note lives in section `.note.Xen`. A script must keep it and give it its
+  own `PT_NOTE` program header, because QEMU reads the note from there:
+
+```
+ENTRY(tarn_pvh_start)
+PHDRS { text PT_LOAD FLAGS(5); data PT_LOAD FLAGS(6); note PT_NOTE; }
+SECTIONS {
+    . = 1M;
+    .text : { *(.text .text.*) } :text
+    .rodata : { *(.rodata .rodata.*) } :text
+    .note : { KEEP(*(.note.Xen)) } :text :note
+    . = ALIGN(4096);
+    .data : { *(.data .data.*) } :data
+    .bss : { *(.bss .bss.*) *(COMMON) } :data
+}
+```
+
+Rules: x86_64 `*-none` only (anything else is a build error), one per
+program, a function with no parameters or one `u64`/raw pointer and no result,
+not `unsafe fn` (E3086); it may also carry `#[export]` and `#[section]`. If
+the function returns, the CPU halts. The interrupt state is the loader's
+(QEMU leaves it off) and the GDT is the stub's: `idt_set_gate` selector `8`
+is its code segment. The example kernel in
+[examples/kernel-x86_64](../examples/kernel-x86_64/README.md) boots this way
+and is booted by CI.
+
 ## Entry point
 
 The ELF entry comes from the linker script (`ENTRY(kmain)`), from
@@ -318,7 +375,10 @@ of these is used:
 3. a cross GNU linker for the architecture: `x86_64-elf-ld`,
    `x86_64-linux-gnu-ld`; `aarch64-elf-ld`, `aarch64-none-elf-ld`,
    `aarch64-linux-gnu-ld`;
-4. `ld`, only on a Linux host of the same architecture.
+4. `ld`, only on a Linux host of the same architecture;
+5. the `ld.lld` inside the Rust toolchain
+   (`$(rustc --print sysroot)/lib/rustlib/<host>/bin/gcc-ld/ld.lld`), so any
+   machine that can build Tarn can link a kernel.
 
 If none exists the build fails naming what to install, and nothing is
 written. If the linker fails its stderr is shown and no output is left. Tarn

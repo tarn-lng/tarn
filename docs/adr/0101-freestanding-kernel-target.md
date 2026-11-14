@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: accepted; P1 through P7 implemented. Delivered as a series of 0.5.x patches; no new minor.
+Status: implemented (P1 through P8); an aarch64 boot example is left as follow-up. Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -26,7 +26,7 @@ patches. Each patch is useful on its own (embedded, bootloaders, a C-free
 runtime) and never weakens the safety guarantees of hosted Tarn: everything
 new is reachable only through `unsafe` or the freestanding profile.
 
-Goal: a Tarn `kmain` boots under QEMU through Limine, prints over the serial
+Goal: a Tarn `kmain` boots under QEMU (PVH direct boot; see P8), prints over the serial
 port, handles a timer interrupt and allocates from its own heap.
 
 ## Patch series
@@ -325,13 +325,75 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
     COM1 (`out8(0x3f8, byte)`). The kernel needs a linker (`ld.lld` or a
     cross `ld`) in CI.
 
-### P8 — Example kernel and CI
+### P8 — Example kernel and CI — implemented
 
-- `examples/kernel-x86_64`: Limine boot, serial `println`, GDT/IDT, PIT/APIC
-  timer, bump-then-free-list heap, panic over serial.
-- CI job: build the kernel and boot it in `qemu-system-x86_64 -nographic`;
-  pass when the serial output contains the expected line.
-- aarch64 (`qemu -M virt`, PL011 UART) follows once x86_64 is green.
+- `examples/kernel-x86_64`: PVH boot, serial `println`, IDT, PIT timer on the
+  remapped PIC, free-list heap, panic over serial, exit through
+  `isa-debug-exit`.
+- Tests: `compiler/backend/tests/kernel_boot.rs` builds the example, links it,
+  boots it in QEMU (20 s timeout) and checks the serial lines and the exit
+  status; three failure kernels (panic, page fault with an error code, failed
+  bounds check) are booted too, and the ELF's PT_NOTE is checked. Everything
+  skips with a printed reason when QEMU or an ELF linker is missing.
+- CI: the `kernel-qemu` job in `.github/workflows/ci.yml` installs
+  `qemu-system-x86` and `lld` with apt and runs that test plus the example's
+  `run.sh` with the release CLI.
+- aarch64 (`qemu -M virt`, PL011) was not done; the aarch64 trampolines and
+  vector table remain verified by disassembly only.
+- Done: guide in [docs/freestanding.md](../freestanding.md#pvh-boot), example
+  README in `examples/kernel-x86_64/README.md`.
+  - **PVH instead of Limine.** The plan named Limine; it needs a bootloader
+    binary, xorriso and an ISO, all downloads, and so would not run offline or
+    in a plain CI image. QEMU's `-kernel` loads an ELF directly when it
+    carries a PVH note (`XEN_ELFNOTE_PHYS32_ENTRY`) and enters it in 32-bit
+    protected mode. Limine remains a natural second example (the `.limine_requests`
+    section support of P6 already exists).
+  - **The 32-bit entry is compiler-provided, not a blob in the example.**
+    Tarn emits only 64-bit code and PVH enters in 32-bit protected mode with
+    paging off, so something hand-assembled must reach long mode. Writing it
+    as a byte array in the example would need addresses of its own tables
+    (relocations) and would be copied by every kernel. `#[pvh_entry]` on the
+    64-bit entry function (x86_64 `*-none` only, no parameter or one
+    `u64`/pointer receiving the `hvm_start_info` address) makes the backend
+    emit, like the P7 trampolines, `tarn_pvh_start` (bytes with their assembly
+    in `compiler/backend/src/pvh.rs`, Abs4 relocations to its own tables,
+    stack and GDT, a call relocation to the entry's C adapter), the zeroed
+    tables and stack in `.bss`, a GDT, and the `.note.Xen` note whose entry
+    field is an 8-byte absolute relocation to the stub (QEMU reads the low
+    32 bits). It identity-maps the first GiB with 2 MiB pages, enables
+    PAE/LME/paging, SSE (`CR4.OSFXSR|OSXMMEXCPT`, `CR0.EM` clear) which the P7
+    trampolines need, loads a GDT (`0x08` code, `0x10` data) and far-jumps to
+    64-bit code. The linker script must put the note in a `PT_NOTE` program
+    header (`PHDRS`); QEMU ignores a note that is only a section.
+  - **What running it found.** P1-P7 held up on first boot (the P5 stubs, the
+    P6 link and the P7 trampolines, including the error-code variant, ran
+    correctly in QEMU: port I/O, `lidt`, `int3`, the PIT interrupt, `#PF` with
+    code and `cr2`, `hlt`, `sti`, `cli`, `pause`). `rdmsr`, `wrmsr`, `lgdt` and the control-register writes were
+    executed only by the boot stub's own instructions, not through the P5 stubs). The bugs found were:
+    1. *P2 (float casts):* any float-to-integer cast (`u64(f)`) lowered
+       `trunc` to a call of libm's `trunc`, an undefined symbol the P2
+       contract check never saw because no freestanding test cast a float. The
+       range check now runs on the untruncated value (`value <= lo - 1` or
+       `value < lo` where `lo - 1` is not representable, and `value >= hi`) and
+       `fcvt_to_*int` truncates by itself, so no libcall is left and hosted
+       code gets shorter. Boundary values were checked on a hosted run.
+    2. *P6 (linker discovery):* a machine with Rust but no `ld.lld` could not
+       link. Discovery now ends with the `ld.lld` inside the Rust toolchain's
+       sysroot (`rustc --print sysroot`).
+    3. *P5 (missing intrinsic):* no way to raise a breakpoint; `arch_x86_64.int3()`
+       added (stub `cc c3`).
+    4. *P8 docs vs reality:* the planned `-nographic ... -serial stdio` QEMU
+       line is rejected by QEMU (two backends on stdio); the documented
+       invocation is `-display none -serial stdio -monitor none`.
+  - **Limitations.** x86_64 and QEMU only; the boot code maps only the first
+    GiB write-back (no MMIO above it, no PCD on device ranges); one boot
+    CPU, no APIC/SMP, no memory-map parsing (the heap is a static 1 MiB); the
+    note's entry is absolute so the image must be linked below 4 GiB; a
+    program returns to a `cli; hlt` loop; no aarch64 boot yet.
+  - **Verification limits.** Run on QEMU 11.1.3 (TCG) only, not on KVM or real
+    hardware; the PVH stub is checked by execution and by unit tests of its
+    jump targets, not by a disassembler (it was not disassembled in
+    32-bit mode).
 
 ## Alternatives
 
