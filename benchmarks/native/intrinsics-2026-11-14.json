@@ -1,0 +1,107 @@
+{
+  "date": "2026-11-14",
+  "baseline_commit": "81e4852b53a16f2fc2b56d3d33bc78ccf470985e",
+  "host": "macOS x86_64, Intel Core i5-1135G7 @ 2.40 GHz",
+  "rust": "1.99.1",
+  "codegen": "Cranelift 0.125.3, opt_level=speed",
+  "method": "Seven alternating before/after executions per fixture, alternating which runs first; process startup and print included; other compiler tests running concurrently; uncontrolled host load",
+  "iterations_per_execution": 10000000,
+  "runtime": {
+    "pause": {
+      "before": {
+        "samples_ms": [
+          986.26153800069,
+          695.1693250011886,
+          1303.5044509997533,
+          918.6862479982665,
+          801.280826999573,
+          644.0247009995801,
+          667.5829570012866
+        ],
+        "median_ms": 801.280826999573
+      },
+      "after": {
+        "samples_ms": [
+          1037.349866997829,
+          884.9155450006947,
+          731.4973440006725,
+          894.2435229982948,
+          722.4304659976042,
+          656.1140429985244,
+          715.2172410023923
+        ],
+        "median_ms": 731.4973440006725
+      }
+    },
+    "volatile": {
+      "before": {
+        "samples_ms": [
+          161.21312199902604,
+          124.36280399924726,
+          149.73707199897035,
+          160.84665699963807,
+          146.35783700214233,
+          148.60310699805268,
+          389.3191179995483
+        ],
+        "median_ms": 149.73707199897035
+      },
+      "after": {
+        "samples_ms": [
+          12.466504998883465,
+          10.305697000148939,
+          366.3317840000673,
+          11.550776998774381,
+          12.586175002070377,
+          10.227750000922242,
+          8.586957999796141
+        ],
+        "median_ms": 11.550776998774381
+      }
+    }
+  },
+  "disassembly": {
+    "hot": {
+      "before": {
+        "main_instruction_count": 17,
+        "calls": 4,
+        "mfence": 0,
+        "object_bytes": 2032
+      },
+      "after": {
+        "main_instruction_count": 26,
+        "calls": 0,
+        "mfence": 0,
+        "object_bytes": 1840
+      }
+    },
+    "arm": {
+      "before": {
+        "main_instruction_count": 12,
+        "calls": 4,
+        "mfence": 0,
+        "object_bytes": 2072
+      },
+      "after": {
+        "main_instruction_count": 12,
+        "calls": 0,
+        "mfence": 0,
+        "object_bytes": 1880
+      }
+    },
+    "mmio": {
+      "before": {
+        "main_instruction_count": 23,
+        "calls": 1,
+        "mfence": 2,
+        "object_bytes": 1384
+      },
+      "after": {
+        "main_instruction_count": 23,
+        "calls": 1,
+        "mfence": 0,
+        "object_bytes": 1384
+      }
+    }
+  }
+}

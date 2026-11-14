@@ -160,6 +160,21 @@ fn a_failed_bounds_check_calls_the_fault_handler() {
     assert_eq!(status, EXIT_FAILED, "{output}");
 }
 
+#[test]
+fn inline_cr3_tlb_and_port_sequences_execute_in_ring_zero() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("inline-cpu");
+    // Reload the current table, invalidate an identity-mapped address, and
+    // exercise all port widths on the POST delay port (no serial side effect).
+    let source = example().replacen("    heap_reuse()\n", "    unsafe {\n        cr3 := arch_x86_64.read_cr3()\n        arch_x86_64.write_cr3(cr3)\n        arch_x86_64.invlpg(4096)\n        arch_x86_64.out8(128, 0)\n        arch_x86_64.out16(128, 0)\n        arch_x86_64.out32(128, 0)\n        byte := arch_x86_64.in8(128)\n        half := arch_x86_64.in16(128)\n        word := arch_x86_64.in32(128)\n    }\n    heap_reuse()\n", 1);
+    assert!(source.contains("arch_x86_64.invlpg(4096)"));
+    let elf = build(&dir, &source, &linker);
+    let (output, status) = boot(&qemu, &elf);
+    std::fs::remove_dir_all(dir).unwrap();
+    assert_eq!(status, EXIT_OK, "{output}");
+    assert!(output.contains("heap"), "{output}");
+}
+
 /// Little-endian reads for the program header walk below.
 fn u16_at(b: &[u8], at: usize) -> usize { u16::from_le_bytes(b[at..at + 2].try_into().unwrap()) as usize }
 fn u32_at(b: &[u8], at: usize) -> u32 { u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) }

@@ -1,0 +1,12 @@
+// Disassembly only: these instructions require ring 0.
+import "arch_x86_64"
+fn main() {
+    unsafe {
+        for true {
+            arch_x86_64.out8(1016, 65)
+            arch_x86_64.invlpg(4096)
+            arch_x86_64.write_cr3(8192)
+            arch_x86_64.pause()
+        }
+    }
+}

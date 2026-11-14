@@ -72,13 +72,22 @@ references. Unsupported types fail native builds.
 ### Volatile access and fences (ADR 0101)
 
 For memory-mapped device registers: `ffi.read_volatile(p)` and
-`ffi.write_volatile(p, v)` perform exactly one access each, in program order
-relative to every other volatile access and `ffi.fence()`. They are never
+`ffi.write_volatile(p, v)` make the compiler emit exactly one access each, in
+program order relative to every other volatile access and `ffi.fence()`. They are never
 merged, forwarded from an earlier store, hoisted or deleted, even when the
 value is unused. Calling them outside `unsafe` is error E3071. `ffi.fence()`
 (safe) is a full memory fence for compiler and CPU (`mfence` / `dmb ish`) and
 needs no runtime, so it works on `*-none` targets. Port I/O, control
 registers and other CPU instructions are in docs/arch.md.
+
+On x86_64, volatile scalar loads and stores use plain `mov` (plus inert NOP
+padding), without an implicit `mfence` after each store (ADR 0104). They keep
+compiler ordering and are not atomics for synchronization. The kernel must
+map MMIO with the device's required memory type, normally uncached (UC);
+volatile access does not configure PAT/MTRRs or flush write-combining buffers.
+Use `ffi.fence()` where a device protocol or ordering with normal memory needs
+a full fence. aarch64 retains the stronger `ldar`/`stlr` lowering; explicit
+fences remain `dmb ish`.
 
 ```
 import "ffi"

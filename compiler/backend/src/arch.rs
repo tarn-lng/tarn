@@ -1,10 +1,11 @@
-//! Typed CPU intrinsics (ADR 0101, P5). Cranelift has no inline assembly, so
-//! every privileged or otherwise unexpressible instruction is a tiny
-//! hand-assembled function emitted as a Local function inside the object (via
-//! `define_function_bytes`) and called with the system ABI. Only the stubs a
-//! program calls are emitted. No stub touches memory other than its operand,
+//! Typed CPU intrinsics (ADRs 0101, 0104). Cranelift has no inline assembly.
+//! Native CLIF handles int3; fixed-size post-codegen substitutions inline
+//! other short sequences in ABI call slots. Longer sequences remain tiny
+//! hand-assembled Local functions. Only templates a program uses are emitted;
+//! even inlined templates must be defined because Cranelift requires it.
+//! No template touches memory other than its operand,
 //! the stack, or any register outside the caller-saved set of the C ABI
-//! (x86_64: rax, rcx, rdx; aarch64: x0).
+//! (x86_64: rax, rcx, rdx, rsi; aarch64: x0).
 //!
 //! Each entry lists the bytes and the assembly they encode; the
 //! `cpu_stubs_disassemble_to_their_documented_assembly` integration test
@@ -17,7 +18,7 @@
 //! in16   (port u16) u16    89 fa 66 ed c3         mov edx, edi ; in ax, dx ; ret
 //! in32   (port u16) u32    89 fa ed c3            mov edx, edi ; in eax, dx ; ret
 //! out8   (port u16, v u8)  89 fa 89 f0 ee c3      mov edx, edi ; mov eax, esi ; out dx, al ; ret
-//! out16  (port u16, v u16) 89 fa 89 f0 66 ef c3   mov edx, edi ; mov eax, esi ; out dx, ax ; ret
+//! out16  (port u16, v u16) 89 fa 96 66 ef c3      mov edx, edi ; xchg eax, esi ; out dx, ax ; ret
 //! out32  (port u16, v u32) 89 fa 89 f0 ef c3      mov edx, edi ; mov eax, esi ; out dx, eax ; ret
 //! ```
 //!
@@ -29,6 +30,26 @@ use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+
+/// Reserved backend source-location bit; no source positions are currently
+/// attached to CLIF instructions. Lower bits identify each volatile store.
+pub(crate) const VOLATILE_STORE_LOC: u32 = 0x8000_0000;
+
+/// CLIF 0.125.3 has only seq-cst atomic stores and no volatile flag. Keep
+/// their compiler effects, but replace the tagged x86 store's trailing
+/// mfence by an equal-sized NOP. Ordinary atomics and ffi.fence are untouched.
+pub(crate) fn relax_volatile_stores(code: &mut [u8], locations: &[cranelift_codegen::MachSrcLoc<cranelift_codegen::Final>]) -> Result<()> {
+    for loc in locations {
+        if loc.loc.is_default() || loc.loc.bits() & VOLATILE_STORE_LOC == 0 { continue; }
+        let end = loc.end as usize;
+        let fence = code.get_mut(end.saturating_sub(3)..end).ok_or_else(|| Error::bug("volatile store outside function"))?;
+        if loc.end - loc.start < 5 || fence != [0x0f, 0xae, 0xf0] {
+            return Err(Error::bug("unexpected x86 volatile store lowering; expected trailing mfence"));
+        }
+        fence.copy_from_slice(&[0x0f, 0x1f, 0x00]); // nop dword ptr [rax], no memory access
+    }
+    Ok(())
+}
 
 /// One hand-assembled function.
 pub(crate) struct Stub {
@@ -105,7 +126,9 @@ fn x86_64(op: &str) -> Option<Stub> {
         "in16" => stub(&[I16], Some(I16), &[0x89, 0xfa, 0x66, 0xed, 0xc3], &["mov edx, edi", "in ax, dx", "ret"]),
         "in32" => stub(&[I16], Some(I32), &[0x89, 0xfa, 0xed, 0xc3], &["mov edx, edi", "in eax, dx", "ret"]),
         "out8" => stub(&[I16, I8], None, &[0x89, 0xfa, 0x89, 0xf0, 0xee, 0xc3], &["mov edx, edi", "mov eax, esi", "out dx, al", "ret"]),
-        "out16" => stub(&[I16, I16], None, &[0x89, 0xfa, 0x89, 0xf0, 0x66, 0xef, 0xc3], &["mov edx, edi", "mov eax, esi", "out dx, ax", "ret"]),
+        // xchg uses the one-byte accumulator encoding. ESI is caller-saved;
+        // unlike mov this also clobbers it, but fits the five-byte call slot.
+        "out16" => stub(&[I16, I16], None, &[0x89, 0xfa, 0x96, 0x66, 0xef, 0xc3], &["mov edx, edi", "xchg eax, esi", "out dx, ax", "ret"]),
         "out32" => stub(&[I16, I32], None, &[0x89, 0xfa, 0x89, 0xf0, 0xef, 0xc3], &["mov edx, edi", "mov eax, esi", "out dx, eax", "ret"]),
         "cli" => stub(&[], None, &[0xfa, 0xc3], &["cli", "ret"]),
         "sti" => stub(&[], None, &[0xfb, 0xc3], &["sti", "ret"]),
@@ -198,6 +221,46 @@ pub(crate) struct Stubs {
 }
 
 impl Stubs {
+    /// Replace only relocation-identified direct calls, without changing any
+    /// offset. The allocator has already honored the stub's ABI clobbers.
+    /// This is deliberately not a general machine-code inliner (ADR 0104).
+    pub(crate) fn inline_calls(&self, arch: Arch, code: &mut [u8], relocs: &mut Vec<cranelift_module::ModuleReloc>) -> Result<()> {
+        use cranelift_codegen::binemit::Reloc;
+        let declared = self.declared.borrow();
+        let mut keep = Vec::new();
+        for reloc in relocs.drain(..) {
+            let Some((_, op)) = declared.values().find(|(id, _)| matches!(reloc.name, cranelift_module::ModuleRelocTarget::User { namespace: 0, index } if index == id.as_u32())) else {
+                keep.push(reloc);
+                continue;
+            };
+            let stub = lookup(arch, op).ok_or_else(|| Error::bug("CPU stub vanished"))?;
+            let (ret_size, slot_size) = match arch { Arch::X86_64 => (1, 5), Arch::Aarch64 => (4, 4) };
+            let body = &stub.code[..stub.code.len() - ret_size];
+            let offset = reloc.offset as usize;
+            let slot = match (arch, reloc.kind, reloc.addend) {
+                (Arch::X86_64, Reloc::X86CallPCRel4, -4) if offset >= 1 => {
+                    let slot = code.get_mut(offset - 1..offset + 4).ok_or_else(|| Error::bug("CPU call outside function"))?;
+                    if slot[0] != 0xe8 { return Err(Error::bug("unexpected x86 CPU call encoding")); }
+                    Some(slot)
+                }
+                (Arch::Aarch64, Reloc::Arm64Call, 0) => {
+                    let slot = code.get_mut(offset..offset + 4).ok_or_else(|| Error::bug("CPU call outside function"))?;
+                    if u32::from_le_bytes(slot.try_into().unwrap()) != 0x94000000 { return Err(Error::bug("unexpected ARM CPU call encoding")); }
+                    Some(slot)
+                }
+                _ => None,
+            };
+            if let Some(slot) = slot.filter(|_| body.len() <= slot_size) {
+                if arch == Arch::X86_64 { slot.fill(0x90); }
+                slot[..body.len()].copy_from_slice(body);
+            } else {
+                keep.push(reloc);
+            }
+        }
+        *relocs = keep;
+        Ok(())
+    }
+
     /// Function id of the stub for `module.op`, after checking it exists for
     /// `target`'s architecture.
     pub(crate) fn id(&self, module: &mut ObjectModule, target: Target, intrinsic: &str) -> Result<(FuncId, Stub)> {
@@ -233,5 +296,57 @@ impl Stubs {
             module.define_function_bytes(*id, alignment, &stub.code, &[]).map_err(|e| Error::bug(e.to_string()))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_codegen::{Final, MachSrcLoc, binemit::Reloc, ir::SourceLoc};
+    use cranelift_module::{ModuleReloc, ModuleRelocTarget};
+
+    #[test]
+    fn call_substitution_preserves_offsets_and_unrelated_relocations() {
+        let stubs = Stubs::default();
+        stubs.declared.borrow_mut().insert("cpu".into(), (FuncId::from_u32(7), "invlpg".into()));
+        let mut bytes = vec![0xe8, 0, 0, 0, 0, 0xe8, 0, 0, 0, 0, 0xc3];
+        let original_len = bytes.len();
+        let mut relocs = vec![
+            ModuleReloc { offset: 1, kind: Reloc::X86CallPCRel4, name: ModuleRelocTarget::user(0, 7), addend: -4 },
+            ModuleReloc { offset: 6, kind: Reloc::X86CallPCRel4, name: ModuleRelocTarget::user(0, 8), addend: -4 },
+        ];
+        stubs.inline_calls(Arch::X86_64, &mut bytes, &mut relocs).unwrap();
+        assert_eq!(bytes.len(), original_len);
+        assert_eq!(&bytes[..5], &[0x0f, 0x01, 0x3f, 0x90, 0x90]);
+        assert_eq!(&bytes[5..], &[0xe8, 0, 0, 0, 0, 0xc3]);
+        assert_eq!(relocs.len(), 1);
+        assert_eq!(relocs[0].offset, 6);
+    }
+
+    #[test]
+    fn changed_call_encoding_is_rejected_and_unrecognized_forms_keep_the_call() {
+        let stubs = Stubs::default();
+        stubs.declared.borrow_mut().insert("cpu".into(), (FuncId::from_u32(7), "pause".into()));
+        let reloc = |kind| ModuleReloc { offset: 1, kind, name: ModuleRelocTarget::user(0, 7), addend: -4 };
+        let mut bytes = [0x90; 9];
+        assert!(stubs.inline_calls(Arch::X86_64, &mut bytes, &mut vec![reloc(Reloc::X86CallPCRel4)]).is_err());
+        let mut relocs = vec![reloc(Reloc::Abs8)];
+        stubs.inline_calls(Arch::X86_64, &mut bytes, &mut relocs).unwrap();
+        assert_eq!(relocs.len(), 1);
+        assert_eq!(bytes, [0x90; 9]);
+    }
+
+    #[test]
+    fn volatile_relaxation_requires_the_tag_and_exact_trailing_fence() {
+        let mut bytes = [0x89, 0x07, 0x0f, 0xae, 0xf0, 0x0f, 0xae, 0xf0];
+        let locations: [MachSrcLoc<Final>; 2] = [
+            MachSrcLoc { start: 0, end: 5, loc: SourceLoc::new(VOLATILE_STORE_LOC | 1) },
+            MachSrcLoc { start: 5, end: 8, loc: SourceLoc::default() },
+        ];
+        relax_volatile_stores(&mut bytes, &locations).unwrap();
+        assert_eq!(bytes, [0x89, 0x07, 0x0f, 0x1f, 0, 0x0f, 0xae, 0xf0]);
+        // Never silently accept a dependency change or an incorrectly tagged
+        // range (including trying to patch the already-relaxed instruction).
+        assert!(relax_volatile_stores(&mut bytes, &locations).is_err());
     }
 }

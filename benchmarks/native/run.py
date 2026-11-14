@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Measure complete builds and checked executions with the installed compiler."""
 import os
+import platform
 from pathlib import Path
 import statistics
 import subprocess
@@ -16,7 +17,10 @@ def main():
         "calls": b"499999500000\n",
         "slices": b"1000000\n",
         "dynamic": b"42000000\n",
+        "volatile-store": b"9999999\n",
     }
+    if platform.machine().lower() in ("x86_64", "amd64"):
+        expected["cpu-pause"] = b"10000000\n"
     print("fixture       build_ms    ELF_bytes    runtime_median_ms", flush=True)
     with tempfile.TemporaryDirectory(prefix="tarn-native-bench-") as directory:
         for name, output in expected.items():

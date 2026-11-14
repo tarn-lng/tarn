@@ -112,7 +112,8 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   Tests disassemble the object: two writes and two reads of one address give
   exactly `stlr, ldar, ldar, stlr` on aarch64 and two `mfence` plus two loads
   on x86_64. Limitations: volatile access is sequentially consistent, so each
-  x86_64 volatile store costs an `mfence`; no sub-word-misaligned or
+  x86_64 volatile store costs an `mfence` (superseded by ADR 0104, which
+  removes only the volatile store's hardware fence on x86_64); no sub-word-misaligned or
   aggregate volatile access; no weaker or compiler-only fence (P5 can add
   `dmb`/`dsb` stubs).
   Memory operations: Cranelift never emitted `memcpy` itself and Tarn code
@@ -161,9 +162,12 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
   build error (`tarn check` has no target, so it surfaces at `tarn build
   --target`); outside `unsafe` is E3071. A hosted run of `pause`/`rdtsc` (x86_64)
   or `cntvct_el0` (aarch64) checks the call ABI. Limitations: each intrinsic
-  is a real call (no inlining, so a `cli` is separated from the next
-  instruction by a `ret`); the intrinsics are not compiler memory barriers
-  (use `ffi.fence()`/volatile access); no `eret` and no `write_cr2` (P7 builds
+  was initially a real call. ADR 0104 supersedes this: native `int3`, short
+  x86_64 sequences and every current aarch64 sequence are now inline, with
+  conservative ABI register allocation; `rdtsc`, `rdmsr`, and `wrmsr` retain
+  calls. Padding means Tarn calls still do not promise instruction adjacency.
+  Intrinsics constrain compiler memory analysis but are not generally hardware
+  memory barriers (use `ffi.fence()`/volatile access); no `eret` and no `write_cr2` (P7 builds
   trampolines from stubs); no `cpuid`, `xsave`, `swapgs`, SIMD or MSR whitelist
   (any `u32` MSR is accepted); aarch64 system registers are limited to the
   whitelist and values are not validated; the encodings follow the

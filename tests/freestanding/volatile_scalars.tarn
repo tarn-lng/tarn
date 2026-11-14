@@ -1,0 +1,40 @@
+// Exercise integer widths, float bitcasts, bools, and raw pointer values.
+import "ffi"
+fn main() {
+    var a: u8 = 0
+    var b: u16 = 0
+    var c: u32 = 0
+    var d: u64 = 0
+    var e: f32 = 0.0
+    var f: f64 = 0.0
+    var g = false
+    var h: *mut u8 = ffi.null()
+    pa := ffi.of_mut(&mut a)
+    pb := ffi.of_mut(&mut b)
+    pc := ffi.of_mut(&mut c)
+    pd := ffi.of_mut(&mut d)
+    pe := ffi.of_mut(&mut e)
+    pf := ffi.of_mut(&mut f)
+    pg := ffi.of_mut(&mut g)
+    ph := ffi.of_mut(&mut h)
+    unsafe {
+        ffi.write_volatile(pa, 255)
+        ffi.write_volatile(pb, 65535)
+        ffi.write_volatile(pc, 4294967295)
+        ffi.write_volatile(pd, 18446744073709551615)
+        ffi.write_volatile(pe, 1.25)
+        ffi.write_volatile(pf, -2.5)
+        ffi.write_volatile(pg, true)
+        address: *mut u8 := ffi.from_address(8192)
+        ffi.write_volatile(ph, address)
+        if ffi.read_volatile(ffi.to_const(pa)) != 255 { panic("u8 volatile") }
+        if ffi.read_volatile(ffi.to_const(pb)) != 65535 { panic("u16 volatile") }
+        if ffi.read_volatile(ffi.to_const(pc)) != 4294967295 { panic("u32 volatile") }
+        if ffi.read_volatile(ffi.to_const(pd)) != 18446744073709551615 { panic("u64 volatile") }
+        if ffi.read_volatile(ffi.to_const(pe)) != 1.25 { panic("f32 volatile") }
+        if ffi.read_volatile(ffi.to_const(pf)) != -2.5 { panic("f64 volatile") }
+        if !ffi.read_volatile(ffi.to_const(pg)) { panic("bool volatile") }
+        restored: *mut u8 := ffi.read_volatile(ffi.to_const(ph))
+        if ffi.address(ffi.to_const(restored)) != 8192 { panic("pointer volatile") }
+    }
+}

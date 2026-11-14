@@ -7,6 +7,14 @@ Build time includes the frontend, code generation, runtime compilation and link;
 it cannot be compared directly with the isolated codegen/link columns below.
 It does not rebuild the compiler. Timings include process startup and printing.
 
+`volatile-store.tarn` performs ten million volatile u64 stores to a stack
+variable and checks the last value. It measures access overhead on RAM, not
+MMIO device latency. On x86_64, `cpu-pause.tarn` performs ten million
+unprivileged `pause` operations as a proxy for intrinsic call overhead; the
+runner omits it on other hosts. Expected outputs are checked like the other
+fixtures. ADR 0104 records the before/after method, disassembly and limits;
+[raw observations](intrinsics-2026-11-14.json) include every timing sample.
+
 ## Historical native baseline (2026-10-05)
 
 Linux x86_64 host, debug Rust compiler and Cranelift default code generation;

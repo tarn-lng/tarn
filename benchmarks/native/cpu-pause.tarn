@@ -1,0 +1,10 @@
+// x86_64 only; an unprivileged proxy for the removed call/ret cost.
+import "arch_x86_64"
+fn main() {
+    var i: u64 = 0
+    for i < 10000000 {
+        unsafe { arch_x86_64.pause() }
+        i = i + 1
+    }
+    print(i)
+}

@@ -283,8 +283,9 @@ impl Cx<'_, '_> {
             // stores to loads and merges repeated loads of one address for
             // plain memory operations, so volatile accesses are emitted as
             // atomic ones: those are memory fences for that analysis and are
-            // never forwarded, merged, reordered or dropped (SeqCst, which is
-            // stronger than volatile requires). Only 8..64-bit integers and
+            // never forwarded, merged, reordered or dropped. ADR 0104 relaxes
+            // the tagged x86 store's hardware fence after optimization; ARM
+            // keeps the stronger SeqCst lowering. Only 8..64-bit integers and
             // pointers have atomic forms; floats go through an integer bitcast.
             ("_read_volatile", [pointer], ty) => {
                 if c_type(ty).is_none() { return Err(Error::unsupported("ffi.read_volatile supports only scalars and raw pointers")); }
@@ -299,7 +300,12 @@ impl Cx<'_, '_> {
                 let (clt, _) = Self::volatile_type(&value.ty)?;
                 let raw = word(value)?;
                 let raw = if self.b.func.dfg.value_type(raw) == clt { raw } else { self.b.ins().bitcast(clt, cl::MemFlags::new(), raw) };
-                self.b.ins().atomic_store(cl::MemFlags::new(), raw, word(pointer)?);
+                let store = self.b.ins().atomic_store(cl::MemFlags::new(), raw, word(pointer)?);
+                if self.runtime.target.is_some_and(|t| t.arch == crate::Arch::X86_64) {
+                    // Preserve the optimizer's atomic side effects, then relax
+                    // only this volatile store's hardware fence (ADR 0104).
+                    self.b.func.set_srcloc(store, cl::SourceLoc::new(crate::arch::VOLATILE_STORE_LOC | store.as_u32()));
+                }
                 return Ok(Some(Val { value: None, ty: Ty::Void }));
             }
             ("fence", [], Ty::Void) => {
@@ -343,8 +349,8 @@ impl Cx<'_, '_> {
         if want == self.b.func.dfg.value_type(v) { v } else { self.b.ins().bitcast(want, cl::MemFlags::new(), v) }
     }
 
-    /// Calls to the `arch_*` CPU intrinsics (ADR 0101, P5): typed calls to
-    /// hand-assembled stubs defined in this object (see `crate::arch`).
+    /// Native CLIF where possible; otherwise ABI calls whose short sequences
+    /// are substituted after codegen (ADRs 0101, 0104; see `crate::arch`).
     pub(super) fn arch(&mut self, name: &str, args: &[Val], dest: &Ty) -> Result<Option<Val>> {
         let Some((module_name, _)) = name.split_once('.') else { return Ok(None) };
         if crate::arch::module_arch(module_name).is_none() { return Ok(None); }
@@ -354,6 +360,10 @@ impl Cx<'_, '_> {
         let values: Vec<cl::Value> = args.iter().map(|a| a.value.ok_or_else(|| Error::bug("CPU intrinsic operand"))).collect::<Result<_>>()?;
         for (value, ty) in values.iter().zip(&stub.params) {
             if self.b.func.dfg.value_type(*value) != *ty { return Err(Error::bug(format!("{name} operand type"))); }
+        }
+        if target.arch == crate::Arch::X86_64 && matches!(name, "arch_x86_64._int3" | "arch_x86_64.int3") {
+            self.b.ins().debugtrap();
+            return Ok(Some(Val { value: None, ty: dest.clone() }));
         }
         let callee = self.module.declare_func_in_func(id, self.b.func);
         let call = self.b.ins().call(callee, &values);

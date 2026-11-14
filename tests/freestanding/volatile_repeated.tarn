@@ -1,0 +1,12 @@
+import "ffi"
+fn main() {
+    register: *mut u64 := ffi.from_address(4096)
+    unsafe {
+        ffi.write_volatile(register, 7)
+        ffi.write_volatile(register, 7)
+        unused := ffi.read_volatile(ffi.to_const(register))
+        also_unused := ffi.read_volatile(ffi.to_const(register))
+        ffi.fence()
+        ffi.write_volatile(register, 7)
+    }
+}

@@ -36,13 +36,20 @@ Rules
   so the error appears at `tarn build --target`.
 - They are allowed on hosted targets of the same architecture too, which
   is how unprivileged ones (`pause`, `rdtsc`, `cntvct_el0`, barriers) are tested.
-- Each call is an ordinary call to a tiny function defined inside the emitted
-  object, with the platform C ABI. Only the stubs a program calls are
-  emitted; they are never exported, so the object still imports only the
-  freestanding contract. There is no inlining yet, so these are not for hot
-  loops.
-- Intrinsics are not memory fences for the compiler's own accesses. Order
-  device accesses with `ffi.read_volatile`/`write_volatile`/`fence()`.
+- `int3` uses native CLIF `debugtrap`. Other x86_64 operations except `rdtsc`,
+  `rdmsr`, and `wrmsr`, and every current aarch64 operation, replace direct
+  ABI calls with instruction bytes after register allocation (ADR 0104).
+  Hot loops of byte port I/O, `invlpg`, and CR3 moves have no intrinsic calls.
+  Short sequences use NOP padding to retain all code offsets. The allocator
+  still sees ordinary ABI calls, so it may preserve live values in a frame
+  or spill them; this does not promise a frameless caller or spill-free code.
+- The three longer x86_64 sequences still call frameless, register-only local
+  stubs. Cranelift 0.125.3 offers neither inline bytes nor a preserve-all call
+  convention. Template definitions remain even for inlined call sites because
+  every declared local function must be defined. None are exported.
+- Calls and `debugtrap` constrain the compiler's memory analysis, but CPU
+  intrinsics do not generally provide a hardware memory fence. Use
+  `ffi.read_volatile`/`write_volatile`/`fence()` for device access ordering.
 
 ## `arch_x86_64`
 
@@ -60,7 +67,8 @@ Rules
 | `lgdt(descriptor *u8)`, `lidt(descriptor *u8)` | load GDTR / IDTR from a 10-byte (u16 limit, u64 base) descriptor |
 
 `lgdt` does not reload segment registers and `sti` takes effect after the next
-instruction.
+machine instruction, which may be padding or compiler-generated code. Separate
+Tarn intrinsic calls do not promise adjacency (including `sti(); hlt()`).
 
 ## `arch_aarch64`
 
@@ -100,4 +108,10 @@ Each stub is a few hand-assembled instructions in `compiler/backend/src/arch.rs`
 `cpu_stubs_disassemble_to_their_documented_assembly` emits every stub for both
 architectures, disassembles the object with the host LLVM `objdump` and
 compares each stub with its documented assembly (skipped when `objdump` is
-missing). x86_64 stubs use only `rax`, `rcx` and `rdx`; aarch64 stubs only `x0`.
+missing). x86_64 templates clobber only `rax`, `rcx`, `rdx`, and `rsi` (the
+compact `out16` uses `xchg eax, esi`); aarch64 templates only `x0`.
+The substitution pass recognizes calls by function relocation, checks their
+machine encoding, and removes only the replaced relocation. It never scans
+arbitrary instruction bytes or changes offsets. Disassembly tests check the
+actual hot loops on both `*-none` targets and x86_64 Mach-O, as well as the
+remaining calls. See ADR 0104 for measurements and limits.

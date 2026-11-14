@@ -1,0 +1,12 @@
+// Disassembly only: these instructions require EL1.
+import "arch_aarch64"
+fn main() {
+    unsafe {
+        for true {
+            address := arch_aarch64.read_ttbr0_el1()
+            arch_aarch64.write_ttbr0_el1(address)
+            arch_aarch64.dsb_sy()
+            arch_aarch64.isb()
+        }
+    }
+}

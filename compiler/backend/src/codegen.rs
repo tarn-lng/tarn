@@ -659,7 +659,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         }
         translated.push((ids[&id], f.decl.name.as_str(), ctx));
     }
-    compile_in_parallel(&mut module, translated, verify)?;
+    compile_in_parallel(&mut module, translated, verify, &runtime.stubs, target.arch)?;
     let mut thunk_order: Vec<_> = thunks.iter().collect();
     thunk_order.sort_by_key(|(id, _)| **id);
     for (id, thunk) in thunk_order {
@@ -2747,7 +2747,7 @@ fn finish_object(module: ObjectModule, sections: &[(FuncId, String)]) -> Result<
     if renames.is_empty() { Ok(bytes) } else { crate::elf::rename_sections(bytes, &renames) }
 }
 
-fn compile_in_parallel(module: &mut ObjectModule, mut translated: Vec<(FuncId, &str, cranelift_codegen::Context)>, verify: bool) -> Result<()> {
+fn compile_in_parallel(module: &mut ObjectModule, mut translated: Vec<(FuncId, &str, cranelift_codegen::Context)>, verify: bool, stubs: &crate::arch::Stubs, arch: crate::Arch) -> Result<()> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     let isa = module.isa();
@@ -2782,8 +2782,13 @@ fn compile_in_parallel(module: &mut ObjectModule, mut translated: Vec<(FuncId, &
     for slot in slots {
         let (id, name, ctx) = slot.into_inner().unwrap().unwrap();
         let code = ctx.compiled_code().ok_or_else(|| Error::bug(format!("{name}: missing compiled code")))?;
-        let relocs: Vec<_> = code.buffer.relocs().iter().map(|r| cranelift_module::ModuleReloc::from_mach_reloc(r, &ctx.func, id)).collect();
-        module.define_function_bytes(id, code.buffer.alignment as u64, code.buffer.data(), &relocs).map_err(|e| Error::bug(format!("{name}: {e}")))?;
+        let mut relocs: Vec<_> = code.buffer.relocs().iter().map(|r| cranelift_module::ModuleReloc::from_mach_reloc(r, &ctx.func, id)).collect();
+        let mut bytes = code.buffer.data().to_vec();
+        stubs.inline_calls(arch, &mut bytes, &mut relocs)?;
+        if arch == crate::Arch::X86_64 {
+            crate::arch::relax_volatile_stores(&mut bytes, code.buffer.get_srclocs_sorted())?;
+        }
+        module.define_function_bytes(id, code.buffer.alignment as u64, &bytes, &relocs).map_err(|e| Error::bug(format!("{name}: {e}")))?;
     }
     Ok(())
 }

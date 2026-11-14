@@ -147,7 +147,8 @@ fn volatile_accesses_are_never_merged_forwarded_or_reordered() {
     let Some(code) = main_disassembly(&bytes, "x86") else { return };
     let fences = code.lines().filter(|l| l.contains("mfence")).count();
     let loads = code.lines().filter(|l| l.contains("movl\t(%")).count();
-    assert_eq!((fences, loads), (2, 2), "{code}");
+    let stores = code.lines().filter(|l| l.contains("movl\t") && l.contains(", (%")).count();
+    assert_eq!((fences, loads, stores), (0, 2, 2), "{code}");
 }
 
 #[test]
@@ -211,7 +212,8 @@ fn stub_disassembly(bytes: &[u8], tag: &str, intel: bool) -> Option<std::collect
 
 /// Like `stub_disassembly` for the functions whose symbol starts with `prefix`.
 fn disassembly_of(bytes: &[u8], tag: &str, intel: bool, prefix: &str) -> Option<std::collections::HashMap<String, Vec<String>>> {
-    let path = std::env::temp_dir().join(format!("tarn-freestanding-stubs-{tag}-{prefix}-{}.o", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-stubs-{tag}-{prefix}-{}-{}.o", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     std::fs::write(&path, bytes).unwrap();
     let mut command = std::process::Command::new("objdump");
     command.args(["-d", "--no-show-raw-insn"]);
@@ -230,6 +232,87 @@ fn disassembly_of(bytes: &[u8], tag: &str, intel: bool, prefix: &str) -> Option<
         map.insert(name, instructions);
     }
     Some(map)
+}
+
+#[test]
+fn hot_cpu_loops_have_instructions_in_place_of_calls() {
+    for target in ["x86_64-none", "x86_64-macos", "aarch64-none"] {
+        let intel = target.starts_with("x86_64");
+        let program = if intel { "cpu_hot_loop_x86_64" } else { "cpu_hot_loop_aarch64" };
+        let bytes = freestanding(&format!("../../tests/freestanding/{program}.tarn"), target).unwrap();
+        let Some(functions) = disassembly_of(&bytes, &format!("hot-{target}"), intel, "") else { eprintln!("objdump unavailable; skipping {target}"); continue };
+        // Mach-O adds an underscore to the symbol.
+        let code = functions.iter().find(|(name, _)| name.ends_with("tarn_fn_0__main")).unwrap().1;
+        assert!(!code.iter().any(|i| i.starts_with("call") || i.starts_with("bl ")), "{target}: {code:?}");
+        if intel {
+            for instruction in ["out dx, al", "invlpg byte ptr [rdi]", "mov cr3, rdi", "pause"] {
+                assert!(code.iter().any(|i| i == instruction), "{target}: missing {instruction}: {code:?}");
+            }
+            // This constant-operand hot loop needs no spill slots. The frame
+            // pointer remains because register allocation still sees calls.
+            assert!(!code.iter().any(|i| i.contains("[rsp") || i.contains("[rbp")), "{target}: {code:?}");
+        } else {
+            for instruction in ["mrs x0, ttbr0_el1", "msr ttbr0_el1, x0", "dsb sy", "isb"] {
+                assert!(code.iter().any(|i| i == instruction), "{target}: missing {instruction}: {code:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn oversized_x86_sequences_keep_their_frameless_stub_calls() {
+    let bytes = freestanding("../../tests/freestanding/arch_x86_64.tarn", "x86_64-none").unwrap();
+    let Some(functions) = disassembly_of(&bytes, "remaining-calls", true, "") else { eprintln!("objdump unavailable; skipping x86_64"); return };
+    let code = &functions["tarn_fn_0__main"];
+    // Checked arithmetic also emits indirect calls to the fault contract.
+    assert_eq!(code.iter().filter(|i| i.starts_with("call 0x")).count(), 3, "{code:?}");
+    for name in ["rdtsc", "rdmsr", "wrmsr"] {
+        let stub = &functions[&format!("tarn_arch_x86_64_{name}")];
+        assert!(!stub.iter().any(|i| i.starts_with("push") || i.starts_with("pop") || i.contains("rsp") || i.contains("rbp")), "{name}: {stub:?}");
+    }
+}
+
+#[test]
+fn repeated_volatile_stores_and_unused_loads_survive_with_an_explicit_fence() {
+    for target in ["x86_64-none", "x86_64-macos", "aarch64-none"] {
+        let intel = target.starts_with("x86_64");
+        let bytes = freestanding("../../tests/freestanding/volatile_repeated.tarn", target).unwrap();
+        let Some(functions) = disassembly_of(&bytes, &format!("repeated-{target}"), intel, "") else { eprintln!("objdump unavailable; skipping {target}"); continue };
+        let code = functions.iter().find(|(name, _)| name.ends_with("tarn_fn_0__main")).unwrap().1;
+        let effects: Vec<_> = code.iter().filter_map(|i| {
+            if intel {
+                if i.starts_with("mov qword ptr [") { Some("store") }
+                else if i.starts_with("mov ") && i.contains(", qword ptr [") { Some("load") }
+                else if i == "mfence" { Some("fence") }
+                else { None }
+            } else if i.starts_with("stlr ") { Some("store") }
+            else if i.starts_with("ldar ") { Some("load") }
+            else if i == "dmb ish" { Some("fence") }
+            else { None }
+        }).collect();
+        assert_eq!(effects, ["store", "store", "load", "load", "fence", "store"], "{target}: {code:?}");
+    }
+}
+
+#[test]
+fn volatile_scalar_widths_and_bitcasts_emit_and_run() {
+    let path = std::path::Path::new("../../tests/freestanding/volatile_scalars.tarn");
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding(path.to_str().unwrap(), target).unwrap();
+        let Some(code) = disassembly_of(&bytes, &format!("scalars-{target}"), target.starts_with("x86"), "") else { eprintln!("objdump unavailable; skipping disassembly for {target}"); continue };
+        if target.starts_with("x86") {
+            assert!(!code.values().flatten().any(|i| i == "mfence"), "{code:?}");
+        }
+    }
+    if Target::host().is_none() { return; }
+    let checked = tarn_driver::check(path).unwrap();
+    let dir = std::env::temp_dir().join(format!("tarn-volatile-scalars-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&dir).unwrap();
+    let exe = dir.join("program");
+    tarn_backend::build(checked.drops.as_ref().unwrap(), checked.typed.as_ref().unwrap(), &exe).unwrap();
+    let output = std::process::Command::new(exe).output().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    assert!(output.status.success(), "{output:?}");
 }
 
 #[test]

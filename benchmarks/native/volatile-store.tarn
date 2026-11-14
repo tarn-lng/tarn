@@ -1,0 +1,12 @@
+// RAM, not a device: measures the compiler's volatile-store overhead only.
+import "ffi"
+fn main() {
+    var register: u64 = 0
+    pointer := ffi.of_mut(&mut register)
+    var i: u64 = 0
+    for i < 10000000 {
+        unsafe { ffi.write_volatile(pointer, i) }
+        i = i + 1
+    }
+    unsafe { print(ffi.read_volatile(ffi.to_const(pointer))) }
+}
