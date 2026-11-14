@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: accepted; P1 implemented. Delivered as a series of 0.5.x patches; no new minor.
+Status: accepted; P1 and P2 implemented. Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -46,7 +46,7 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   `cranelift-native` CPU detection; other targets use the baseline ISA.
   `compiler/backend/tests/targets.rs` checks all six headers.
 
-### P2 — `#![freestanding]` / `--freestanding` profile
+### P2 — Freestanding profile — implemented
 
 - Disables the hosted runtime: no `main` shim, no libc, no stdlib modules
   that need an OS (fs, net, process, tasks). Using one is a compile error with
@@ -57,6 +57,15 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   in freestanding the table is empty or user-supplied. Audit the 165 sites.
 - Tests: a freestanding object has zero undefined symbols outside the
   declared set (`nm -u` check).
+- Done: the profile is implied by `--target *-none` rather than a separate
+  flag. Runtime functions are now declared on first use (hosted objects
+  also stop importing ~150 unused symbols). A freestanding object exports
+  `tarn_main` instead of the libc `main` shim and may import only
+  `tarn_rt_panic`, `tarn_rt_panic_at`, `tarn_rt_fault` and `extern "C"`
+  functions; anything else is rejected with the Tarn feature that needs it
+  (`print`, heap strings/vectors, captured closures, async, OS services).
+  Diagnostics carry no source span yet; `#[panic_handler]` in Tarn waits for
+  P6 (exported symbol names).
 
 ### P3 — User allocator
 

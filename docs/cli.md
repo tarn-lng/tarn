@@ -5,7 +5,13 @@ compilation uses the host by default. `tarn build --target <target>` names
 another machine (`x86_64-linux`, `aarch64-linux`, `x86_64-macos`,
 `aarch64-macos`, `x86_64-none`, `aarch64-none`); for a target other than the
 host it writes a relocatable object (default `<entry>.o`) and does not link,
-so `--link` is rejected there (ADR 0101). `tarn build` and `tarn run` require `cc`
+so `--link` is rejected there (ADR 0101). A `*-none` target is freestanding: the
+object has no libc `main` and exports `tarn_main` (no arguments, no result)
+for the boot code to call. It may import only `tarn_rt_panic`,
+`tarn_rt_panic_at` and `tarn_rt_fault`, which the boot code defines, and
+`extern "C"` functions; using `print`, heap strings or vectors, closures with
+environments, async or other operating-system services is a compile error
+naming the feature. `tarn build` and `tarn run` require `cc`
 and system libraries granted by the package's `[native] links` in `tarn.toml`
 or by repeated `--link` flags.
 The standard library and native runtime source are embedded in the compiler.

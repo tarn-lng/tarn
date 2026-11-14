@@ -430,7 +430,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         }
     }
     let task_adapters = emit_task_adapters(&mut module, p, t, &ids)?;
-    let mut runtime = HashMap::new();
+    let mut runtime = Runtime::default();
     for (name, params, returns) in [
         ("tarn_rt_raw_canonical", vec![types::I64], vec![]),
         ("tarn_rt_net_main_error", vec![types::I32, types::I32], vec![]),
@@ -549,8 +549,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(runtime_param).collect();
         sig.returns = returns.into_iter().map(cl::AbiParam::new).collect();
-        let id = module.declare_function(name, Linkage::Import, &sig).map_err(|e| Error::bug(e.to_string()))?;
-        runtime.insert(name.to_owned(), id);
+        runtime.signatures.insert(name.to_owned(), sig);
     }
     for (name, width) in [("bool", types::I8), ("i32", types::I32), ("i64", types::I64), ("u32", types::I32), ("u64", types::I64), ("usize", types::I64)] {
         for (op, params, returns) in [
@@ -567,8 +566,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             let mut sig = module.make_signature();
             sig.params.extend(params.into_iter().map(runtime_param));
             sig.returns.extend(returns.into_iter().map(cl::AbiParam::new));
-            let id = module.declare_function(&name, Linkage::Import, &sig).map_err(|e| Error::bug(e.to_string()))?;
-            runtime.insert(name, id);
+            runtime.signatures.insert(name, sig);
         }
     }
     // Vector element destruction functions, declared on demand by drop_vector
@@ -627,7 +625,8 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     for (id, thunk) in thunk_order {
         let f = &p.functions[id.0 as usize].decl;
         if frame(f).is_some() {
-            emit_frame_thunks(&mut module, t, f, ids[id], *thunk, frame_drops[id], runtime["tarn_rt_env_free"])?;
+            let free = runtime.id(&mut module, "tarn_rt_env_free")?;
+            emit_frame_thunks(&mut module, t, f, ids[id], *thunk, frame_drops[id], free)?;
             continue;
         }
         let n = capture_count(f);
@@ -667,7 +666,8 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             let call = b.ins().call(target, &values);
             let results = b.inst_results(call).to_vec();
             if matches!(f.kind, FnKind::Closure { owned: true, consumes: true, .. }) {
-                let free = module.declare_func_in_func(runtime["tarn_rt_env_free"], b.func);
+                let free = runtime.id(&mut module, "tarn_rt_env_free")?;
+                let free = module.declare_func_in_func(free, b.func);
                 b.ins().call(free, &[env]);
             }
             b.ins().return_(&results);
@@ -725,6 +725,32 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         cranelift_codegen::verify_function(&ctx.func, module.isa()).map_err(|e| Error::bug(e.to_string()))?;
         module.define_function(id, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
     }
+    if target.os == crate::Os::None {
+        // No libc startup: the boot code calls the exported `tarn_main`
+        // (void, system ABI) and must define the freestanding contract.
+        if test || result_main {
+            return Err(Error::unsupported(format!("target {target}: freestanding `main` must be `fn main()` with no result")));
+        }
+        let sig = module.make_signature();
+        let entry = module.declare_function("tarn_main", Linkage::Export, &sig).map_err(|e| Error::bug(e.to_string()))?;
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut fb = FunctionBuilderContext::new();
+        {
+            let mut b = FunctionBuilder::new(&mut ctx.func, &mut fb);
+            let block = b.create_block();
+            b.switch_to_block(block);
+            let callee = module.declare_func_in_func(ids[&main.decl.id], b.func);
+            b.ins().call(callee, &[]);
+            b.ins().return_(&[]);
+            b.seal_all_blocks();
+            b.finalize();
+        }
+        module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
+        literals.into_inner().define(&mut module)?;
+        crate::freestanding::check(target, runtime.used())?;
+        return module.finish().emit().map_err(|e| Error::bug(e.to_string()));
+    }
     // libc startup calls the C main shim; internal Tarn main returns void or Result<void, net.Error>.
     let mut sig = module.make_signature();
     sig.returns.push(cl::AbiParam::new(types::I32));
@@ -766,7 +792,8 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             if error_layout.fields.len() != 3 { return Err(Error::bug("main error layout")); }
             let kind = b.ins().load(types::I32, cl::MemFlags::new(), addr, (*offset + error_layout.fields[0].0) as i32);
             let code = b.ins().load(types::I32, cl::MemFlags::new(), addr, (*offset + error_layout.fields[1].0) as i32);
-            let report = module.declare_func_in_func(runtime["tarn_rt_net_main_error"], b.func);
+            let report = runtime.id(&mut module, "tarn_rt_net_main_error")?;
+            let report = module.declare_func_in_func(report, b.func);
             b.ins().call(report, &[kind, code]);
             let one = b.ins().iconst(types::I32, 1);
             b.ins().return_(&[one]);
@@ -786,6 +813,32 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
     literals.into_inner().define(&mut module)?;
     module.finish().emit().map_err(|e| Error::bug(e.to_string()))
+}
+
+/// Runtime functions by name. Each is declared in the object only on first
+/// use, so the object imports exactly the runtime it needs (ADR 0101, P2).
+#[derive(Default)]
+struct Runtime {
+    signatures: HashMap<String, cl::Signature>,
+    ids: RefCell<HashMap<String, FuncId>>,
+}
+
+impl Runtime {
+    fn id(&self, module: &mut ObjectModule, name: &str) -> Result<FuncId> {
+        if let Some(id) = self.ids.borrow().get(name) {
+            return Ok(*id);
+        }
+        let sig = self.signatures.get(name).ok_or_else(|| Error::bug(format!("undeclared runtime function {name}")))?;
+        let id = module.declare_function(name, Linkage::Import, sig).map_err(|e| Error::bug(e.to_string()))?;
+        self.ids.borrow_mut().insert(name.to_owned(), id);
+        Ok(id)
+    }
+
+    fn used(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.ids.borrow().keys().cloned().collect();
+        names.sort();
+        names
+    }
 }
 
 /// All string literals of a program in one read-only `tarn_strings` object.
@@ -924,7 +977,7 @@ struct Cx<'a, 'b> {
     env: Option<cl::Value>,
     /// Frame offsets of borrowed closure environments (async bodies).
     environments: HashMap<LocalId, u32>,
-    runtime: &'b HashMap<String, FuncId>,
+    runtime: &'b Runtime,
     task_adapters: &'b HashMap<FunctionId, (FuncId, FuncId)>,
     tables: &'b [(tarn_resolve::SymbolId, Ty, Vec<FunctionId>, DataId)],
     /// Declared vector element destruction functions, by element type.
@@ -1092,7 +1145,8 @@ impl Cx<'_, '_> {
         Ok(id)
     }
     fn runtime(&mut self, name: &str, args: &[cl::Value]) -> Vec<cl::Value> {
-        let target = self.module.declare_func_in_func(self.runtime[name], self.b.func);
+        let id = self.runtime.id(self.module, name).expect("runtime functions are declared by a fixed table");
+        let target = self.module.declare_func_in_func(id, self.b.func);
         let call = self.b.ins().call(target, args);
         self.b.inst_results(call).to_vec()
     }

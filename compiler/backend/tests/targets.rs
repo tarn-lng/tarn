@@ -18,7 +18,8 @@ fn header(bytes: &[u8]) -> (&'static str, u32) {
 
 #[test]
 fn every_target_emits_its_own_object() {
-    let res = tarn_driver::check(std::path::Path::new("../../benchmarks/native/arithmetic.tarn")).unwrap();
+    // No hosted runtime, so the same program is valid for `*-none` too.
+    let res = tarn_driver::check(std::path::Path::new("../../tests/freestanding/arithmetic.tarn")).unwrap();
     assert!(!res.has_errors(), "{:?}", res.diagnostics);
     for name in TARGETS {
         let target: Target = name.parse().unwrap();
@@ -42,4 +43,51 @@ fn host_target_matches_default_emission_format() {
     let default = tarn_backend::emit_object(p, t).unwrap();
     let explicit = tarn_backend::emit_object_for(p, t, host).unwrap();
     assert_eq!(header(&default), header(&explicit));
+}
+
+fn freestanding(path: &str, target: &str) -> tarn_backend::Result<Vec<u8>> {
+    let res = tarn_driver::check(std::path::Path::new(path)).unwrap();
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    tarn_backend::emit_object_for(res.drops.as_ref().unwrap(), res.typed.as_ref().unwrap(), target.parse().unwrap())
+}
+
+/// (undefined, defined global) symbols, via the system `nm`.
+fn symbols(bytes: &[u8], tag: &str) -> (Vec<String>, Vec<String>) {
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-{tag}-{}.o", std::process::id()));
+    std::fs::write(&path, bytes).unwrap();
+    let list = |flag: &str| -> Vec<String> {
+        let out = std::process::Command::new("nm").args([flag]).arg(&path).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.split_whitespace().last()).map(String::from).collect()
+    };
+    let result = (list("-u"), list("-g"));
+    let _ = std::fs::remove_file(path);
+    result
+}
+
+#[test]
+fn freestanding_object_imports_only_the_contract() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/arithmetic.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
+        assert!(globals.contains(&"tarn_main".to_string()), "{target}: {globals:?}");
+        assert!(!globals.contains(&"main".to_string()), "{target}: no libc entry shim");
+    }
+}
+
+#[test]
+fn freestanding_rejects_the_hosted_runtime_by_feature() {
+    let error = freestanding("../../benchmarks/native/arithmetic.tarn", "x86_64-none").unwrap_err().to_string();
+    assert!(error.contains("target x86_64-none is freestanding"), "{error}");
+    assert!(error.contains("console output (`print`): needs `tarn_rt_print_i64`"), "{error}");
+}
+
+#[test]
+fn hosted_objects_import_only_the_runtime_they_use() {
+    let Some(host) = Target::host() else { return };
+    let bytes = freestanding("../../tests/freestanding/arithmetic.tarn", &host.to_string()).unwrap();
+    let (undefined, _) = symbols(&bytes, "host");
+    let runtime: Vec<_> = undefined.iter().map(|s| s.trim_start_matches('_')).filter(|s| s.starts_with("tarn_rt_")).collect();
+    assert!(runtime.len() <= 3, "{runtime:?}");
 }

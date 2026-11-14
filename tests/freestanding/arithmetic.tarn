@@ -1,0 +1,12 @@
+fn add(a i64, b i64) i64 {
+    return a + b
+}
+
+fn main() {
+    var i: i64 = 0
+    var sum: i64 = 0
+    for i < 10 {
+        sum = add(sum, i)
+        i = i + 1
+    }
+}
