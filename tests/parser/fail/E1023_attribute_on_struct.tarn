@@ -1,0 +1,7 @@
+#[export("x")]
+struct S {
+    a u8
+}
+
+#[section(".x")
+fn f() {}

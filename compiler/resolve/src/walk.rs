@@ -376,6 +376,12 @@ impl<'c, 'a> Walker<'c, 'a> {
                     self.ty(&c.ty);
                     self.expr(&c.value);
                 }
+                ItemKind::Static(d) => {
+                    self.ty(&d.ty);
+                    if let Some(v) = &d.value {
+                        self.expr(v);
+                    }
+                }
                 ItemKind::Struct(s) => self.in_scope(ScopeKind::Item, item.span, |w| {
                     w.generics(&s.generics);
                     for f in &s.fields {

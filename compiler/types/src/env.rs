@@ -162,6 +162,13 @@ pub struct Decls {
     pub location: Option<SymbolId>,
     /// Evaluated `const` items (ADR 0090).
     pub consts: HashMap<SymbolId, crate::consts::ConstDef>,
+    /// `static` items (ADR 0101, P6).
+    pub statics: HashMap<SymbolId, crate::statics::StaticDef>,
+    /// `#[export]` and `#[section]` of functions.
+    pub fn_attrs: HashMap<SymbolId, crate::statics::FnAttrs>,
+    pub ffi_null: Option<SymbolId>,
+    pub ffi_from_address: Option<SymbolId>,
+    pub ffi_to_const: Option<SymbolId>,
     pub bounds: HashMap<ParamId, Vec<SymbolId>>,
     pub param_names: HashMap<ParamId, String>,
     /// The `Copy` capability from `core`, if loaded.
@@ -225,6 +232,9 @@ impl<'a> Env<'a> {
         }).map(|(i, _)| SymbolId(i as u32));
         if let Some((_, ffi)) = stdlib("ffi") {
             env.decls.ffi_callback = ffi.get("callback");
+            env.decls.ffi_null = ffi.get("null");
+            env.decls.ffi_from_address = ffi.get("from_address");
+            env.decls.ffi_to_const = ffi.get("to_const");
             env.decls.ffi_read = ffi.get("_read");
             env.decls.ffi_write = ffi.get("_write");
             env.decls.ffi_read_volatile = ffi.get("_read_volatile");
@@ -256,6 +266,7 @@ impl<'a> Env<'a> {
         }
         env.collect();
         crate::consts::evaluate(&mut env);
+        crate::statics::evaluate(&mut env);
         if let Some((_, io)) = stdlib("io") {
             env.decls.net_error = io.get("Error");
         }
@@ -439,7 +450,7 @@ impl<'a> Env<'a> {
                             self.fn_sig(m, f, &binders, self_ty.clone(), None);
                         }
                     }
-                    ItemKind::Import(_) | ItemKind::Const(_) | ItemKind::Error => {}
+                    ItemKind::Import(_) | ItemKind::Const(_) | ItemKind::Static(_) | ItemKind::Error => {}
                 }
             }
         }

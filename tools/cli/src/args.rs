@@ -18,7 +18,7 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
         "lex" | "resolve" => format!("tarn {command} [file.tarn | directory] [--json]"),
         "ir" => "tarn ir [file.tarn | directory] [--drops]".into(),
         "build" => {
-            "tarn build [file.tarn | directory] [-o path] [--target target] [--link library]... [--json]".into()
+            "tarn build [file.tarn | directory] [-o path] [--target target] [--linker-script script.ld [--entry symbol]] [--link library]... [--json]".into()
         }
         "run" => "tarn run [file.tarn | directory] [--link library]... [--json] [--watch] [-- program arguments...]".into(),
         "profile" => "tarn profile [file.tarn | directory] [--link library]... [-- program arguments...]".into(),
@@ -69,6 +69,13 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
                 value.parse::<tarn_backend::Target>().map_err(fail)?;
                 options.extend([arg.clone(), value.clone()]);
             }
+            "--linker-script" | "--entry" if command == "build" && !options.contains(arg) => {
+                let value = rest.next().filter(|v| !v.starts_with('-')).ok_or_else(|| fail(format!("{arg} requires a value")))?;
+                if arg == "--entry" && !tarn_types::statics::valid_symbol(value) {
+                    return Err(fail(format!("invalid entry symbol `{value}`: use a C identifier")));
+                }
+                options.extend([arg.clone(), value.clone()]);
+            }
             "--link" if native => {
                 let value = rest.next().ok_or_else(|| fail("--link requires a library".into()))?;
                 if !tarn_backend::valid_library(value) {
@@ -83,6 +90,15 @@ pub fn normalize(args: Vec<String>) -> Result<Vec<String>, String> {
     }
     if !source {
         return Ok(args);
+    }
+    if command == "build" && options.iter().any(|o| o == "--linker-script" || o == "--entry") {
+        let target = options.iter().position(|o| o == "--target").map(|i| options[i + 1].parse::<tarn_backend::Target>().ok());
+        if !matches!(target, Some(Some(t)) if t.os == tarn_backend::Os::None) {
+            return Err(fail("--linker-script and --entry link a kernel and need a `--target` ending in `-none`".into()));
+        }
+        if options.iter().any(|o| o == "--entry") && !options.iter().any(|o| o == "--linker-script") {
+            return Err(fail("--entry needs --linker-script".into()));
+        }
     }
     let default_entry = entry.is_none();
     let mut path = std::path::PathBuf::from(entry.unwrap_or_else(|| ".".into()));

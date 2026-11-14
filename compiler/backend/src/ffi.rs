@@ -46,6 +46,63 @@ pub(super) fn emit_callbacks(module: &mut ObjectModule, p: &post::Program,
     Ok(adapters)
 }
 
+/// `#[export("name")]` (ADR 0101, P6): a global C-ABI symbol that forwards to
+/// the ordinary Tarn body. Returns each adapter's section, if it has one.
+/// `contract` holds the signatures of the freestanding contract: a program may
+/// define those symbols itself, but only with exactly the signature the
+/// generated code calls them with.
+pub(super) fn emit_exports(module: &mut ObjectModule, p: &post::Program, t: &tarn_types::Typed, ids: &HashMap<FunctionId, FuncId>,
+    target: crate::Target, contract: &HashMap<String, cl::Signature>) -> Result<Vec<(FuncId, String)>> {
+    let mut sections = Vec::new();
+    let mut seen: HashMap<String, String> = HashMap::new();
+    for f in &p.functions {
+        let Some(attrs) = f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)) else { continue };
+        let Some(name) = &attrs.export else { continue };
+        if f.decl.kind != FnKind::Body || f.decl.asynchronous.is_some() || !f.decl.generics.is_empty() { return Err(Error::bug("invalid exported function")); }
+        if let Some(first) = seen.insert(name.clone(), f.decl.name.clone()) {
+            return Err(Error::unsupported(format!("symbol `{name}` is exported by both `{first}` and `{}`", f.decl.name)));
+        }
+        crate::statics::check_export_name(name, target, true)?;
+        let sig = c_signature(module, &f.decl).map_err(|e| Error::unsupported(format!("exported function `{}`: {}", f.decl.name, e.message)))?;
+        if let Some(required) = contract.get(name.as_str()).filter(|_| target.os == crate::Os::None) {
+            if required.params != sig.params || required.returns != sig.returns {
+                let show = |s: &cl::Signature| format!("({}) -> {}", s.params.iter().map(|a| a.value_type.to_string()).collect::<Vec<_>>().join(", "), s.returns.first().map_or("void".to_string(), |a| a.value_type.to_string()));
+                return Err(Error::unsupported(format!(
+                    "`{name}` is part of the freestanding contract and must have the signature {} (usize and raw pointers are i64); `{}` has {}",
+                    show(required), f.decl.name, show(&sig)
+                )));
+            }
+        }
+        let id = module.declare_function(name, Linkage::Export, &sig).map_err(|e| Error::unsupported(format!("exported symbol `{name}` conflicts with another declaration: {e}")))?;
+        define_adapter(module, id, sig, ids[&f.decl.id])?;
+        if let Some(section) = &attrs.section { sections.push((id, section.clone())); }
+    }
+    Ok(sections)
+}
+
+/// A function with `sig` that forwards its arguments to `target`.
+fn define_adapter(module: &mut ObjectModule, id: FuncId, sig: cl::Signature, target: FuncId) -> Result<()> {
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig;
+    let mut fb = FunctionBuilderContext::new();
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, &mut fb);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let params = b.block_params(entry).to_vec();
+        let callee = module.declare_func_in_func(target, b.func);
+        let call = b.ins().call(callee, &params);
+        let results = b.inst_results(call).to_vec();
+        b.ins().return_(&results);
+        b.seal_all_blocks();
+        b.finalize();
+    }
+    cranelift_codegen::verify_function(&ctx.func, module.isa()).map_err(|e| Error::bug(e.to_string()))?;
+    module.define_function(id, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
+    Ok(())
+}
+
 impl Cx<'_, '_> {
     /// Trusted `ffi` intrinsics (ADRs 0047/0080). Pointer conversions do not
     /// access pointee storage; scalar reads/writes are explicitly unsafe APIs.

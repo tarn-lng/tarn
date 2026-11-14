@@ -85,6 +85,7 @@ stream them:
 | E1020 | `nesting_too_deep` | expressions, blocks, types or patterns nested more than 128 levels |
 | E1021 | `generic_interface` | interfaces cannot have type parameters |
 | E1022 | `expression_too_deep` | an expression or statement tree is more than 8192 levels deep (about 4096 chained calls) |
+| E1023 | `invalid_attribute` | an attribute `#[..]` is malformed or on an item that takes none (ADR 0101) |
 | E2001 | `undefined_name` | cannot find `x` in this scope |
 | E2002 | `duplicate_definition` | `x` is defined more than once |
 | E2003 | `duplicate_in_scope` | `x` is already declared in this scope |
@@ -230,3 +231,17 @@ code has one meaning.
 - E3084 `invalid_constant`: a `const` value is not a compile-time constant,
   does not fit its type, overflows, divides by zero, depends on itself, or the
   type is not an integer, float, `bool` or `string` (ADR 0090).
+
+## Freestanding statics and attributes (ADR 0101, P6)
+
+- E3085 `invalid_static`: a `static` has a type without a fixed C layout
+  (`string`, enums, generics, zero-length arrays, vectors), or its initializer
+  is not a literal, constant, struct or array literal of those,
+  `ffi.null()`, `ffi.from_address(n)` or the name of another static of a
+  compatible pointer type; or a field is missing, repeated or unknown.
+- E3086 `invalid_attribute`: unknown attribute for the item, repeated
+  attribute, malformed argument (`#[export]` needs a C identifier,
+  `#[section]` a name such as `.text.boot`, `#[align]` a power of two up to
+  65536), a symbol exported twice, or an attribute on a generic, async, method
+  or `extern` function. An exported function's parameters and result must be
+  integers, floats, `bool` or raw pointers.

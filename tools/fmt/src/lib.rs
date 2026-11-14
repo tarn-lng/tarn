@@ -160,6 +160,10 @@ fn space(left: &Token, right: &Token, binary: &HashSet<u32>) -> bool {
     ) {
         return true;
     }
+    // `#[attribute]`: the `#` hugs its bracket (ADR 0101, P6).
+    if matches!((a, b), (K::Hash, K::LBracket)) {
+        return false;
+    }
     if binary.contains(&left.span.start) || binary.contains(&right.span.start) {
         return true;
     }

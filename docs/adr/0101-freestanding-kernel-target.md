@@ -1,6 +1,6 @@
 # ADR 0101: Freestanding targets, toward a kernel written in Tarn
 
-Status: accepted; P1, P2 and P3 implemented. Delivered as a series of 0.5.x patches; no new minor.
+Status: accepted; P1 through P6 implemented. Delivered as a series of 0.5.x patches; no new minor.
 
 ## Evidence
 
@@ -64,8 +64,9 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   `tarn_rt_panic`, `tarn_rt_panic_at`, `tarn_rt_fault` and `extern "C"`
   functions; anything else is rejected with the Tarn feature that needs it
   (`print`, heap strings/vectors, captured closures, async, OS services).
-  Diagnostics carry no source span yet; `#[panic_handler]` in Tarn waits for
-  P6 (exported symbol names).
+  Diagnostics carry no source span yet. P6 adds the way to write the panic
+  handler in Tarn: `#[export("tarn_rt_panic")]` (a separate `#[panic_handler]`
+  was not needed).
 
 ### P3 — User allocator — implemented
 
@@ -88,8 +89,8 @@ dependency; numbering follows whatever 0.5.x is free when it ships.
   linker section symbols. The helpers were run on the host with a malloc
   based harness (all allocations freed); no automated execution test yet
   (P8 boots under QEMU). Limitations: no custom alignment above 16; no
-  `#[global_allocator]` attribute, the symbols are plain link-time names
-  until P6 adds exported names.
+  `#[global_allocator]` attribute; the symbols are plain link-time names that P6
+  lets a program define with `#[export("tarn_alloc")]` and friends.
 
 ### P4 — Volatile and memory intrinsics — implemented
 
@@ -169,14 +170,85 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
   Intel SDM and Arm ARM and are checked only by disassembly, not on hardware
   (P8 boots them under QEMU).
 
-### P6 — Entry point, sections and linking
+### P6 — Entry point, exported names, sections, statics and linking — implemented
 
-- `#[entry]` names the symbol; `#[section(".text.boot")]`, `#[no_mangle]`,
-  `#[align(n)]` for statics.
-- `tarn build --linker-script kernel.ld` and a bundled `ld.lld` invocation
-  (or a minimal built-in ELF linker for static, non-PIC output).
-- Statics with fixed layout (`#[repr(C)]`) for GDT/IDT/page-table structures.
-- Tests: produce an ELF whose entry and sections match the script.
+- `#[export("name")]`, `#[section(".name")]`, `#[align(n)]` attributes and
+  `static` items; `tarn build --linker-script kernel.ld [--entry sym]`.
+- Tests: the freestanding contract written in Tarn leaves zero undefined
+  symbols; sections, alignment, symbol kinds, static bytes and relocations are
+  read back from the ELF; linking runs a real linker when one exists.
+- Done: user guide in [docs/freestanding.md](../freestanding.md).
+  - **Syntax and why.** Tarn had no attributes, `static` items or mutable
+    globals. The smallest forms that fit the grammar are `#[name]` /
+    `#[name("text")]` / `#[name(16)]` on the line before a function or static
+    (lexer token `#`; E1023 for malformed or misplaced ones) and `static` /
+    `static mut` (a contextual keyword, so no existing identifier named
+    `static` breaks; the item is `static NAME Type [= value]`, matching
+    `const NAME Type = value`). Attributes beat a keyword prefix such as
+    `export "x" fn` because three independent properties (symbol, section,
+    alignment) combine on one item, and they are the form kernel authors expect.
+    The earlier plan's `#[entry]` and `#[no_mangle]` and `#[repr(C)]` were not
+    needed: `#[export]` on a function is the entry (the linker script's
+    `ENTRY(kmain)` or `--entry` names it), exported names are always
+    unmangled, and struct layout was already C layout (declaration order,
+    natural alignment; ADR 0047 types), now also guaranteed for statics.
+  - **Exports.** `#[export]` generates a C-ABI adapter that calls the ordinary
+    Tarn body (the body keeps Tarn's private ABI and all its checks). Parameters
+    and result reuse the `extern "C"` scalar set (integers, floats, `bool`,
+    raw pointers, `void`); anything else is E3086 at `tarn check`. Exported
+    functions are roots of monomorphization, so a program needs no `main` on
+    `*-none`; `tarn_main` is emitted only when `main` exists. A program may
+    define the contract (`tarn_rt_fault`, `tarn_rt_panic`, `tarn_rt_panic_at`,
+    `tarn_alloc`, `tarn_free`, `tarn_realloc`) on `*-none`: the signature must
+    equal what generated code calls (checked, with a message showing both), and
+    the object then imports nothing. Other `tarn_*` names and hosted `main`
+    are rejected. Tests define the panic handler and a bump allocator over a
+    static arena in Tarn, for both architectures.
+  - **Sections.** Data uses cranelift-object's custom sections (any ELF
+    section name, flags from mutability). Functions: cranelift-object can give
+    each function its own section but not name it, and the `object` writer
+    keeps the name private, so `#[section]` on any function turns on
+    one-section-per-function and `backend/src/elf.rs` renames sections by
+    appending names to a copy of `.shstrtab` at the end of the finished file
+    (`.text.<symbol>` for the rest, `.rela.<name>` for relocation sections).
+    Nothing else moves. Without `#[section]` the object is unchanged. Mach-O
+    targets reject `#[section]`.
+  - **Statics.** `static` holds integers, floats, `bool`, raw pointers, fixed
+    arrays and non-generic structs of those, initialized at compile time (the
+    `const` evaluator plus struct/array literals, `ffi.null()`,
+    `ffi.from_address(n)` and the name of another static, which becomes a
+    relocation) or zero-filled (`.bss`). Ordinary values keep the 64 KiB and
+    4096-element limits; statics use `layout::static_layout`, without them. A
+    static's name is its address (`*T`, `*mut T` for `static mut`), so
+    ownership stays sound by construction: no reference or loan to static
+    storage can exist, every access is an `unsafe` raw-pointer read or
+    write, and races and aliasing are the author's (documented). Immutable
+    statics go to read-only memory. All statics are emitted even if unused.
+    No enums, strings, generics or functions in initializers (E3085).
+  - **Linking.** `--linker-script` (with `--entry`) is valid only for `*-none`
+    and runs an existing ELF linker: `TARN_LD`, `ld.lld`, a cross GNU `ld`, or
+    the host `ld` on a same-architecture Linux host, as
+    `-nostdlib -static -T script [-e entry] -o out object`. The default entry is
+    the script's `ENTRY`, else `tarn_main` when `main` exists. Without a
+    linker the error names what to install; Tarn bundles and downloads none.
+    A built-in ELF linker was not written: it would duplicate lld for the
+    one feature (linker scripts) that makes it worth having.
+  - **Verification limits.** This machine had no ELF linker, so the real link
+    test (`linking_a_kernel_with_an_elf_linker`, which checks `ET_EXEC`, the
+    entry address and the request bytes in the image) skips here; the
+    invocation, entry selection, failure handling and publication are
+    covered with a recording stand-in linker. The link was not run
+    against lld or GNU ld by the author of this patch.
+  - **Limitations.** No function addresses in static initializers (an IDT
+    must be filled at run time, P7 adds handler addresses); no field-access
+    syntax on statics (offsets by address arithmetic); same-named
+    sections from several items stay separate input sections; no `#[used]`
+    for functions, no `#[naked]`, no `#[link_section]` on locals; no
+    `--gc-sections`; a static's alignment above the section's is raised for
+    the section, not page-aligned in the image unless the script says so;
+    aarch64 data relocations are untested beyond the object (no linker);
+    the formatter prints `static mut NAME[16]u8` (the same spacing it already
+    gives struct fields of array type).
 
 ### P7 — Interrupt handlers
 

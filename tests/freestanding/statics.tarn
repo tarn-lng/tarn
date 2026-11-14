@@ -1,0 +1,24 @@
+// Static data with C layout, exported data symbols, an address stored in
+// another static (a relocation) and an over-aligned object (ADR 0101, P6).
+import "ffi"
+
+struct Header {
+    magic u32
+    flags u8
+    next *Header
+    ratio f32
+    ok bool
+}
+
+#[export("second")]
+static mut SECOND Header = Header{magic: 2, flags: 0, next: ffi.null(), ratio: 1.5, ok: true}
+
+#[export("first")]
+static FIRST Header = Header{magic: 0xdeadbeef, flags: 7, next: SECOND, ratio: -2.0, ok: false}
+
+static TABLE [3]i16 = [3]i16{-1, 2, 300}
+
+#[align(64)]
+static mut ALIGNED u8 = 9
+
+fn main() {}

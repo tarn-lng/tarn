@@ -1,0 +1,9 @@
+// `#[section]` needs an ELF object: rejected for Mach-O targets.
+#[section(".text.hot")]
+fn hot() i64 {
+    return 1
+}
+
+fn main() {
+    print(hot())
+}

@@ -1,0 +1,4 @@
+#[section(".data.hot")]
+static mut HOT u64 = 1
+
+fn main() {}

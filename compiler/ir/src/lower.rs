@@ -1208,10 +1208,15 @@ impl<'a, 'l> Builder<'a, 'l> {
     }
 
     fn operand_raw(&mut self, e: &Expr) -> Operand {
-        if matches!(e.kind, ExprKind::Ident(_) | ExprKind::Field { .. })
-            && let Some(c) = self.constant(e)
-        {
-            return Operand::Const(c);
+        if matches!(e.kind, ExprKind::Ident(_) | ExprKind::Field { .. }) {
+            if let Some(c) = self.constant(e) {
+                return Operand::Const(c);
+            }
+            if let Some(Res::Symbol(s)) = self.res(e.id)
+                && self.lx.t.decls.statics.contains_key(s)
+            {
+                return Operand::Const(Const::Static(*s));
+            }
         }
         let ty = self.ty(e);
         match &e.kind {

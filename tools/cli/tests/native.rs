@@ -223,3 +223,64 @@ fn missing_main_is_a_diagnostic_for_native_commands_only() {
     assert!(Command::new(cli).arg("check").arg(&source).status().unwrap().success());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `tarn build --target *-none --linker-script` (ADR 0101, P6): the object is
+/// built in scratch space and handed to the ELF linker found through
+/// `TARN_LD`, here a recording stand-in.
+#[cfg(unix)]
+#[test]
+fn kernel_is_linked_with_the_requested_script_and_entry() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("tarn-cli-kernel-ld-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("kernel.tarn");
+    std::fs::write(&source, "#[export(\"kmain\")]\nfn kmain() {}\n").unwrap();
+    std::fs::write(dir.join("with_entry.ld"), "ENTRY(kmain)\nSECTIONS { }\n").unwrap();
+    std::fs::write(dir.join("plain.ld"), "SECTIONS { }\n").unwrap();
+    let linker = dir.join("fake-ld");
+    std::fs::write(&linker, "#!/bin/sh\necho \"$@\" > \"$0.args\"\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; fi; shift; done\nprintf '\\177ELF' > \"$out\"\n").unwrap();
+    std::fs::set_permissions(&linker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let cli = env!("CARGO_BIN_EXE_tarn");
+    let build = |extra: &[&str]| {
+        Command::new(cli).current_dir(&dir).env("TARN_LD", &linker).args(["build", "kernel.tarn", "--target", "x86_64-none"]).args(extra).output().unwrap()
+    };
+
+    // Without a script the relocatable object is written, no linker involved.
+    let output = build(&[]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(&std::fs::read(dir.join("kernel.o")).unwrap()[16..18], &[1, 0], "ET_REL");
+    assert!(!dir.join("fake-ld.args").exists());
+
+    // The script's own ENTRY is respected: no -e. Default output is kernel.elf.
+    let output = build(&["--linker-script", "with_entry.ld"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(std::fs::read(dir.join("kernel.elf")).unwrap(), b"\x7fELF");
+    let args = std::fs::read_to_string(dir.join("fake-ld.args")).unwrap();
+    assert!(args.starts_with("-nostdlib -static -T with_entry.ld -o ") && !args.contains(" -e "), "{args}");
+
+    // --entry overrides the script.
+    let output = build(&["--linker-script", "plain.ld", "--entry", "kmain", "-o", "out.elf"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(dir.join("out.elf").is_file());
+    assert!(std::fs::read_to_string(dir.join("fake-ld.args")).unwrap().contains("-T plain.ld -e kmain -o "));
+
+    // A failing linker reports itself and leaves no output behind.
+    std::fs::write(&linker, "#!/bin/sh\necho 'ld: undefined symbol: boom' >&2\nexit 1\n").unwrap();
+    let output = build(&["--linker-script", "plain.ld", "-o", "rejected.elf"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed") && stderr.contains("undefined symbol: boom"), "{stderr}");
+    assert!(!dir.join("rejected.elf").exists());
+
+    // Linking is for freestanding targets, and needs the script it names.
+    for args in [&["build", "kernel.tarn", "--linker-script", "plain.ld"][..], &["build", "kernel.tarn", "--target", "x86_64-linux", "--entry", "kmain"][..]] {
+        let output = Command::new(cli).current_dir(&dir).args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("need a `--target` ending in `-none`"), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+    let output = build(&["--entry", "kmain"]);
+    assert!(!output.status.success() && String::from_utf8_lossy(&output.stderr).contains("--entry needs --linker-script"));
+    let output = build(&["--linker-script", "missing.ld"]);
+    assert!(!output.status.success() && String::from_utf8_lossy(&output.stderr).contains("cannot read linker script"));
+    let _ = std::fs::remove_dir_all(dir);
+}

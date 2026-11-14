@@ -1,0 +1,80 @@
+error[E3085]: a static cannot have type `string`: `string` owns heap memory; use a `[N]u8` array and a length
+  --> tests/types/fail/E3085_invalid_statics.tarn:14:13
+   |
+14 | static TEXT string = "no"
+   |             ^^^^^^
+   |
+   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
+
+error[E3085]: a static cannot have type `Mode`: only structs have a fixed layout; enums do not
+  --> tests/types/fail/E3085_invalid_statics.tarn:15:13
+   |
+15 | static MODE Mode = Mode.Fast
+   |             ^^^^
+   |
+   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
+
+error[E3085]: a static cannot have type `Wrapper<i64>`: generic structs are not allowed
+  --> tests/types/fail/E3085_invalid_statics.tarn:16:16
+   |
+16 | static GENERIC Wrapper<i64> = Wrapper{value: 1}
+   |                ^^^^^^^^^^^^
+   |
+   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
+
+error[E3085]: a static cannot have type `[0]u8`: a zero-length array has no storage
+  --> tests/types/fail/E3085_invalid_statics.tarn:17:14
+   |
+17 | static EMPTY [0]u8
+   |              ^^^^^
+   |
+   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
+
+error[E3084]: constant value 300 does not fit in `u8`
+  --> tests/types/fail/E3085_invalid_statics.tarn:18:17
+   |
+18 | static BIG u8 = 300
+   |                 ^^^
+   |
+   = note: `u8` holds 0..=255
+
+error[E3085]: missing field `b`
+  --> tests/types/fail/E3085_invalid_statics.tarn:19:23
+   |
+19 | static MISSING Pair = Pair{a: 1}
+   |                       ^^^^^^^^^^
+   |
+   = help: a static initializer must give every field
+
+error[E3085]: struct has no field `c`
+  --> tests/types/fail/E3085_invalid_statics.tarn:20:40
+   |
+20 | static UNKNOWN Pair = Pair{a: 1, b: 2, c: 3}
+   |                                        ^
+
+error[E3085]: array of 2 elements initialized with 1
+  --> tests/types/fail/E3085_invalid_statics.tarn:21:22
+   |
+21 | static SHORT [2]u8 = [2]u8{1}
+   |                      ^^^^^^^^
+
+error[E3085]: `BUFFER` has type `*[4]u8`, expected `*mut u8`
+  --> tests/types/fail/E3085_invalid_statics.tarn:23:24
+   |
+23 | static WRONG *mut u8 = BUFFER
+   |                        ^^^^^^
+
+error[E3085]: `BUFFER` has type `*[4]u8`, expected `*mut u8`
+  --> tests/types/fail/E3085_invalid_statics.tarn:24:36
+   |
+24 | static TO_CONST *u8 = ffi.to_const(BUFFER)
+   |                                    ^^^^^^
+
+error[E3084]: this expression is not a constant
+  --> tests/types/fail/E3085_invalid_statics.tarn:25:19
+   |
+25 | static CALL u32 = compute()
+   |                   ^^^^^^^^^
+   |
+   = note: constants allow literals, other constants, arithmetic, bitwise and boolean operators, and integer conversions
+

@@ -26,7 +26,8 @@ usage:
                                      emit a native Linux/macOS x86_64/ARM64 executable; each
                                      --link grants a system C library; --target for
                                      another machine (x86_64|aarch64-linux|macos|none)
-                                     emits a relocatable object instead
+                                     emits a relocatable object instead; with *-none,
+                                     --linker-script k.ld [--entry sym] links a static ELF
     tarn run [entry] [--link lib]... [--json] [--watch] [-- args...]
                                      build temporarily and execute
     tarn test [entry] [--filter text] [--timeout milliseconds] [--json] [--watch]
@@ -316,6 +317,8 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
     let json = tool_args(args).iter().any(|arg| arg == "--json");
     let mut explicit = None;
     let mut target = None;
+    let mut linker_script: Option<std::path::PathBuf> = None;
+    let mut entry_symbol: Option<String> = None;
     let mut libraries = Vec::new();
     let mut program = Vec::new();
     let mut rest = args[1..].iter();
@@ -323,6 +326,8 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
         match arg.as_str() {
             "-o" => explicit = rest.next().map(std::path::PathBuf::from),
             "--target" => target = rest.next().and_then(|t| t.parse::<tarn_backend::Target>().ok()),
+            "--linker-script" => linker_script = rest.next().map(std::path::PathBuf::from),
+            "--entry" => entry_symbol = rest.next().cloned(),
             "--link" => libraries.push(rest.next().expect("validated library").clone()),
             "--" => program.extend(rest.by_ref().cloned()),
             "--json" => {},
@@ -341,7 +346,7 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
     }
     if res.has_errors() { return ExitCode::from(1); }
     let (Some(p), Some(t)) = (&res.drops, &res.typed) else { native_error(json, "internal", "compiler bug: missing post-drop IR"); return ExitCode::from(1); };
-    if let Some(d) = res.missing_main() {
+    if let Some(d) = res.missing_main_for(target.is_some_and(|t| t.os == tarn_backend::Os::None)) {
         if json { println!("{}", d.to_json(&res.program.sources)); } else { eprint!("{}", d.render(&res.program.sources)); }
         return ExitCode::from(1);
     }
@@ -353,12 +358,19 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
         return ExitCode::from(1);
     }
     let output = if run { std::env::temp_dir().join(format!("tarn-run-{}", std::process::id())) }
+        else if cross.is_some() && linker_script.is_some() { explicit.unwrap_or_else(|| std::path::Path::new(path).with_extension("elf")) }
         else if let Some(target) = cross { explicit.unwrap_or_else(|| std::path::Path::new(path).with_extension(target.object_extension())) }
         else { explicit.unwrap_or_else(|| std::path::Path::new(path).with_extension("")) };
     if std::path::Path::new(path).canonicalize().ok() == output.canonicalize().ok() && output.exists() {
         native_error(json, "output", "output would overwrite the source file"); return ExitCode::from(1);
     }
-    let built = match cross { Some(target) => tarn_backend::build_object(p, t, &output, target), None => tarn_backend::build_linked(p, t, &output, &libraries) };
+    let built = match cross {
+        // `--linker-script`: build the object in a scratch file, link it, and
+        // keep only the ELF (ADR 0101, P6).
+        Some(target) if linker_script.is_some() => link_kernel(p, t, &output, target, linker_script.as_deref().unwrap(), entry_symbol.as_deref(), res.missing_main().is_none()),
+        Some(target) => tarn_backend::build_object(p, t, &output, target),
+        None => tarn_backend::build_linked(p, t, &output, &libraries),
+    };
     if let Err(e) = built { native_error(json, "native", &e.to_string()); return ExitCode::from(1); }
     if !run { return ExitCode::SUCCESS; }
     let status = std::process::Command::new(&output).args(&program).status();
@@ -367,6 +379,19 @@ fn cmd_native(args: &[String], run: bool) -> ExitCode {
         Ok(s) => { use std::os::unix::process::ExitStatusExt; ExitCode::from(s.code().unwrap_or_else(|| 128 + s.signal().unwrap_or(1)).clamp(0,255) as u8) }
         Err(e) => { native_error(json, "execute", &format!("cannot run executable: {e}")); ExitCode::from(1) }
     }
+}
+
+/// Object, then static ELF. The entry is `--entry`, else the script's `ENTRY`,
+/// else `tarn_main` when the program has a `main`.
+fn link_kernel(p: &tarn_ir::post_drop::Program, t: &tarn_types::Typed, output: &std::path::Path, target: tarn_backend::Target, script: &std::path::Path, entry: Option<&str>, has_main: bool) -> tarn_backend::Result<()> {
+    let text = std::fs::read_to_string(script).map_err(|e| tarn_backend::Error { message: format!("cannot read linker script `{}`: {e}", script.display()) })?;
+    let entry = entry.or_else(|| (has_main && !tarn_backend::link::script_names_entry(&text)).then_some("tarn_main"));
+    let directory = std::env::temp_dir().join(format!("tarn-link-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).map_err(|e| tarn_backend::Error { message: format!("native build I/O: {e}") })?;
+    let object = directory.join("kernel.o");
+    let result = tarn_backend::build_object(p, t, &object, target).and_then(|()| tarn_backend::link::link_freestanding(&object, output, target, script, entry));
+    let _ = std::fs::remove_dir_all(&directory);
+    result
 }
 
 /// CLI failures without source spans use a separate, stable JSON Lines record.

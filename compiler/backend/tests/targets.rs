@@ -265,3 +265,331 @@ fn hosted_build_runs_an_unprivileged_cpu_intrinsic() {
     assert!(out.status.success(), "{:?}", out);
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "cpu intrinsics ok");
 }
+
+// ---------------------------------------------------------------- ADR 0101, P6
+
+/// A just-enough ELF64 little-endian reader: section headers, symbols and
+/// RELA entries, so tests assert what the object says rather than what a
+/// host tool prints.
+struct Elf<'a> {
+    bytes: &'a [u8],
+    sections: Vec<ElfSection>,
+    symbols: Vec<ElfSymbol>,
+}
+#[derive(Debug)]
+struct ElfSection {
+    name: String,
+    kind: u32,
+    flags: u64,
+    offset: usize,
+    size: usize,
+    link: usize,
+    info: usize,
+    align: u64,
+}
+#[derive(Debug)]
+struct ElfSymbol {
+    name: String,
+    global: bool,
+    kind: u8,
+    section: usize,
+    value: u64,
+}
+impl<'a> Elf<'a> {
+    fn parse(bytes: &'a [u8]) -> Elf<'a> {
+        let u16_at = |at: usize| u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()) as usize;
+        let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let u64_at = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
+        assert_eq!(&bytes[..6], b"\x7fELF\x02\x01");
+        let (shoff, entry, count, names) = (u64_at(0x28) as usize, u16_at(0x3a), u16_at(0x3c), u16_at(0x3e));
+        let raw = |i: usize| {
+            let h = shoff + i * entry;
+            (u32_at(h) as usize, u32_at(h + 4), u64_at(h + 8), u64_at(h + 24) as usize, u64_at(h + 32) as usize, u32_at(h + 40) as usize, u32_at(h + 44) as usize, u64_at(h + 48))
+        };
+        let table = raw(names);
+        let c_string = |table: &[u8], at: usize| String::from_utf8_lossy(&table[at..at + table[at..].iter().position(|c| *c == 0).unwrap()]).into_owned();
+        let shstrtab = &bytes[table.3..table.3 + table.4];
+        let sections: Vec<ElfSection> = (0..count)
+            .map(|i| {
+                let (name, kind, flags, offset, size, link, info, align) = raw(i);
+                ElfSection { name: c_string(shstrtab, name), kind, flags, offset, size, link, info, align }
+            })
+            .collect();
+        let mut symbols = Vec::new();
+        if let Some(symtab) = sections.iter().find(|s| s.kind == 2) {
+            let strtab = &sections[symtab.link];
+            let strings = &bytes[strtab.offset..strtab.offset + strtab.size];
+            for n in 1..symtab.size / 24 {
+                let at = symtab.offset + n * 24;
+                symbols.push(ElfSymbol { name: c_string(strings, u32_at(at) as usize), global: bytes[at + 4] >> 4 != 0, kind: bytes[at + 4] & 15, section: u16_at(at + 6), value: u64_at(at + 8) });
+            }
+        }
+        Elf { bytes, sections, symbols }
+    }
+    fn section(&self, name: &str) -> &ElfSection {
+        self.sections.iter().find(|s| s.name == name).unwrap_or_else(|| panic!("no section {name}: {:?}", self.sections.iter().map(|s| &s.name).collect::<Vec<_>>()))
+    }
+    fn symbol(&self, name: &str) -> &ElfSymbol {
+        self.symbols.iter().find(|s| s.name == name).unwrap_or_else(|| panic!("no symbol {name}"))
+    }
+    /// The one symbol whose name ends in `__{name}` (a Local static).
+    fn local_static(&self, name: &str) -> &ElfSymbol {
+        self.symbols.iter().find(|s| s.name.starts_with("tarn_static_") && s.name.ends_with(&format!("__{name}"))).unwrap_or_else(|| panic!("no static {name}"))
+    }
+    /// `len` bytes of the object a symbol names.
+    fn contents(&self, symbol: &ElfSymbol, len: usize) -> &[u8] {
+        let section = &self.sections[symbol.section];
+        let start = section.offset + symbol.value as usize;
+        &self.bytes[start..start + len]
+    }
+    /// (offset in `section`, relocation type, target symbol name) of its RELA entries.
+    fn relocations(&self, section: usize) -> Vec<(u64, u32, String)> {
+        let mut out = Vec::new();
+        for rela in self.sections.iter().filter(|s| s.kind == 4 && s.info == section) {
+            for n in 0..rela.size / 24 {
+                let at = rela.offset + n * 24;
+                let (offset, info) = (u64::from_le_bytes(self.bytes[at..at + 8].try_into().unwrap()), u64::from_le_bytes(self.bytes[at + 8..at + 16].try_into().unwrap()));
+                out.push((offset, info as u32, self.symbols[(info >> 32) as usize - 1].name.clone()));
+            }
+        }
+        out
+    }
+}
+
+fn freestanding_source(tag: &str, source: &str, target: &str) -> tarn_backend::Result<Vec<u8>> {
+    let dir = std::env::temp_dir().join(format!("tarn-freestanding-src-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.tarn");
+    std::fs::write(&file, source).unwrap();
+    let result = freestanding(file.to_str().unwrap(), target);
+    let _ = std::fs::remove_dir_all(dir);
+    result
+}
+
+#[test]
+fn contract_defined_in_tarn_leaves_no_undefined_symbols() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        // Entry and panic handler, no `main`.
+        let bytes = freestanding("../../tests/freestanding/kernel.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.is_empty(), "{target}: {undefined:?}");
+        for name in ["kmain", "tarn_rt_fault", "tarn_rt_panic", "tarn_rt_panic_at", "kernel_magic"] {
+            assert!(globals.contains(&name.to_string()), "{target}: {name} in {globals:?}");
+        }
+        assert!(!globals.contains(&"tarn_main".to_string()), "{target}: no main, no tarn_main: {globals:?}");
+
+        // Heap, panics and the allocator itself, all defined in Tarn.
+        let bytes = freestanding("../../tests/freestanding/bump_heap.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, globals) = symbols(&bytes, target);
+        assert!(undefined.is_empty(), "{target}: {undefined:?}");
+        for name in ["tarn_alloc", "tarn_free", "tarn_realloc", "tarn_rt_fault", "tarn_main"] {
+            assert!(globals.contains(&name.to_string()), "{target}: {name} in {globals:?}");
+        }
+    }
+}
+
+#[test]
+fn exported_names_are_global_symbols_of_the_right_kind() {
+    let bytes = freestanding("../../tests/freestanding/kernel.tarn", "x86_64-none").unwrap();
+    let elf = Elf::parse(&bytes);
+    const FUNC: u8 = 2;
+    const OBJECT: u8 = 1;
+    for name in ["kmain", "tarn_rt_fault", "tarn_rt_panic", "tarn_rt_panic_at"] {
+        let symbol = elf.symbol(name);
+        assert!(symbol.global && symbol.kind == FUNC, "{name}: {symbol:?}");
+    }
+    let magic = elf.symbol("kernel_magic");
+    assert!(magic.global && magic.kind == OBJECT, "{magic:?}");
+    assert_eq!(elf.contents(magic, 4), 0x1badb002u32.to_le_bytes());
+    // Everything else stays private to the object.
+    let boot = elf.local_static("BOOT");
+    assert!(!boot.global && boot.kind == OBJECT, "{boot:?}");
+    assert!(elf.symbols.iter().filter(|s| s.global && s.section != 0).all(|s| ["kmain", "tarn_rt_fault", "tarn_rt_panic", "tarn_rt_panic_at", "kernel_magic"].contains(&s.name.as_str())), "{:?}", elf.symbols);
+}
+
+#[test]
+fn sections_carry_the_requested_names_flags_and_alignment() {
+    const WRITE: u64 = 1;
+    const ALLOC: u64 = 2;
+    const EXEC: u64 = 4;
+    const NOBITS: u32 = 8;
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/kernel.tarn", target).unwrap();
+        let elf = Elf::parse(&bytes);
+        // A boot-loader request: its own writable data section, 0x30 bytes of C layout.
+        let requests = elf.section(".limine_requests");
+        assert_eq!((requests.size, requests.align, requests.flags & (WRITE | ALLOC | EXEC)), (0x30, 8, WRITE | ALLOC), "{target}");
+        let boot = elf.local_static("BOOT");
+        let mut expected = Vec::new();
+        for word in [0xc7b1dd30df4c8b88u64, 0x0a82e883a194f07b, 0x9d5827dcd881dd75, 0xa3148604b1f4faa0, 3, 0] {
+            expected.extend_from_slice(&word.to_le_bytes());
+        }
+        assert_eq!(elf.contents(boot, 0x30), expected.as_slice(), "{target}");
+        assert_eq!(elf.sections[boot.section].name, ".limine_requests");
+        // A function in a named code section; its section is executable.
+        let kmain = elf.symbol("kmain");
+        let code = &elf.sections[kmain.section];
+        assert_eq!(code.name, ".text.boot", "{target}");
+        assert_eq!(code.flags & (ALLOC | EXEC | WRITE), ALLOC | EXEC, "{target}");
+        // Zero-filled statics are .bss, aligned as asked, without file contents.
+        let stack = elf.local_static("STACK");
+        let bss = &elf.sections[stack.section];
+        assert_eq!((bss.name.as_str(), bss.kind, bss.size, stack.value % 4096), (".bss", NOBITS, 16384, 0), "{target}");
+        assert!(bss.align >= 4096, "{target}: {bss:?}");
+        // An immutable static is read-only data.
+        let rodata = &elf.sections[elf.symbol("kernel_magic").section];
+        assert_eq!((rodata.name.as_str(), rodata.flags & (WRITE | ALLOC)), (".rodata", ALLOC), "{target}");
+    }
+}
+
+#[test]
+fn static_data_follows_c_layout_with_relocations_and_alignment() {
+    for (target, absolute) in [("x86_64-none", 1u32), ("aarch64-none", 257)] {
+        let bytes = freestanding("../../tests/freestanding/statics.tarn", target).unwrap_or_else(|e| panic!("{target}: {e}"));
+        let elf = Elf::parse(&bytes);
+        // struct Header { magic u32, flags u8, next *Header, ratio f32, ok bool }: 24 bytes, align 8.
+        let first = elf.symbol("first");
+        let mut want = Vec::new();
+        want.extend_from_slice(&0xdeadbeefu32.to_le_bytes());
+        want.extend_from_slice(&[7, 0, 0, 0]);
+        want.extend_from_slice(&[0; 8]); // `next`: filled in by the relocation
+        want.extend_from_slice(&(-2.0f32).to_le_bytes());
+        want.extend_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(elf.contents(first, 24), want.as_slice(), "{target}");
+        let relocations = elf.relocations(first.section);
+        assert!(relocations.iter().any(|(offset, kind, name)| *offset == first.value + 8 && *kind == absolute && name == "second"), "{target}: {relocations:?}");
+
+        let second = elf.symbol("second");
+        let mut want = Vec::new();
+        want.extend_from_slice(&2u32.to_le_bytes());
+        want.extend_from_slice(&[0, 0, 0, 0]);
+        want.extend_from_slice(&[0; 8]);
+        want.extend_from_slice(&1.5f32.to_le_bytes());
+        want.extend_from_slice(&[1, 0, 0, 0]);
+        assert_eq!(elf.contents(second, 24), want.as_slice(), "{target}");
+        assert_ne!(first.section, second.section, "{target}: read-only and writable data are separate");
+
+        let table = elf.local_static("TABLE");
+        assert_eq!(elf.contents(table, 6), [0xff, 0xff, 2, 0, 0x2c, 1], "{target}");
+
+        let aligned = elf.local_static("ALIGNED");
+        assert_eq!(aligned.value % 64, 0, "{target}");
+        assert!(elf.sections[aligned.section].align >= 64, "{target}");
+        assert_eq!(elf.contents(aligned, 1), [9], "{target}");
+    }
+}
+
+#[test]
+fn every_function_gets_its_own_section_only_when_one_is_named() {
+    // Without `#[section]` the layout of the object is unchanged: one `.text`.
+    let bytes = freestanding("../../tests/freestanding/arithmetic.tarn", "x86_64-none").unwrap();
+    let elf = Elf::parse(&bytes);
+    assert_eq!(elf.sections.iter().filter(|s| s.name.starts_with(".text")).count(), 1, "{:?}", elf.sections);
+    // With one, the others are named after their symbol and the ELF stays valid.
+    let bytes = freestanding("../../tests/freestanding/kernel.tarn", "x86_64-none").unwrap();
+    let elf = Elf::parse(&bytes);
+    let text: Vec<&str> = elf.sections.iter().filter(|s| s.name.starts_with(".text")).map(|s| s.name.as_str()).collect();
+    assert!(text.contains(&".text.boot") && text.contains(&".text.tarn_rt_fault"), "{text:?}");
+    // Relocation sections follow the section they patch.
+    assert!(elf.sections.iter().any(|s| s.name == ".rela.text.boot"), "{:?}", elf.sections.iter().map(|s| &s.name).collect::<Vec<_>>());
+    if let Some(listing) = main_disassembly_of(&bytes, "<kmain>:") {
+        assert!(listing.contains("call"), "{listing}");
+    }
+}
+
+fn main_disassembly_of(bytes: &[u8], marker: &str) -> Option<String> {
+    let path = std::env::temp_dir().join(format!("tarn-freestanding-sec-{}.o", std::process::id()));
+    std::fs::write(&path, bytes).unwrap();
+    let out = std::process::Command::new("objdump").args(["-d", "--no-show-raw-insn"]).arg(&path).output().ok();
+    let _ = std::fs::remove_file(path);
+    let text = String::from_utf8_lossy(&out.filter(|o| o.status.success())?.stdout).into_owned();
+    let start = text.find(marker)?;
+    Some(text[start..].split("\n\n").next().unwrap().to_string())
+}
+
+#[test]
+fn sections_are_an_elf_feature() {
+    for target in ["x86_64-macos", "aarch64-macos"] {
+        let error = freestanding("../../tests/freestanding/section_fn_hosted.tarn", target).unwrap_err().to_string();
+        assert!(error.contains("`#[section]` is supported on ELF targets only") && error.contains(target), "{target}: {error}");
+        let error = freestanding("../../tests/freestanding/section_static_hosted.tarn", target).unwrap_err().to_string();
+        assert!(error.contains("`#[section]` is supported on ELF targets only"), "{target}: {error}");
+    }
+    // Hosted Linux objects are ELF too.
+    let bytes = freestanding("../../tests/freestanding/section_fn_hosted.tarn", "x86_64-linux").unwrap();
+    let elf = Elf::parse(&bytes);
+    assert!(elf.sections.iter().any(|s| s.name == ".text.hot"), "{:?}", elf.sections);
+}
+
+#[test]
+fn kernel_without_main_is_only_valid_freestanding() {
+    let res = tarn_driver::check(std::path::Path::new("../../tests/freestanding/kernel.tarn")).unwrap();
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    assert!(res.missing_main().is_some());
+    assert!(res.missing_main_for(true).is_none());
+    let error = freestanding("../../tests/freestanding/kernel.tarn", "x86_64-linux").unwrap_err().to_string();
+    assert!(error.contains("program requires fn main()"), "{error}");
+}
+
+#[test]
+fn exports_are_validated_against_the_target_and_the_contract() {
+    let wrong_signature = "#[export(\"tarn_alloc\")]\nfn a(size u32) *mut u8 {\n    return ffi.null()\n}\nimport \"ffi\"\n";
+    let error = freestanding_source("sig", wrong_signature, "x86_64-none").unwrap_err().to_string();
+    assert!(error.contains("`tarn_alloc` is part of the freestanding contract and must have the signature (i64) -> i64"), "{error}");
+
+    let reserved = "#[export(\"tarn_helper\")]\nfn helper() {}\n";
+    let error = freestanding_source("reserved", reserved, "x86_64-none").unwrap_err().to_string();
+    assert!(error.contains("names starting with `tarn_` belong to the compiler"), "{error}");
+
+    // The contract may be defined only where it is a contract.
+    let hosted = "#[export(\"tarn_rt_fault\")]\nfn fault() {}\nfn main() {}\n";
+    let error = freestanding_source("hosted-contract", hosted, "x86_64-linux").unwrap_err().to_string();
+    assert!(error.contains("belong to the compiler"), "{error}");
+
+    let main = "#[export(\"main\")]\nfn entry() {}\nfn main() {}\n";
+    let error = freestanding_source("main", main, "x86_64-linux").unwrap_err().to_string();
+    assert!(error.contains("C `main` shim"), "{error}");
+
+    // `tarn_main` is the compiler's entry shim; a program naming its own entry does not clash.
+    let own_entry = "#[export(\"_start\")]\nfn start() {}\nfn main() {}\n";
+    let bytes = freestanding_source("entry", own_entry, "x86_64-none").unwrap();
+    let (_, globals) = symbols(&bytes, "entry");
+    assert!(globals.contains(&"_start".to_string()) && globals.contains(&"tarn_main".to_string()), "{globals:?}");
+    let colliding = "#[export(\"tarn_main\")]\nfn start() {}\nfn main() {}\n";
+    assert!(freestanding_source("clash", colliding, "x86_64-none").is_err());
+}
+
+#[test]
+fn exported_functions_forward_to_their_tarn_body_with_the_c_abi() {
+    // A narrow signature keeps its extension attributes at the boundary.
+    let bytes = freestanding_source("abi", "#[export(\"add_bytes\")]\nfn add(a u8, b i16, flag bool) u32 {\n    if flag {\n        return u32(a) + 1\n    }\n    return u32(b)\n}\n", "x86_64-none").unwrap();
+    let (undefined, globals) = symbols(&bytes, "abi");
+    // Overflow checks may call the contract's fault handler; nothing else is imported.
+    assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{undefined:?}");
+    assert!(globals.contains(&"add_bytes".to_string()));
+}
+
+#[test]
+fn linking_a_kernel_with_an_elf_linker() {
+    let target: Target = "x86_64-none".parse().unwrap();
+    let Some(linker) = tarn_backend::link::find_linker(target) else {
+        eprintln!("no ELF linker on this machine; skipping (set TARN_LD or install ld.lld)");
+        return;
+    };
+    let res = tarn_driver::check(std::path::Path::new("../../tests/freestanding/kernel.tarn")).unwrap();
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let dir = std::env::temp_dir().join(format!("tarn-link-kernel-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (object, elf_path) = (dir.join("kernel.o"), dir.join("kernel.elf"));
+    tarn_backend::build_object(res.drops.as_ref().unwrap(), res.typed.as_ref().unwrap(), &object, target).unwrap();
+    let script = std::path::Path::new("../../tests/freestanding/kernel.ld");
+    tarn_backend::link::run_linker(&linker, &object, &elf_path, script, None).unwrap_or_else(|e| panic!("{e}"));
+    let bytes = std::fs::read(&elf_path).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+    // ET_EXEC for x86_64, entered at `kmain`, the first thing in `.text`.
+    assert_eq!(u16::from_le_bytes([bytes[16], bytes[17]]), 2, "ET_EXEC");
+    assert_eq!(u16::from_le_bytes([bytes[18], bytes[19]]), 62);
+    assert_eq!(u64::from_le_bytes(bytes[24..32].try_into().unwrap()), 0x100000, "entry is kmain at the start of .text");
+    let magic = 0xc7b1dd30df4c8b88u64.to_le_bytes();
+    assert!(bytes.windows(8).any(|w| w == magic), "the Limine request is in the image");
+}

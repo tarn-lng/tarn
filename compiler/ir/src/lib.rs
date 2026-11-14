@@ -251,6 +251,8 @@ pub enum Const {
     Unit,
     /// A function used as a value.
     Fn(FunctionId, Vec<Ty>),
+    /// Address of a `static` item (ADR 0101, P6): a raw pointer constant.
+    Static(SymbolId),
     /// Value of an opaque standard-library expression (not compilable yet).
     Opaque,
 }

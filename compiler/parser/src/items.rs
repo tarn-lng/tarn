@@ -17,7 +17,7 @@ pub(crate) enum FnContext {
 
 pub(crate) fn starts_item(k: &TokenKind) -> bool {
     use TokenKind::*;
-    matches!(k, Fn | Async | Struct | Enum | Interface | Impl | Import | Pub | Copy | Extern)
+    matches!(k, Fn | Async | Struct | Enum | Interface | Impl | Import | Pub | Copy | Extern | Hash)
 }
 
 impl Parser {
@@ -55,7 +55,62 @@ impl Parser {
         Module { file, items, span: tarn_diagnostics::Span::new(file, 0, end) }
     }
 
+    /// `#[name]`, `#[name("text")]`, `#[name(16)]`, each followed by a line break.
+    fn parse_attrs(&mut self) -> Vec<Attr> {
+        let mut attrs = Vec::new();
+        while self.at(&TokenKind::Hash) {
+            let start = self.span();
+            self.bump();
+            if !self.expect(&TokenKind::LBracket) {
+                while !matches!(self.peek(), TokenKind::Newline | TokenKind::Eof) {
+                    self.bump();
+                }
+                self.skip_newlines();
+                continue;
+            }
+            let (name, arg) = self.with_mode(true, |p| {
+                let name = p.expect_ident("attribute name").name;
+                let mut arg = None;
+                if p.eat(&TokenKind::LParen) {
+                    match p.peek().clone() {
+                        TokenKind::Str(s) => {
+                            p.bump();
+                            arg = Some(AttrArg::Str(s));
+                        }
+                        TokenKind::Int(n) => {
+                            p.bump();
+                            arg = Some(AttrArg::Int(n));
+                        }
+                        other => {
+                            let span = p.span();
+                            p.error(
+                                Diagnostic::error("E1023", "invalid_attribute", format!("expected a string or integer attribute argument, found {}", crate::describe(&other)))
+                                    .primary(span, "write `#[name(\"text\")]` or `#[name(16)]`"),
+                            );
+                        }
+                    }
+                    p.expect(&TokenKind::RParen);
+                }
+                p.expect(&TokenKind::RBracket);
+                (name, arg)
+            });
+            attrs.push(Attr { name, span: self.since(start), arg });
+            self.skip_newlines();
+        }
+        attrs
+    }
+
+    fn parse_static(&mut self) -> ItemKind {
+        self.bump();
+        let is_mut = self.eat(&TokenKind::Mut);
+        let name = self.expect_ident("static name");
+        let ty = self.parse_type();
+        let value = if self.eat(&TokenKind::Eq) { Some(self.parse_expr()) } else { None };
+        ItemKind::Static(StaticDecl { attrs: Vec::new(), is_mut, name, ty, value })
+    }
+
     fn parse_item(&mut self) -> Item {
+        let attrs = self.parse_attrs();
         let start = self.span();
         let id = self.id();
         let pub_span = self.span();
@@ -87,6 +142,9 @@ impl Parser {
             TokenKind::Fn => ItemKind::Fn(self.parse_fn(FnContext::Free, None)),
             TokenKind::Async => ItemKind::Fn(self.parse_fn(FnContext::Free, None)),
             TokenKind::Unsafe if self.nth(1) == &TokenKind::Fn => ItemKind::Fn(self.parse_fn(FnContext::Free, None)),
+            // `static` is a contextual keyword: an identifier at item position
+            // followed by a name (or `mut`) can only be a static (ADR 0101, P6).
+            TokenKind::Ident(word) if word == "static" && matches!(self.nth(1), TokenKind::Ident(_) | TokenKind::Mut) => self.parse_static(),
             TokenKind::Extern => {
                 self.bump();
                 let abi = match self.peek().clone() {
@@ -140,6 +198,20 @@ impl Parser {
                 ItemKind::Error
             }
         };
+        let mut kind = kind;
+        if !attrs.is_empty() {
+            match &mut kind {
+                ItemKind::Fn(f) => f.attrs = attrs,
+                ItemKind::Static(d) => d.attrs = attrs,
+                ItemKind::Error => {}
+                _ => {
+                    self.error(
+                        Diagnostic::error("E1023", "invalid_attribute", "attributes apply only to functions and statics")
+                            .primary(attrs[0].span, "remove this attribute"),
+                    );
+                }
+            }
+        }
         Item { id, span: self.since(start), is_pub, kind }
     }
 
@@ -202,12 +274,12 @@ impl Parser {
                 if *self.peek() == TokenKind::Newline && *self.peek_past_newlines() == TokenKind::LBrace {
                     self.skip_newlines();
                     let b = self.parse_block();
-                    return FnDecl { id, span: self.since(start), is_async, is_unsafe, abi, owner, name, generics, receiver, params, ret, borrows, body: Some(b) };
+                    return FnDecl { id, span: self.since(start), is_async, is_unsafe, abi, owner, name, generics, receiver, params, ret, borrows, body: Some(b), attrs: Vec::new() };
                 }
             }
             None
         };
-        FnDecl { id, span: self.since(start), is_async, is_unsafe, abi, owner, name, generics, receiver, params, ret, borrows, body }
+        FnDecl { id, span: self.since(start), is_async, is_unsafe, abi, owner, name, generics, receiver, params, ret, borrows, body, attrs: Vec::new() }
     }
 
     /// `(` [receiver] {`,` param} [`,`] `)`

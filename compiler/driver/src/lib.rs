@@ -100,8 +100,15 @@ impl CheckResult {
     /// E3078 for `tarn build`/`run` when the entry module declares no `fn main`.
     /// `tarn check` accepts libraries, so this is not part of checking.
     pub fn missing_main(&self) -> Option<Diagnostic> {
+        self.missing_main_for(false)
+    }
+
+    /// Like `missing_main`; a freestanding program may enter through an
+    /// `#[export]`ed function instead of `main` (ADR 0101, P6).
+    pub fn missing_main_for(&self, freestanding: bool) -> Option<Diagnostic> {
         let (p, t) = (self.drops.as_ref()?, self.typed.as_ref()?);
-        let found = p.functions.iter().any(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0));
+        let exports = freestanding && t.decls.fn_attrs.values().any(|a| a.export.is_some());
+        let found = exports || p.functions.iter().any(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0));
         (!found).then(|| Diagnostic::error("E3078", "missing_main", "no `fn main` found in the entry module")
             .note("`tarn build` and `tarn run` need an entry point")
             .help("add `fn main() { ... }`, or use `tarn check` for a library"))

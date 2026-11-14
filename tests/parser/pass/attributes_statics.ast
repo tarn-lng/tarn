@@ -1,0 +1,27 @@
+(import "ffi")
+(struct Request
+  (id [4]u64)
+  (revision u64)
+  (response *mut u64))
+(static mut BOOT Request (struct Request (id (array [4]u64 14389525486399949704 757423339400917115 11337855891383901557 11751164682440080032)) (revision 3) (response (call (. ffi null)))))
+(static mut STACK [16384]u8)
+(static MAGIC u32 464367618)
+(fn fault ()
+  (block
+    (for true
+      (block))))
+(fn panic_message ((message *u8))
+  (block
+    (for true
+      (block))))
+(fn panic_at ((message *u8) (location *u8))
+  (block
+    (for true
+      (block))))
+(fn kmain ()
+  (block
+    (let base *mut u8 (call (. ffi from_address) (call (. ffi address) STACK)))
+    (unsafe (block
+      (call (. ffi write) base 1)))))
+(pub static mut ZEROED [8]u64)
+(static PLAIN i64 (- 1))

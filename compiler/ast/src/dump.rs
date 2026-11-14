@@ -50,6 +50,16 @@ impl Dumper {
                 self.expr(&c.value, ind);
                 self.s(")");
             }
+            ItemKind::Static(d) => {
+                let _ = write!(self.out, "({p}static {}{}", if d.is_mut { "mut " } else { "" }, d.name.name);
+                self.s(" ");
+                self.ty(&d.ty);
+                if let Some(v) = &d.value {
+                    self.s(" ");
+                    self.expr(v, ind);
+                }
+                self.s(")");
+            }
             ItemKind::Struct(s) => {
                 let _ = write!(self.out, "({p}{}struct {}", if s.is_copy { "copy " } else { "" }, s.name.name);
                 self.generics(&s.generics);

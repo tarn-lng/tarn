@@ -76,6 +76,7 @@ impl P<'_> {
             Const::Str(s) => format!("{s:?}"),
             Const::Unit => "()".into(),
             Const::Fn(id, targs) => format!("fn {}{}", self.p.function(*id).name, self.targs(targs)),
+            Const::Static(s) => format!("static #{}", s.0),
             Const::Opaque => "<std>".into(),
         }
     }

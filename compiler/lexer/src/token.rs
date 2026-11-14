@@ -88,6 +88,8 @@ pub enum TokenKind {
     GtEq,
     Shl,
     Shr,
+    /// `#` starts an attribute: `#[name("arg")]` (ADR 0101, P6).
+    Hash,
 
     /// Statement terminator inserted at a line break (see ADR 0003).
     Newline,
@@ -201,6 +203,7 @@ impl TokenKind {
             GtEq => ">=",
             Shl => "<<",
             Shr => ">>",
+            Hash => "#",
             Newline => "newline",
             Eof => "eof",
         }

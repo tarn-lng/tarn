@@ -35,7 +35,7 @@ struct Eval<'e, 'a> {
 }
 
 /// Boxed: a diagnostic is large and errors are the rare path.
-type Fail = Box<Diagnostic>;
+pub(crate) type Fail = Box<Diagnostic>;
 
 /// Stands for an error already reported at another constant's declaration.
 fn reported() -> Diagnostic {
@@ -44,6 +44,13 @@ fn reported() -> Diagnostic {
 
 fn invalid(span: Span, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error("E3084", "invalid_constant", message.into()).primary(span, "")
+}
+
+/// A scalar constant expression of type `ty`, for static initializers.
+pub(crate) fn scalar(env: &mut Env<'_>, m: ModuleId, e: &Expr, ty: &Ty) -> Result<ConstValue, Fail> {
+    let state = env.decls.consts.iter().map(|(s, d)| (*s, State::Done(Some(d.clone())))).collect();
+    let mut ev = Eval { env, decls: HashMap::new(), state };
+    ev.value(m, e, ty)
 }
 
 /// Evaluate every `const` item into `env.decls.consts`.

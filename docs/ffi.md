@@ -138,6 +138,13 @@ Variadic C calls, guaranteed C aggregate layout/by-value calls, captured
 callback environments and automatic foreign-resource destruction remain
 unsupported.
 
+## Fixed-layout data and exported symbols
+
+`#[export("name")]` makes a Tarn function callable from C by name, and
+`static` items give C-layout global data an address (`ffi.address(NAME)`).
+Both, with `#[section]` and linking a kernel, are described in
+[docs/freestanding.md](freestanding.md).
+
 ## Linking libraries
 
 ```

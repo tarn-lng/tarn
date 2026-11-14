@@ -1240,6 +1240,8 @@ impl<'e, 'a> FnCx<'e, 'a> {
             Some(Res::ScrutineeVariant(_)) | None => Ty::Error,
             Some(Res::Symbol(s)) => match self.kind(s).clone() {
                 SymbolKind::Const => self.env.decls.consts.get(&s).map_or(Ty::Error, |c| c.ty.clone()),
+                // A static's name is its address (ADR 0101, P6).
+                SymbolKind::Static => self.env.decls.statics.get(&s).map_or(Ty::Error, |d| Ty::Ptr(d.mutable, Box::new(d.ty.clone()))),
                 SymbolKind::Local { .. } | SymbolKind::Param | SymbolKind::SelfParam | SymbolKind::PatternBinding | SymbolKind::LoopBinding | SymbolKind::ClosureParam => {
                     self.locals.get(&s).cloned().unwrap_or(Ty::Error)
                 }

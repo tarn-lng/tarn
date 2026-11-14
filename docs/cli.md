@@ -20,6 +20,14 @@ and `ffi.fence()` (docs/ffi.md); the object never imports libc `memcpy`/`memset`
 Privileged instructions come from the typed `arch_x86_64` / `arch_aarch64`
 modules (docs/arch.md); they are defined inside the object, and using the
 module of the other architecture is a build error.
+`#[export("name")]` gives a function or static a global symbol, so a
+`*-none` program can define the contract above (and `kmain`) in Tarn and have
+no undefined symbols; `#[section(".name")]` and `#[align(n)]` place code and
+fixed-layout `static` data (docs/freestanding.md). With
+`--linker-script kernel.ld [--entry symbol]` the object is linked into a static
+ELF (default `<entry>.elf`) by `ld.lld`, a cross GNU `ld` or the program named
+by `TARN_LD`; both options require a `*-none` target, and a missing linker is an
+error that names what to install.
 `tarn build` and `tarn run` require `cc`
 and system libraries granted by the package's `[native] links` in `tarn.toml`
 or by repeated `--link` flags.

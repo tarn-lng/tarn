@@ -1,0 +1,45 @@
+#[bogus]
+fn unknown() {}
+
+#[export]
+fn nameless() {}
+
+#[export("bad name")]
+fn spaced() {}
+
+#[section("boot")]
+fn section_without_dot() {}
+
+#[align(3)]
+static ODD u8 = 1
+
+#[align(16)]
+fn aligned_function() {}
+
+#[export("twice")]
+fn first() {}
+
+#[export("twice")]
+fn second() {}
+
+#[export("generic")]
+fn identity<T>(value T) T {
+    return value
+}
+
+#[export("takes_string")]
+fn takes_string(text string) {}
+
+#[export("returns_string")]
+fn returns_string() string {
+    return "no"
+}
+
+#[export("c_symbol")]
+extern "C" fn c_symbol(value i64) i64
+
+#[export("once")]
+#[export("again")]
+fn repeated() {}
+
+fn main() {}

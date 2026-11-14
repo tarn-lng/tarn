@@ -81,14 +81,45 @@ fn concrete_inner(ty: &Ty, depth: usize, nodes: &mut usize) -> Result<()> {
     }
     Ok(())
 }
+/// Functions given a symbol name with `#[export]` (ADR 0101, P6): roots of the
+/// program besides `main`, in declaration order.
+pub fn exported(p: &post::Program, t: &Typed) -> Vec<FunctionId> {
+    let mut ids: Vec<FunctionId> = p
+        .functions
+        .iter()
+        .filter(|f| f.decl.kind == FnKind::Body && f.decl.generics.is_empty() && f.decl.asynchronous.is_none())
+        .filter(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.export.is_some()))
+        .map(|f| f.decl.id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// `main` is optional only when the program exports functions, which a
+/// freestanding boot loader can enter without it.
 pub fn specialize(p: &post::Program, t: &Typed) -> Result<post::Program> {
-    let main = p.functions.iter().find(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0)).ok_or_else(|| Error::unsupported("program requires fn main()"))?;
-    specialize_entry(p, t, main.decl.id)
+    specialize_for(p, t, false)
+}
+
+pub fn specialize_for(p: &post::Program, t: &Typed, main_optional: bool) -> Result<post::Program> {
+    let main = p.functions.iter().find(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0));
+    let mut roots: Vec<FunctionId> = main.map(|m| m.decl.id).into_iter().collect();
+    roots.extend(exported(p, t));
+    if roots.is_empty() || (main.is_none() && !main_optional) {
+        return Err(Error::unsupported("program requires fn main()"));
+    }
+    specialize_roots(p, t, &roots)
 }
 
 pub fn specialize_entry(p: &post::Program, t: &Typed, entry: FunctionId) -> Result<post::Program> {
+    specialize_roots(p, t, &[entry])
+}
+
+fn specialize_roots(p: &post::Program, t: &Typed, roots: &[FunctionId]) -> Result<post::Program> {
     let mut cx = Instances { source: p, keys: Vec::new(), index: HashMap::new(), functions: Vec::new() };
-    cx.intern(entry, Vec::new())?;
+    for root in roots {
+        cx.intern(*root, Vec::new())?;
+    }
     let mut i = 0;
     while i < cx.keys.len() {
         let key = cx.keys[i].clone();

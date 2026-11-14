@@ -332,13 +332,22 @@ pub(crate) fn verify_dynamic(p: &post::Program, t: &Typed) -> Result<()> {
     Ok(())
 }
 pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Target) -> Result<Vec<u8>> {
-    let main = if test { p.functions.first() } else { p.functions.iter().find(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0)) }.ok_or_else(|| Error::unsupported("program requires fn main()"))?;
-    let result_main = matches!(&main.decl.ret, Ty::Adt(id, args) if Some(*id) == t.decls.result && args.len() == 2 && args[0] == Ty::Void && matches!(&args[1], Ty::Adt(e, ts) if Some(*e) == t.decls.net_error && ts.is_empty()));
+    let main = if test { p.functions.first() } else { p.functions.iter().find(|f| f.decl.name == "main" && f.decl.symbol.and_then(|s| t.decls.fns.get(&s)).is_some_and(|sig| sig.module.0 == 0)) };
+    // A freestanding program may have no `main` when it exports its entry.
+    let main = match main {
+        Some(main) => Some(main),
+        None if target.os == crate::Os::None && !p.functions.is_empty() => None,
+        None => return Err(Error::unsupported("program requires fn main()")),
+    };
+    // Only used to fill `Cx` for destruction glue, which reads no function state.
+    let anchor = main.or(p.functions.first()).ok_or_else(|| Error::unsupported("program requires fn main()"))?;
+    let main_decl = &anchor.decl;
+    let result_main = main.is_some() && matches!(&main_decl.ret, Ty::Adt(id, args) if Some(*id) == t.decls.result && args.len() == 2 && args[0] == Ty::Void && matches!(&args[1], Ty::Adt(e, ts) if Some(*e) == t.decls.net_error && ts.is_empty()));
     if test {
-        if main.decl.param_count != 1 || main.decl.ret != Ty::Void || main.decl.locals.get(1).map(|l| &l.ty) != Some(&Ty::Int(tarn_types::IntTy::I32)) {
+        if main_decl.param_count != 1 || main_decl.ret != Ty::Void || main_decl.locals.get(1).map(|l| &l.ty) != Some(&Ty::Int(tarn_types::IntTy::I32)) {
             return Err(Error::bug("test entry must accept one i32 and return void"));
         }
-    } else if main.decl.param_count != 0 || (main.decl.ret != Ty::Void && !result_main) {
+    } else if main.is_some() && (main_decl.param_count != 0 || (main_decl.ret != Ty::Void && !result_main)) {
         return Err(Error::unsupported("entry must be fn main() or fn main() Result<void, net.Error>"));
     }
     // Only reachable functions are code-generated. Unsupported unused stdlib
@@ -367,8 +376,19 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     // baseline ISA for its architecture, never the compiling machine's.
     let isa = if target.is_host() { cranelift_native::builder().map_err(|e| Error::unsupported(e.to_string()))? } else { cranelift_codegen::isa::lookup(target.triple()).map_err(|e| Error::unsupported(format!("target {target}: {e}")))? }
         .finish(settings::Flags::new(settings)).map_err(|e| Error::bug(e.to_string()))?;
-    let builder = ObjectBuilder::new(isa, "tarn", cranelift_module::default_libcall_names()).map_err(|e| Error::bug(e.to_string()))?;
+    let mut builder = ObjectBuilder::new(isa, "tarn", cranelift_module::default_libcall_names()).map_err(|e| Error::bug(e.to_string()))?;
+    // `#[section]` on a function: give every function its own section, then
+    // name them in `finish_object` (cranelift-object has no per-function name).
+    let has_function_sections = p.functions.iter().any(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.section.is_some()));
+    if has_function_sections {
+        if target.is_macos() {
+            return Err(Error::unsupported(format!("`#[section]` is supported on ELF targets only, not {target}")));
+        }
+        builder.per_function_section(true);
+    }
     let mut module = ObjectModule::new(builder);
+    let statics = crate::statics::declare(&mut module, t, target)?;
+    crate::statics::define(&mut module, t, &statics)?;
     let mut ids = HashMap::new();
     let mut ordered: Vec<_> = reachable.into_iter().collect();
     ordered.sort();
@@ -573,6 +593,16 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
             runtime.signatures.insert(name, sig);
         }
     }
+    // `#[export]` adapters and function sections (ADR 0101, P6).
+    let mut function_sections: Vec<(FuncId, String)> = Vec::new();
+    for f in &p.functions {
+        if let Some(section) = f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).and_then(|a| a.section.clone()) {
+            if let Some(id) = ids.get(&f.decl.id) && f.decl.kind == FnKind::Body {
+                function_sections.push((*id, section));
+            }
+        }
+    }
+    function_sections.extend(ffi::emit_exports(&mut module, p, t, &ids, target, &runtime.signatures)?);
     // Vector element destruction functions, declared on demand by drop_vector
     // and defined after ordinary functions (see Cx::element_glue).
     let glue = RefCell::new(Vec::new());
@@ -611,6 +641,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
                 runtime: &runtime,
                 task_adapters: &task_adapters,
                 tables: &tables,
+                statics: &statics,
                 glue: &glue,
                 literals: &literals,
                 locals: Vec::new(),
@@ -704,7 +735,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
                 module: &mut module,
                 p,
                 t,
-                f: main,
+                f: anchor,
                 ids: &ids,
                 thunks: &thunks,
                 c_callbacks: &c_callbacks,
@@ -714,6 +745,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
                 runtime: &runtime,
                 task_adapters: &task_adapters,
                 tables: &tables,
+                statics: &statics,
                 glue: &glue,
                 literals: &literals,
                 locals: Vec::new(),
@@ -735,22 +767,24 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         if test || result_main {
             return Err(Error::unsupported(format!("target {target}: freestanding `main` must be `fn main()` with no result")));
         }
-        let sig = module.make_signature();
-        let entry = module.declare_function("tarn_main", Linkage::Export, &sig).map_err(|e| Error::bug(e.to_string()))?;
-        let mut ctx = module.make_context();
-        ctx.func.signature = sig;
-        let mut fb = FunctionBuilderContext::new();
-        {
-            let mut b = FunctionBuilder::new(&mut ctx.func, &mut fb);
-            let block = b.create_block();
-            b.switch_to_block(block);
-            let callee = module.declare_func_in_func(ids[&main.decl.id], b.func);
-            b.ins().call(callee, &[]);
-            b.ins().return_(&[]);
-            b.seal_all_blocks();
-            b.finalize();
+        if let Some(main) = main {
+            let sig = module.make_signature();
+            let entry = module.declare_function("tarn_main", Linkage::Export, &sig).map_err(|e| Error::bug(e.to_string()))?;
+            let mut ctx = module.make_context();
+            ctx.func.signature = sig;
+            let mut fb = FunctionBuilderContext::new();
+            {
+                let mut b = FunctionBuilder::new(&mut ctx.func, &mut fb);
+                let block = b.create_block();
+                b.switch_to_block(block);
+                let callee = module.declare_func_in_func(ids[&main.decl.id], b.func);
+                b.ins().call(callee, &[]);
+                b.ins().return_(&[]);
+                b.seal_all_blocks();
+                b.finalize();
+            }
+            module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
         }
-        module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
         // Heap operations the program used, implemented here over the
         // allocator the boot code provides. Helpers may need further helpers.
         let literals = literals.into_inner();
@@ -770,7 +804,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         literals.define(&mut module)?;
         runtime.stubs.define(&mut module, target.arch)?;
         crate::freestanding::check(target, runtime.used())?;
-        return module.finish().emit().map_err(|e| Error::bug(e.to_string()));
+        return finish_object(module, &function_sections);
     }
     // libc startup calls the C main shim; internal Tarn main returns void or Result<void, net.Error>.
     let mut sig = module.make_signature();
@@ -795,9 +829,9 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
         let block = b.create_block();
         if test { b.append_block_params_for_function_params(block); }
         b.switch_to_block(block);
-        let target = module.declare_func_in_func(ids[&main.decl.id], b.func);
+        let target = module.declare_func_in_func(ids[&main_decl.id], b.func);
         if result_main {
-            let l = layout::layout(t, &main.decl.ret)?;
+            let l = layout::layout(t, &main_decl.ret)?;
             if l.variants.len() != 2 || !l.variants[0].iter().all(|(_, ty)| *ty == Ty::Void) || l.variants[1].len() != 1 { return Err(Error::bug("main result layout")); }
             let slot = b.create_sized_stack_slot(cl::StackSlotData::new(cl::StackSlotKind::ExplicitSlot, l.size, l.align.trailing_zeros() as u8));
             let addr = b.ins().stack_addr(types::I64, slot, 0);
@@ -834,7 +868,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     module.define_function(entry, &mut ctx).map_err(|e| Error::bug(e.to_string()))?;
     literals.into_inner().define(&mut module)?;
     runtime.stubs.define(&mut module, target.arch)?;
-    module.finish().emit().map_err(|e| Error::bug(e.to_string()))
+    finish_object(module, &function_sections)
 }
 
 /// Runtime functions by name. Each is declared in the object only on first
@@ -1013,6 +1047,8 @@ struct Cx<'a, 'b> {
     runtime: &'b Runtime,
     task_adapters: &'b HashMap<FunctionId, (FuncId, FuncId)>,
     tables: &'b [(tarn_resolve::SymbolId, Ty, Vec<FunctionId>, DataId)],
+    /// `static` items by symbol (ADR 0101, P6).
+    statics: &'b HashMap<tarn_resolve::SymbolId, DataId>,
     /// Declared vector element destruction functions, by element type.
     glue: &'b RefCell<Vec<(Ty, FuncId)>>,
     /// Static string literal data by content (Phase 27).
@@ -1486,6 +1522,12 @@ impl Cx<'_, '_> {
                     let code = self.b.ins().func_addr(types::I64, target);
                     let env = self.b.ins().iconst(types::I64, 0);
                     Val { value: Some(self.pair(code, env)), ty }
+                }
+                Const::Static(s) => {
+                    let id = *self.statics.get(s).ok_or_else(|| Error::bug("address of an undeclared static"))?;
+                    let def = self.t.decls.statics.get(s).ok_or_else(|| Error::bug("address of an unknown static"))?;
+                    let gv = self.module.declare_data_in_func(id, self.b.func);
+                    Val { value: Some(self.b.ins().global_value(types::I64, gv)), ty: Ty::Ptr(def.mutable, Box::new(def.ty.clone())) }
                 }
                 _ => return Err(Error::unsupported(format!("constant {c:?}"))),
             }),
@@ -2667,6 +2709,31 @@ mod process;
 /// Compile translated functions to machine code on all cores, then define
 /// them in the module sequentially in their original order, so the object
 /// file is byte-identical to a sequential build.
+/// Write the object. With `#[section]` functions every function sits in its
+/// own section: name them `.text.<symbol>`, or the requested section.
+fn finish_object(module: ObjectModule, sections: &[(FuncId, String)]) -> Result<Vec<u8>> {
+    use cranelift_object::object::write::SymbolSection;
+    let product = module.finish();
+    let mut renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+    if !sections.is_empty() {
+        let custom: HashMap<FuncId, &str> = sections.iter().map(|(id, s)| (*id, s.as_str())).collect();
+        for (id, entry) in product.functions.iter() {
+            let Some((sym, true)) = entry else { continue };
+            if !matches!(product.object.symbol(*sym).section, SymbolSection::Section(_)) {
+                continue;
+            }
+            let symbol = product.object.symbol(*sym).name.clone();
+            let name = match custom.get(&id) {
+                Some(name) => name.as_bytes().to_vec(),
+                None => [b".text.".as_slice(), symbol.as_slice()].concat(),
+            };
+            renames.insert(symbol, name);
+        }
+    }
+    let bytes = product.emit().map_err(|e| Error::bug(e.to_string()))?;
+    if renames.is_empty() { Ok(bytes) } else { crate::elf::rename_sections(bytes, &renames) }
+}
+
 fn compile_in_parallel(module: &mut ObjectModule, mut translated: Vec<(FuncId, &str, cranelift_codegen::Context)>, verify: bool) -> Result<()> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};

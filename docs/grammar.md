@@ -7,8 +7,13 @@ grammar; inside `( )`, `[ ]`, `< >` and literal braces every `NL` is skipped.
 ```ebnf
 module      = { NL } { item ( NL | EOF ) { NL } } EOF ;
 
-item        = [ "pub" ] ( import | fn_decl | extern_fn | struct_decl
-                        | enum_decl | interface | impl_decl ) ;
+item        = { attribute NL } [ "pub" ]
+              ( import | fn_decl | extern_fn | struct_decl
+              | enum_decl | interface | impl_decl | static_decl ) ;
+attribute   = "#" "[" IDENT [ "(" ( STRING | INT ) ")" ] "]" ;
+              (* only on fn_decl and static_decl: export, section, align (ADR 0101) *)
+static_decl = "static" [ "mut" ] IDENT type [ "=" expr ] ;
+              (* `static` is contextual: an identifier at item position *)
 import      = "import" STRING ;
 extern_fn   = "extern" STRING "fn" fn_tail ;            (* body optional *)
 fn_decl     = [ "async" | "unsafe" ] "fn" fn_tail ;
@@ -145,7 +150,7 @@ items.
 ## Outside the implemented subset
 
 Explicit generic arguments in expressions remain a v0 restriction (ADR 0012).
-Attributes, `const`/statics, type aliases, labeled breaks, numeric literal
+Type aliases, labeled breaks, numeric literal
 suffixes and char literals are not supported. The parser accepts some broader
 declaration forms for diagnostics; semantic restrictions still apply, including
 no generic interfaces (E1021), no `pub impl` (E1015), and no method-owner bounds

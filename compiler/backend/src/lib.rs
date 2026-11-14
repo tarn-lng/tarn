@@ -7,6 +7,9 @@ mod integer_narrow;
 pub mod mono;
 pub mod target;
 mod freestanding;
+mod statics;
+mod elf;
+pub mod link;
 mod heap;
 mod arch;
 #[doc(hidden)]
@@ -69,7 +72,7 @@ fn emit_entry_object(p: &post_drop::Program, t: &Typed, entry: Option<tarn_ir::F
     if !bugs.is_empty() {
         return Err(Error::bug(bugs.join("\n")));
     }
-    let specialized = if let Some(entry) = entry { mono::specialize_entry(p, t, entry)? } else { mono::specialize(p, t)? };
+    let specialized = if let Some(entry) = entry { mono::specialize_entry(p, t, entry)? } else { mono::specialize_for(p, t, target.os == Os::None)? };
     let mut concrete = inline::inline(specialized, t);
     tarn_ir::optimize_scalar_loops(&mut concrete);
     let bugs = post_drop::verify(&concrete, t);

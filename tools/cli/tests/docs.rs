@@ -10,7 +10,7 @@
 use std::path::Path;
 use std::process::Command;
 
-const ITEMS: &[&str] = &["fn ", "pub ", "struct ", "enum ", "import ", "const ", "copy ", "interface ", "impl ", "extern ", "async fn ", "unsafe fn "];
+const ITEMS: &[&str] = &["#[", "static ", "fn ", "pub ", "struct ", "enum ", "import ", "const ", "copy ", "interface ", "impl ", "extern ", "async fn ", "unsafe fn "];
 
 #[test]
 fn documentation_examples_match_the_compiler() {

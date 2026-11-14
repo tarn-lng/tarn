@@ -9,6 +9,7 @@ mod capabilities;
 pub use capabilities::{Capability, NativeCapabilities};
 mod check;
 pub mod consts;
+pub mod statics;
 mod env;
 mod exhaust;
 mod ty;

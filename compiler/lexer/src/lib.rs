@@ -481,6 +481,7 @@ impl<'a> Lexer<'a> {
             (b'!', _, _) => (Bang, 1),
             (b'<', _, _) => (Lt, 1),
             (b'>', _, _) => (Gt, 1),
+            (b'#', _, _) => (Hash, 1),
             _ => {
                 let ch = self.file.text[self.pos..].chars().next().unwrap();
                 self.pos += ch.len_utf8();

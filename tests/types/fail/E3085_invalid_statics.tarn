@@ -1,0 +1,31 @@
+import "ffi"
+
+struct Pair {
+    a u8
+    b u64
+}
+
+struct Wrapper<T> {
+    value T
+}
+
+enum Mode { Fast }
+
+static TEXT string = "no"
+static MODE Mode = Mode.Fast
+static GENERIC Wrapper<i64> = Wrapper{value: 1}
+static EMPTY [0]u8
+static BIG u8 = 300
+static MISSING Pair = Pair{a: 1}
+static UNKNOWN Pair = Pair{a: 1, b: 2, c: 3}
+static SHORT [2]u8 = [2]u8{1}
+static BUFFER [4]u8
+static WRONG *mut u8 = BUFFER
+static TO_CONST *u8 = ffi.to_const(BUFFER)
+static CALL u32 = compute()
+
+fn compute() u32 {
+    return 1
+}
+
+fn main() {}

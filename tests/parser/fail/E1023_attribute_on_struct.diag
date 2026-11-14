@@ -1,0 +1,12 @@
+error[E1023]: attributes apply only to functions and statics
+ --> tests/parser/fail/E1023_attribute_on_struct.tarn:1:1
+  |
+1 | #[export("x")]
+  | ^^^^^^^^^^^^^^ remove this attribute
+
+error[E1001]: expected `]`, found `fn`
+ --> tests/parser/fail/E1023_attribute_on_struct.tarn:7:1
+  |
+7 | fn f() {}
+  | ^^ expected `]`
+

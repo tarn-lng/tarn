@@ -82,6 +82,8 @@ pub enum SymbolKind {
     Function,
     /// `const NAME T = value` (ADR 0090).
     Const,
+    /// `static` item: fixed-layout global data (ADR 0101, P6).
+    Static,
     Struct,
     Enum,
     Interface,

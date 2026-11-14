@@ -1,0 +1,46 @@
+import "ffi"
+
+struct Node {
+    value u32
+    flags u8
+    next *Node
+}
+
+static TABLE [4]i64 = [4]i64{10, 20, 30, 40}
+static mut COUNT u64 = 5
+static mut TAIL Node = Node{value: 2, flags: 9, next: ffi.to_const(ffi.null())}
+static HEAD Node = Node{value: 1, flags: 7, next: TAIL}
+static mut SCRATCH [16]u8
+static LIMIT u16 = 1 << 8
+
+#[export("bump_twice_c")]
+fn bump_twice() u64 {
+    unsafe {
+        ffi.write(COUNT, ffi.read(ffi.to_const(COUNT)) + 2)
+        return ffi.read(ffi.to_const(COUNT))
+    }
+}
+
+fn node_value(node *Node) u32 {
+    base: *u32 := ffi.from_address(ffi.address(node))
+    unsafe { return ffi.read(base) }
+}
+
+fn node_next(node *Node) *Node {
+    field: *mut *Node := ffi.from_address(ffi.address(node) + 8)
+    unsafe { return ffi.read(ffi.to_const(field)) }
+}
+
+fn main() {
+    print(bump_twice())
+    third: *i64 := ffi.from_address(ffi.address(TABLE) + 16)
+    unsafe { print(ffi.read(third)) }
+    print(node_value(HEAD))
+    print(node_value(node_next(HEAD)))
+    print(ffi.is_null(node_next(node_next(HEAD))))
+    zero: *u8 := ffi.from_address(ffi.address(SCRATCH) + 15)
+    unsafe { print(ffi.read(zero)) }
+    limit: *u16 := ffi.from_address(ffi.address(LIMIT))
+    unsafe { print(ffi.read(limit)) }
+    print(ffi.address(HEAD) % 8)
+}

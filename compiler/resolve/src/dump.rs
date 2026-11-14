@@ -18,6 +18,7 @@ fn kind(k: &SymbolKind) -> &'static str {
         SymbolKind::Module(_) => "module",
         SymbolKind::Function => "fn",
         SymbolKind::Const => "const",
+        SymbolKind::Static => "static",
         SymbolKind::Struct => "struct",
         SymbolKind::Enum => "enum",
         SymbolKind::Interface => "interface",

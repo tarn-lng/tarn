@@ -11,6 +11,12 @@ pub fn binary_operators(module: &Module, tokens: &[&Token], out: &mut HashSet<u3
                 ty(&c.ty, tokens, out);
                 expr(&c.value, tokens, out);
             }
+            ItemKind::Static(d) => {
+                ty(&d.ty, tokens, out);
+                if let Some(v) = &d.value {
+                    expr(v, tokens, out);
+                }
+            }
             ItemKind::Struct(s) => {
                 for field in &s.fields {
                     ty(&field.ty, tokens, out);

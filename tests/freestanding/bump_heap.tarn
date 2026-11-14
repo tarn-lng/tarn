@@ -1,0 +1,67 @@
+// The whole freestanding contract, including the allocator, defined in Tarn
+// (ADR 0101, P6): a bump allocator over a static arena. Nothing is left for
+// the linker to resolve.
+import "ffi"
+
+static mut ARENA [65536]u8
+static mut USED usize = 0
+
+#[export("tarn_alloc")]
+fn alloc(size usize) *mut u8 {
+    unsafe {
+        start := ffi.read(ffi.to_const(USED))
+        end := start + ((size + 15) / 16) * 16
+        if end > 65536 {
+            return ffi.null()
+        }
+        ffi.write(USED, end)
+        base: *mut u8 := ffi.from_address(ffi.address(ARENA))
+        return ffi.offset_mut(base, start)
+    }
+}
+
+#[export("tarn_free")]
+fn release(pointer *mut u8) {}
+
+#[export("tarn_realloc")]
+fn grow(pointer *mut u8, size usize) *mut u8 {
+    fresh := alloc(size)
+    if ffi.is_null(ffi.to_const(pointer)) || ffi.is_null(ffi.to_const(fresh)) {
+        return fresh
+    }
+    var index: usize = 0
+    for index < size {
+        unsafe { ffi.write(ffi.offset_mut(fresh, index), ffi.read(ffi.to_const(ffi.offset_mut(pointer, index)))) }
+        index = index + 1
+    }
+    return fresh
+}
+
+#[export("tarn_rt_fault")]
+fn fault() {
+    for true {}
+}
+
+#[export("tarn_rt_panic")]
+fn panic_message(message *u8) {
+    for true {}
+}
+
+#[export("tarn_rt_panic_at")]
+fn panic_at(message *u8, location *u8) {
+    for true {}
+}
+
+fn main() {
+    var numbers: Vec<i64> = Vec.new()
+    var n: i64 = 0
+    for n < 100 {
+        numbers.push(n)
+        n = n + 1
+    }
+    var names: Vec<string> = Vec.new()
+    names.push("ana" + "bel")
+    if numbers.len() != 100 || names.get(0) != "anabel" {
+        panic("heap check failed")
+    }
+}

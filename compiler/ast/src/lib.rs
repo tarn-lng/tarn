@@ -47,6 +47,7 @@ pub enum ItemKind {
     Interface(InterfaceDecl),
     Impl(ImplDecl),
     Const(ConstDecl),
+    Static(StaticDecl),
     Error,
 }
 
@@ -56,6 +57,32 @@ pub struct ConstDecl {
     pub name: Ident,
     pub ty: Type,
     pub value: Expr,
+}
+
+/// `static NAME T = value`, `static mut NAME T = value` or `static mut NAME T`
+/// (zero-initialized): fixed-layout global data (ADR 0101, P6).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StaticDecl {
+    pub attrs: Vec<Attr>,
+    pub is_mut: bool,
+    pub name: Ident,
+    pub ty: Type,
+    /// `None`: all bytes zero.
+    pub value: Option<Expr>,
+}
+
+/// `#[name]`, `#[name("text")]` or `#[name(16)]` before a function or static.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attr {
+    pub name: String,
+    pub span: Span,
+    pub arg: Option<AttrArg>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttrArg {
+    Str(String),
+    Int(u64),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -86,6 +113,8 @@ pub struct FnDecl {
     pub borrows: Option<Vec<Ident>>,
     /// `None` for interface methods and extern declarations.
     pub body: Option<Block>,
+    /// `#[export("name")]`, `#[section(".text.boot")]` (ADR 0101, P6).
+    pub attrs: Vec<Attr>,
 }
 
 /// The type a method is declared on. `params` are fresh binders for the

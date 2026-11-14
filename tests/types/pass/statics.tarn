@@ -1,0 +1,28 @@
+// `static` items: a name used as a value is its address (ADR 0101, P6).
+import "ffi"
+
+struct Header {
+    magic u32
+    flags u8
+    next *Header
+}
+
+const SIZE u64 = 4
+
+static TABLE [4]i64 = [4]i64{1, 2, 3, 4}
+static mut COUNTER u64 = SIZE * 2
+static mut SECOND Header = Header{magic: 2, flags: 0, next: ffi.null()}
+static FIRST Header = Header{magic: 1, flags: 3, next: SECOND}
+static mut SCRATCH [64]u8
+
+#[export("read_counter")]
+fn read_counter() u64 {
+    unsafe { return ffi.read(ffi.to_const(COUNTER)) }
+}
+
+fn main() {
+    table: *[4]i64 := TABLE
+    counter: *mut u64 := COUNTER
+    scratch: *mut [64]u8 := SCRATCH
+    unsafe { ffi.write(counter, read_counter() + 1) }
+}

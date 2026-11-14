@@ -1,0 +1,46 @@
+// A kernel skeleton with no `main` (ADR 0101, P6): exported entry and
+// freestanding contract written in Tarn, a boot-loader request in its own
+// section, a boot stack in `.bss`, and a constant table.
+import "ffi"
+
+struct Request {
+    id [4]u64
+    revision u64
+    response *mut u64
+}
+
+#[section(".limine_requests")]
+#[align(8)]
+static mut BOOT Request = Request{
+    id: [4]u64{0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, 0x9d5827dcd881dd75, 0xa3148604b1f4faa0},
+    revision: 3,
+    response: ffi.null(),
+}
+
+#[align(4096)]
+static mut STACK [16384]u8
+
+#[export("kernel_magic")]
+static MAGIC u32 = 0x1badb002
+
+#[export("tarn_rt_fault")]
+fn fault() {
+    for true {}
+}
+
+#[export("tarn_rt_panic")]
+fn panic_message(message *u8) {
+    for true {}
+}
+
+#[export("tarn_rt_panic_at")]
+fn panic_at(message *u8, location *u8) {
+    for true {}
+}
+
+#[section(".text.boot")]
+#[export("kmain")]
+fn kmain() {
+    base: *mut u8 := ffi.from_address(ffi.address(STACK))
+    unsafe { ffi.write(base, 1) }
+}

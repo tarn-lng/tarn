@@ -36,8 +36,14 @@ pub struct Layout {
 fn align(n: u32, a: u32) -> Result<u32> {
     n.checked_add(a - 1).map(|x| x & !(a - 1)).ok_or_else(|| Error::limit("layout exceeds 32-bit object size"))
 }
+/// Layout of a `static` (ADR 0101, P6): the same field order and alignment, but
+/// no per-value size limits, since statics are never copied or dropped field by
+/// field. Kernel stacks and page tables are far larger than 64 KiB.
+pub fn static_layout(t: &Typed, ty: &Ty) -> Result<Layout> {
+    layout_inner(t, ty, &mut Vec::new(), u64::MAX)
+}
 pub fn layout(t: &Typed, ty: &Ty) -> Result<Layout> {
-    let l = layout_inner(t, ty, &mut Vec::new())?;
+    let l = layout_inner(t, ty, &mut Vec::new(), MAX_ARRAY_LEN)?;
     // Correctness-first explicit copies/drop glue are bounded, not silently
     // expanded into millions of instructions for huge fixed-size objects.
     if l.size > MAX_VALUE_SIZE {
@@ -45,7 +51,7 @@ pub fn layout(t: &Typed, ty: &Ty) -> Result<Layout> {
     }
     Ok(l)
 }
-fn layout_inner(t: &Typed, ty: &Ty, seen: &mut Vec<Ty>) -> Result<Layout> {
+fn layout_inner(t: &Typed, ty: &Ty, seen: &mut Vec<Ty>, max_array: u64) -> Result<Layout> {
     if seen.len() >= MAX_NESTING {
         return Err(Error::limit("native aggregate nesting exceeds 64 levels"));
     }
@@ -76,10 +82,10 @@ fn layout_inner(t: &Typed, ty: &Ty, seen: &mut Vec<Ty>) -> Result<Layout> {
         // no native type aligns beyond 8, so alignment 1 changes no layout.
         Ty::Array(_, 0) => scalar(0),
         Ty::Array(elem, n) => {
-            if *n > MAX_ARRAY_LEN {
+            if *n > max_array {
                 return Err(Error::limit("fixed arrays exceed v0 limit of 4096 elements"));
             }
-            let el = layout_inner(t, elem, seen)?;
+            let el = layout_inner(t, elem, seen, max_array)?;
             let size = u64::from(el.size).checked_mul(*n).and_then(|n| u32::try_from(n).ok()).ok_or_else(|| Error::limit("array layout too large"))?;
             Layout { size, align: el.align, fields: Vec::new(), variants: Vec::new() }
         }
@@ -88,7 +94,7 @@ fn layout_inner(t: &Typed, ty: &Ty, seen: &mut Vec<Ty>) -> Result<Layout> {
             let result = if let Some(def) = t.decls.structs.get(s) {
                 let map = def.generics.iter().copied().zip(args.iter().cloned()).collect();
                 let ts: Vec<_> = def.fields.iter().map(|f| tarn_types::subst(&f.ty, &map)).collect();
-                record(t, &ts, seen)?
+                record(t, &ts, seen, max_array)?
             } else if let Some(def) = t.decls.enums.get(s) {
                 let map = def.generics.iter().copied().zip(args.iter().cloned()).collect();
                 let mut variants = Vec::new();
@@ -96,7 +102,7 @@ fn layout_inner(t: &Typed, ty: &Ty, seen: &mut Vec<Ty>) -> Result<Layout> {
                 let mut alignment = 4;
                 for v in &def.variants {
                     let ts: Vec<_> = v.fields.iter().map(|ty| tarn_types::subst(ty, &map)).collect();
-                    let payload = record(t, &ts, seen)?;
+                    let payload = record(t, &ts, seen, max_array)?;
                     alignment = alignment.max(payload.align);
                     variants.push(payload);
                 }
@@ -119,12 +125,12 @@ fn layout_inner(t: &Typed, ty: &Ty, seen: &mut Vec<Ty>) -> Result<Layout> {
         other => return Err(Error::unsupported(format!("type {other:?}"))),
     })
 }
-fn record(t: &Typed, ts: &[Ty], seen: &mut Vec<Ty>) -> Result<Layout> {
+fn record(t: &Typed, ts: &[Ty], seen: &mut Vec<Ty>, max_array: u64) -> Result<Layout> {
     let mut fields = Vec::new();
     let mut size = 0u32;
     let mut alignment = 1;
     for ty in ts {
-        let l = layout_inner(t, ty, seen)?;
+        let l = layout_inner(t, ty, seen, max_array)?;
         size = align(size, l.align)?;
         fields.push((size, ty.clone()));
         size = size.checked_add(l.size).ok_or_else(|| Error::limit("struct layout too large"))?;
