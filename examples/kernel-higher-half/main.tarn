@@ -1,0 +1,170 @@
+// PVH higher-half hand-off example (ADR 0105).
+import "arch_x86_64"
+import "ffi"
+
+const COM1 u16 = 0x3f8
+const DEBUG_EXIT u16 = 0xf4
+const EXIT_OK u32 = 16
+const EXIT_FAILED u32 = 17
+
+fn peek(address usize) u64 {
+    p: *u64 := ffi.from_address(address)
+    unsafe { return ffi.read_volatile(p) }
+}
+
+fn serial_init() {
+    unsafe {
+        arch_x86_64.out8(COM1 + 1, 0)  // no UART interrupts
+        arch_x86_64.out8(COM1 + 3, 0x80)  // DLAB on
+        arch_x86_64.out8(COM1, 1)  // divisor 1: 115200 baud
+        arch_x86_64.out8(COM1 + 1, 0)
+        arch_x86_64.out8(COM1 + 3, 3)  // 8 data bits, no parity, one stop bit
+        arch_x86_64.out8(COM1 + 2, 0xc7)  // FIFO on
+        arch_x86_64.out8(COM1 + 4, 0x0b)  // DTR, RTS, OUT2
+    }
+}
+
+fn serial_byte(byte u8) {
+    unsafe {
+        for (arch_x86_64.in8(COM1 + 5) & 0x20) == 0 {
+            arch_x86_64.pause()
+        }
+        arch_x86_64.out8(COM1, byte)
+    }
+}
+
+fn print_text(text &string) {
+    bytes := text.bytes()
+    var i: usize = 0
+    for i < bytes.len() {
+        serial_byte(bytes[i])
+        i = i + 1
+    }
+}
+
+fn print_number(value u64) {
+    var divisor: u64 = 1
+    for value / divisor >= 10 {
+        divisor = divisor * 10
+    }
+    for divisor > 0 {
+        serial_byte(u8(48 + (value / divisor) % 10))
+        divisor = divisor / 10
+    }
+}
+
+fn print_hex(value u64) {
+    serial_byte(48)
+    serial_byte(120)
+    var shift: u64 = 60
+    var more = true
+    for more {
+        var digit: u64 = (value >> shift) & 15
+        if digit < 10 {
+            digit = digit + 48
+        } else {
+            digit = digit + 87
+        }
+        serial_byte(u8(digit))
+        if shift == 0 {
+            more = false
+        } else {
+            shift = shift - 4
+        }
+    }
+}
+
+fn newline() {
+    serial_byte(10)
+}
+
+fn println(text &string) {
+    print_text(text)
+    newline()
+}
+
+// Write the text of a Tarn string the compiler hands to the panic handler
+// (a pointer to `{ len u64, bytes... }`).
+fn print_raw(message *u8) {
+    address := ffi.address(message)
+    length := peek(address)
+    var i: u64 = 0
+    for i < length {
+        byte: *u8 := ffi.from_address(address + 8 + usize(i))
+        unsafe { serial_byte(ffi.read(byte)) }
+        i = i + 1
+    }
+}
+
+fn exit(code u32) {
+    unsafe {
+        arch_x86_64.out32(DEBUG_EXIT, code)
+        for true { arch_x86_64.hlt() }
+    }
+}
+
+// ABI v1: all addresses in this descriptor are physical, including this pointer.
+struct BootInfo {
+    version u64
+    tables u64
+    tables_bytes u64
+    stack u64
+    stack_bytes u64
+    stub u64
+    stub_bytes u64
+    gdt u64
+    gdt_bytes u64
+    descriptor_bytes u64
+    identity_bytes u64
+    higher_half u64
+}
+
+#[export("tarn_rt_fault")]
+fn fault() {
+    println("higher half: FAULT")
+    exit(EXIT_FAILED)
+}
+
+#[pvh_entry(identity = "4GiB", higher_half = 0xffffffff80000000)]
+#[export("kmain")]
+fn kmain(info u64, boot *BootInfo) {
+    serial_init()
+    println("higher half: booted")
+    address := u64(ffi.address(ffi.callback(kmain)))
+    print_text("higher half: entry=")
+    print_hex(address)
+    newline()
+    print_text("pvh info: physical=")
+    print_hex(info)
+    newline()
+    magic: *u32 := ffi.from_address(usize(info))
+    unsafe {
+        if ffi.read(magic) != 0x336ec578 { fault() }
+        if address < 0xffffffff80000000 { fault() }
+        if ffi.read(boot.version) != 1 { fault() }
+        if arch_x86_64.read_cr3() != ffi.read(boot.tables) { fault() }
+        if ffi.read(boot.tables_bytes) != 28672 { fault() }
+        if ffi.read(boot.stack_bytes) != 16384 { fault() }
+        if ffi.read(boot.stub_bytes) == 0 { fault() }
+        if ffi.read(boot.gdt_bytes) != 24 { fault() }
+        if ffi.read(boot.descriptor_bytes) != 96 { fault() }
+        if ffi.read(boot.identity_bytes) != 4294967296 { fault() }
+        if ffi.read(boot.higher_half) != 0xffffffff80000000 { fault() }
+        print_text("pvh tables: physical=")
+        print_hex(ffi.read(boot.tables))
+        print_text(" bytes=")
+        print_number(ffi.read(boot.tables_bytes))
+        newline()
+        print_text("pvh stack: physical=")
+        print_hex(ffi.read(boot.stack))
+        print_text(" bytes=")
+        print_number(ffi.read(boot.stack_bytes))
+        newline()
+    }
+    println("pvh hand-off: magic and descriptor ok")
+    exit(EXIT_OK)
+}
+
+// This example creates only static string literals; no heap allocation occurs.
+#[export("tarn_free")]
+fn free(pointer *mut u8) {}

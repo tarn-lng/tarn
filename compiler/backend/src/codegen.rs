@@ -379,7 +379,7 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     let mut builder = ObjectBuilder::new(isa, "tarn", cranelift_module::default_libcall_names()).map_err(|e| Error::bug(e.to_string()))?;
     // `#[section]` on a function: give every function its own section, then
     // name them in `finish_object` (cranelift-object has no per-function name).
-    let has_function_sections = p.functions.iter().any(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.section.is_some()));
+    let has_function_sections = p.functions.iter().any(|f| f.decl.symbol.and_then(|s| t.decls.fn_attrs.get(&s)).is_some_and(|a| a.section.is_some() || a.pvh_entry));
     if has_function_sections {
         if target.is_macos() {
             return Err(Error::unsupported(format!("`#[section]` is supported on ELF targets only, not {target}")));
@@ -606,7 +606,9 @@ pub fn emit_entry(p: &post::Program, t: &Typed, test: bool, target: crate::Targe
     // Data relocations must use the final addresses, just like runtime callbacks.
     let static_callbacks = p.functions.iter().filter_map(|f| Some((f.decl.symbol?, *c_callbacks.get(&f.decl.id)?))).collect();
     crate::statics::define(&mut module, t, &statics, &static_callbacks)?;
-    ffi::emit_pvh(&mut module, p, t, target, &c_callbacks)?;
+    if let Some(start) = ffi::emit_pvh(&mut module, p, t, target, &c_callbacks)? {
+        function_sections.push((start, ".text.pvh.boot".into()));
+    }
     function_sections.extend(ffi::emit_exports(&mut module, p, t, &ids, target, &runtime.signatures)?);
     // Vector element destruction functions, declared on demand by drop_vector
     // and defined after ordinary functions (see Cx::element_glue).
@@ -2741,6 +2743,13 @@ fn finish_object(module: ObjectModule, sections: &[(FuncId, String)]) -> Result<
                 None => [b".text.".as_slice(), symbol.as_slice()].concat(),
             };
             renames.insert(symbol, name);
+        }
+    }
+    for (_, entry) in product.data_objects.iter() {
+        let Some((sym, true)) = entry else { continue };
+        let symbol = &product.object.symbol(*sym).name;
+        if symbol == b"tarn_pvh_stack" || symbol == b"tarn_pvh_tables" {
+            renames.insert(symbol.clone(), b".bss.pvh".to_vec());
         }
     }
     let bytes = product.emit().map_err(|e| Error::bug(e.to_string()))?;

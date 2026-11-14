@@ -81,6 +81,7 @@ pub struct Attr {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttrArg {
+    Named(Vec<(String, AttrArg)>),
     Str(String),
     Int(u64),
 }

@@ -63,6 +63,44 @@ pub struct FnAttrs {
     /// `#[pvh_entry]` (ADR 0101, P8): the function is the 64-bit kernel entry
     /// that the generated PVH boot code calls (x86_64 only).
     pub pvh_entry: bool,
+    pub pvh: PvhConfig,
+}
+
+/// Bootstrap mappings use baseline x86_64 2 MiB pages (no PDPE1GB requirement).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PvhConfig {
+    pub identity_gib: u32,
+    /// Virtual offset of the alias of physical [0, 1 GiB).
+    pub higher_half: Option<u64>,
+}
+
+impl Default for PvhConfig {
+    fn default() -> Self { Self { identity_gib: 1, higher_half: None } }
+}
+
+fn pvh_options(args: &[(String, AttrArg)], span: Span, diags: &mut Vec<Diagnostic>) -> PvhConfig {
+    let mut config = PvhConfig::default();
+    let mut seen = std::collections::HashSet::new();
+    for (key, value) in args {
+        if !seen.insert(key) {
+            diags.push(invalid_attr(span, format!("PVH option `{key}` given more than once")));
+            continue;
+        }
+        match (key.as_str(), value) {
+            ("identity", AttrArg::Str(s)) => {
+                if let Some(n) = s.strip_suffix("GiB").and_then(|n| n.parse::<u32>().ok()).filter(|n| (1..=512).contains(n)) {
+                    config.identity_gib = n;
+                } else {
+                    diags.push(invalid_attr(span, "PVH identity must be a whole number of GiB from 1GiB to 512GiB"));
+                }
+            }
+            ("higher_half", AttrArg::Int(n)) if *n >= 0xffff_8000_0000_0000 && n & ((1 << 30) - 1) == 0 => config.higher_half = Some(*n),
+            ("identity", _) => diags.push(invalid_attr(span, "PVH identity needs a string such as identity = \"4GiB\"")),
+            ("higher_half", _) => diags.push(invalid_attr(span, "PVH higher_half needs a canonical upper-half address aligned to 1 GiB")),
+            _ => diags.push(invalid_attr(span, format!("unknown PVH option `{key}`; expected identity or higher_half"))),
+        }
+    }
+    config
 }
 
 impl FnAttrs {
@@ -100,10 +138,11 @@ struct Parsed {
     vector: Option<u32>,
     vector_table: bool,
     pvh_entry: bool,
+    pvh: PvhConfig,
 }
 
 fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Parsed {
-    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false, pvh_entry: false };
+    let mut out = Parsed { export: None, section: None, align: None, interrupt: false, vector: None, vector_table: false, pvh_entry: false, pvh: PvhConfig::default() };
     let what = if is_fn { "function" } else { "static" };
     for a in attrs {
         let known: &[&str] = if is_fn { &["export", "section", "interrupt", "vector_table", "pvh_entry"] } else { &["export", "section", "align"] };
@@ -140,7 +179,11 @@ fn parse_attrs(attrs: &[Attr], is_fn: bool, diags: &mut Vec<Diagnostic>) -> Pars
             ("vector_table", None) => out.vector_table = true,
             ("vector_table", _) => diags.push(invalid_attr(a.span, "`#[vector_table]` takes no argument")),
             ("pvh_entry", None) => out.pvh_entry = true,
-            ("pvh_entry", _) => diags.push(invalid_attr(a.span, "`#[pvh_entry]` takes no argument")),
+            ("pvh_entry", Some(AttrArg::Named(args))) => {
+                out.pvh_entry = true;
+                out.pvh = pvh_options(args, a.span, diags);
+            }
+            ("pvh_entry", _) => diags.push(invalid_attr(a.span, "`#[pvh_entry]` takes named identity and higher_half options")),
             ("align", Some(AttrArg::Int(n))) if n.is_power_of_two() && *n <= 65536 => out.align = Some(*n as u32),
             ("align", Some(AttrArg::Int(n))) => diags.push(invalid_attr(a.span, format!("alignment {n} is not a power of two up to 65536"))),
             ("align", _) => diags.push(invalid_attr(a.span, "`#[align]` needs a number").help("write `#[align(4096)]`")),
@@ -172,7 +215,7 @@ pub fn evaluate(env: &mut Env<'_>) {
                 }
             }
             env.diags.extend(diags);
-            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table, pvh_entry: parsed.pvh_entry });
+            env.decls.fn_attrs.insert(sym, FnAttrs { export: parsed.export, section: parsed.section, interrupt: parsed.interrupt, vector: parsed.vector, vector_table: parsed.vector_table, pvh_entry: parsed.pvh_entry, pvh: parsed.pvh });
         }
     }
     // ---- statics, pass 1: types and attributes
@@ -291,7 +334,8 @@ fn function_problems(env: &Env<'_>, f: &FnDecl, sym: SymbolId, parsed: &Parsed) 
             match sig.params.as_slice() {
                 [] => {}
                 [info] if info_ok(info) => {}
-                other => out.push(invalid_attr(f.name.span, format!("a `#[pvh_entry]` function takes no parameters or one `u64` or raw pointer (the address of the `hvm_start_info` the boot loader passes); found ({})",
+                [info, tables] if info_ok(info) && info_ok(tables) => {}
+                other => out.push(invalid_attr(f.name.span, format!("a `#[pvh_entry]` function takes zero, one or two `u64` or raw pointer parameters (physical hvm_start_info and boot descriptor addresses); found ({})",
                     other.iter().map(|t| show(t)).collect::<Vec<_>>().join(", ")))),
             }
         }
@@ -454,4 +498,39 @@ pub fn function_targets(decls: &crate::env::Decls) -> Vec<SymbolId> {
     out.sort_by_key(|s| s.0);
     out.dedup();
     out
+}
+
+#[cfg(test)]
+mod pvh_tests {
+    use super::*;
+
+    #[test]
+    fn boot_options_validate_sizes_alignment_canonicality_duplicates_and_unknown_keys() {
+        let span = Span::new(tarn_diagnostics::FileId(0), 0, 0);
+        for size in [1, 4, 5, 512] {
+            let mut diags = Vec::new();
+            let config = pvh_options(&[("identity".into(), AttrArg::Str(format!("{size}GiB"))),
+                ("higher_half".into(), AttrArg::Int(0xffffffff80000000))], span, &mut diags);
+            assert!(diags.is_empty());
+            assert_eq!(config.identity_gib, size);
+            assert_eq!(config.higher_half, Some(0xffffffff80000000));
+        }
+        for options in [
+            vec![("identity", AttrArg::Str("0GiB".into()))],
+            vec![("identity", AttrArg::Str("513GiB".into()))],
+            vec![("identity", AttrArg::Str("1.5GiB".into()))],
+            vec![("identity", AttrArg::Int(4))],
+            vec![("higher_half", AttrArg::Int(0x800000000000))],
+            vec![("higher_half", AttrArg::Int(0xffffffff80001000))],
+            vec![("higher_half", AttrArg::Str("0xffffffff80000000".into()))],
+            vec![("identity", AttrArg::Str("4GiB".into())), ("identity", AttrArg::Str("2GiB".into()))],
+            vec![("map", AttrArg::Str("4GiB".into()))],
+        ] {
+            let mut diags = Vec::new();
+            let options = options.into_iter().map(|(key, value)| (key.into(), value)).collect::<Vec<_>>();
+            pvh_options(&options, span, &mut diags);
+            assert_eq!(diags.len(), 1, "{options:?}");
+            assert_eq!(diags[0].code, "E3086");
+        }
+    }
 }

@@ -24,14 +24,17 @@ fn qemu() -> Option<PathBuf> {
 
 fn scratch(tag: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!("tarn-kernel-boot-{tag}-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = std::env::temp_dir().join(format!("tarn-kernel-boot-{tag}-{}-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    std::fs::create_dir(&dir).unwrap();
     dir
 }
 
 /// Build `source` (kernel text) into an ELF with the example's linker script.
 fn build(dir: &Path, source: &str, linker: &Path) -> PathBuf {
+    build_with_script(dir, source, linker, &Path::new(EXAMPLE).join("kernel.ld"))
+}
+
+fn build_with_script(dir: &Path, source: &str, linker: &Path, script: &Path) -> PathBuf {
     let main = dir.join("main.tarn");
     std::fs::write(&main, source).unwrap();
     let res = tarn_driver::check(&main).unwrap();
@@ -39,15 +42,19 @@ fn build(dir: &Path, source: &str, linker: &Path) -> PathBuf {
     let target: Target = "x86_64-none".parse().unwrap();
     let (object, elf) = (dir.join("kernel.o"), dir.join("kernel.elf"));
     tarn_backend::build_object(res.drops.as_ref().unwrap(), res.typed.as_ref().unwrap(), &object, target).unwrap_or_else(|e| panic!("{e}"));
-    tarn_backend::link::run_linker(linker, &object, &elf, &Path::new(EXAMPLE).join("kernel.ld"), None).unwrap_or_else(|e| panic!("{e}"));
+    tarn_backend::link::run_linker(linker, &object, &elf, script, None).unwrap_or_else(|e| panic!("{e}"));
     elf
 }
 
 /// Boot `elf`; returns (serial output, exit status). Fails the test on timeout.
 fn boot(qemu: &Path, elf: &Path) -> (String, i32) {
+    boot_with_memory(qemu, elf, "64")
+}
+
+fn boot_with_memory(qemu: &Path, elf: &Path, memory: &str) -> (String, i32) {
     let mut child = Command::new(qemu)
         .args(["-kernel"]).arg(elf)
-        .args(["-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-m", "64"])
+        .args(["-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-m", memory])
         .args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"])
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().expect("start QEMU");
@@ -70,7 +77,9 @@ fn boot(qemu: &Path, elf: &Path) -> (String, i32) {
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    (reader.join().unwrap().replace("\r\n", "\n"), status.code().unwrap_or(-1))
+    let output = reader.join().unwrap().replace("\r\n", "\n");
+    eprintln!("QEMU serial (-m {memory}):\n{output}");
+    (output, status.code().unwrap_or(-1))
 }
 
 /// The tools a boot test needs, or the reason to skip.
@@ -215,4 +224,51 @@ fn the_image_carries_a_pvh_note_naming_the_32_bit_entry() {
     }
     assert_eq!(notes, 1, "one PT_NOTE");
     assert!(loads.iter().any(|(paddr, size)| *paddr <= entry && entry < paddr + size), "entry is inside a loaded segment: {loads:?}");
+}
+
+#[test]
+fn four_gib_identity_map_can_access_ram_above_one_gib() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("identity-4g");
+    let source = example().replace("#[pvh_entry]", "#[pvh_entry(identity = \"4GiB\")]")
+        .replacen("    heap_reuse()\n", "    poke(0x60000000, 0x123456789abcdef0)\n    if peek(0x60000000) != 0x123456789abcdef0 { fault() }\n    println(\"identity 4GiB: read/write at 0x60000000 ok\")\n    heap_reuse()\n", 1);
+    let elf = build(&dir, &source, &linker);
+    let (output, status) = boot_with_memory(&qemu, &elf, "4G");
+    assert_eq!(status, EXIT_OK, "{output}");
+    assert!(output.contains("identity 4GiB: read/write at 0x60000000 ok"), "{output}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn higher_half_kernel_executes_at_its_linked_address_and_receives_physical_boot_info() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("higher-half");
+    let source = include_str!("../../../examples/kernel-higher-half/main.tarn");
+    let script = Path::new("../../examples/kernel-higher-half/kernel.ld");
+    let elf = build_with_script(&dir, source, &linker, script);
+    let bytes = std::fs::read(&elf).unwrap();
+    assert!(u64_at(&bytes, 24) < 1 << 30, "ELF entry stays physical");
+    let (output, status) = boot(&qemu, &elf);
+    assert_eq!(status, EXIT_OK, "{output}");
+    assert!(output.contains("higher half: entry=0xffffffff"), "{output}");
+    assert!(output.contains("pvh info: physical=0x00000000"), "{output}");
+    assert!(output.contains("pvh tables: physical=0x00000000"), "{output}");
+    assert!(output.contains(" bytes=28672"), "{output}");
+    assert!(output.contains("pvh hand-off: magic and descriptor ok"), "{output}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn maximum_identity_map_encodes_physical_addresses_above_four_gib() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("identity-512g");
+    // The CPU sets Accessed/Dirty on the first leaf while using boot memory;
+    // mask those two bits when checking its otherwise unchanged mapping.
+    let source = example().replace("#[pvh_entry]", "#[pvh_entry(identity = \"512GiB\")]")
+        .replacen("    heap_reuse()\n", "    unsafe {\n        tables := usize(arch_x86_64.read_cr3())\n        if (peek(tables + 8192) & 0xffffffffffffff9f) != 0x83 { fault() }\n        if peek(tables + 8192 + 2048 * 8) != 0x100000083 { fault() }\n        if peek(tables + 8192 + 262143 * 8) != 0x7fffe00083 { fault() }\n        if peek(tables + 8) != 0 { fault() }\n    }\n    println(\"identity 512GiB: first, 4GiB and final page entries ok\")\n    heap_reuse()\n", 1);
+    let elf = build(&dir, &source, &linker);
+    let (output, status) = boot(&qemu, &elf);
+    assert_eq!(status, EXIT_OK, "{output}");
+    assert!(output.contains("identity 512GiB: first, 4GiB and final page entries ok"), "{output}");
+    std::fs::remove_dir_all(dir).unwrap();
 }

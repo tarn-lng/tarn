@@ -332,6 +332,9 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
 
 ### P8 — Example kernel and CI — implemented
 
+The original delivery is recorded below; [ADR 0105](0105-configurable-pvh-hand-off.md)
+extends its mapping and entry ABI for Cairn T4.
+
 - `examples/kernel-x86_64`: PVH boot, serial `println`, IDT, PIT timer on the
   remapped PIC, free-list heap, panic over serial, exit through
   `isa-debug-exit`.
@@ -420,3 +423,15 @@ typed intrinsics in `arch.x86_64` / `arch.aarch64`, all `unsafe`:
 - Panics, bounds checks and overflow checks stay on in freestanding; the
   handler decides what to do. No safety check is removed to fit the target.
 - Async/tasks remain hosted-only until a kernel scheduler exists.
+
+## P8 follow-up: Cairn T4
+
+[ADR 0105](0105-configurable-pvh-hand-off.md) extends the PVH stub with
+`#[pvh_entry(identity = "4GiB", higher_half = 0xffffffff80000000)]`.
+The default remains a first-GiB identity map with 2 MiB pages. Identity maps
+now cover 1–512 GiB, with an optional high alias of physical [0, 1 GiB).
+Only bootstrap code/data retain the below-4-GiB physical-VMA restriction;
+ordinary code/data may use high VMAs with low `AT()` load addresses.
+An optional second entry parameter receives an ABI v1 physical descriptor
+of the boot table/stack/code/GDT ranges and mapping configuration. See the
+new ADR and higher-half example for frame reservations and safe reclamation.

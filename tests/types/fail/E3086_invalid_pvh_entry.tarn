@@ -1,5 +1,5 @@
 #[pvh_entry]
-fn two(info u64, extra u64) {}
+fn two(info u64, extra u64, third u64) {}
 
 #[pvh_entry]
 fn by_value(info string) {}

@@ -364,3 +364,22 @@ fn garbage_does_not_hang_or_panic() {
         let _ = dump_module(&res.module);
     }
 }
+
+#[test]
+fn named_attribute_options_preserve_values_and_report_malformed_values() {
+    use tarn_ast::AttrArg;
+    let (_, parsed) = parse("#[pvh_entry(identity = \"4GiB\", higher_half = 0xffffffff80000000)]\nfn kernel() {}\n");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let ItemKind::Fn(f) = &parsed.module.items[0].kind else { panic!("function") };
+    assert_eq!(f.attrs[0].arg, Some(AttrArg::Named(vec![
+        ("identity".into(), AttrArg::Str("4GiB".into())),
+        ("higher_half".into(), AttrArg::Int(0xffffffff80000000)),
+    ])));
+    for source in [
+        "#[pvh_entry(identity = true)]\nfn f() {}\n",
+        "#[pvh_entry(identity \"4GiB\")]\nfn f() {}\n",
+        "#[pvh_entry(identity = )]\nfn f() {}\n",
+    ] {
+        assert!(!codes(source).is_empty(), "{source}");
+    }
+}

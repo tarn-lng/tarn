@@ -329,7 +329,7 @@ import "ffi"
 
 #[pvh_entry]
 #[export("kmain")]
-fn kmain(info u64) {        // or `fn kmain()`; `info` is the hvm_start_info address
+fn kmain(info u64) {        // or zero/two parameters; info is a physical address
     // long mode, paging on, SSE on, interrupts off
 }
 ```
@@ -343,9 +343,10 @@ fn kmain(info u64) {        // or `fn kmain()`; `info` is the hvm_start_info add
   `ebx` the loader passed. The bytes and their assembly are in
   `compiler/backend/src/pvh.rs`.
 - Tables, stack and GDT are compiler-made local data (`tarn_pvh_tables`,
-  `tarn_pvh_stack` in `.bss`, `tarn_pvh_gdt`), so the linker script must keep
-  `.bss` and `.rodata`; the stub reaches them with 32-bit absolute
-  relocations, hence the image must be linked below 4 GiB (1 MiB is usual).
+  `tarn_pvh_stack` in `.bss.pvh`, GDT and descriptor in `.rodata.pvh`).
+  Keep `.bss.*` and `.rodata.*`; the stub is in `.text.pvh.boot`. Bootstrap
+  VMAs must be physical, below 4 GiB and inside the identity map (1 MiB is
+  usual). Ordinary kernel code/data may be high-linked as described below.
 - The note lives in section `.note.Xen`. A script must keep it and give it its
   own `PT_NOTE` program header, because QEMU reads the note from there:
 
@@ -364,13 +365,54 @@ SECTIONS {
 ```
 
 Rules: x86_64 `*-none` only (anything else is a build error), one per
-program, a function with no parameters or one `u64`/raw pointer and no result,
+program, a function with zero, one or two `u64`/thin raw pointer parameters and no result,
 not `unsafe fn` (E3086); it may also carry `#[export]` and `#[section]`. If
-the function returns, the CPU halts. The interrupt state is the loader's
-(QEMU leaves it off) and the GDT is the stub's: `idt_set_gate` selector `8`
+the function returns, the CPU halts. Interrupts are disabled; the GDT is the
+stub's: `idt_set_gate` selector `8`
 is its code segment. The example kernel in
 [examples/kernel-x86_64](../examples/kernel-x86_64/README.md) boots this way
 and is booted by CI.
+
+### Configuring mappings and taking over paging
+
+```tarn
+#[pvh_entry(identity = "4GiB", higher_half = 0xffffffff80000000)]
+fn kernel(info u64, boot u64) {
+    // Both addresses are physical; cast boot to *BootInfo in the kernel.
+}
+```
+
+`identity` accepts whole GiB from 1 through 512 (default 1). All leaves are
+2 MiB pages, so no CPU support for 1 GiB pages is required. The optional
+`higher_half` is a canonical upper-half, 1 GiB aligned **offset**: it aliases
+physical [0, 1 GiB) at `higher_half + physical_address`. The high kernel's
+entire physical load range must fit in that window. This bootstrap alias
+shares the first identity page directory; it is writable/executable, with
+no guard pages. The kernel replaces it with its own permissions and direct
+map. The configured identity size describes addressability, not usable RAM.
+
+The optional second parameter is the physical address of a 96-byte, 8-byte
+aligned descriptor: twelve consecutive `u64` fields in this order:
+`version` (1), `tables`, `tables_bytes`, `stack`, `stack_bytes` (16384),
+`stub`, `stub_bytes`, `gdt`, `gdt_bytes` (24), `descriptor_bytes` (96),
+`identity_bytes`, `higher_half` (0 without an alias). All pointer fields are
+physical. `tables` equals initial CR3; its allocation is
+`(2 + identity_GiB + has_higher_half) * 4096` bytes. The first parameter
+remains the physical `hvm_start_info` address. See the example's `BootInfo`
+struct for the exact Tarn declaration.
+
+Reserve every descriptor range, the descriptor itself, the complete physical
+kernel/boot image, and loader-owned structures from the frame allocator,
+rounding outward to page boundaries. Copy the descriptor before reclaiming
+it; replace CR3, stack and GDTR before releasing their storage. If removing
+the low identity map, the kernel must not return to the physical stub.
+
+[examples/kernel-higher-half](../examples/kernel-higher-half/README.md)
+includes a tested `AT()` linker script: the note and bootstrap stay low;
+normal sections have high VMAs and low physical LMAs. Keep its `BASE` equal
+to the attribute's offset. It prints its high function address and validates
+the physical boot information. [ADR 0105](adr/0105-configurable-pvh-hand-off.md)
+specifies the complete hand-off state, memory layout and limitations.
 
 ## Entry point
 

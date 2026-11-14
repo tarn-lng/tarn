@@ -73,6 +73,25 @@ impl Parser {
                 let mut arg = None;
                 if p.eat(&TokenKind::LParen) {
                     match p.peek().clone() {
+                        TokenKind::Ident(_) => {
+                            let mut args = Vec::new();
+                            loop {
+                                let key = p.expect_ident("attribute option").name;
+                                p.expect(&TokenKind::Eq);
+                                let value = match p.peek().clone() {
+                                    TokenKind::Str(s) => { p.bump(); AttrArg::Str(s) }
+                                    TokenKind::Int(n) => { p.bump(); AttrArg::Int(n) }
+                                    other => {
+                                        let span = p.span();
+                                        p.error(Diagnostic::error("E1023", "invalid_attribute", format!("expected a string or integer option value, found {}", crate::describe(&other))).primary(span, ""));
+                                        break;
+                                    }
+                                };
+                                args.push((key, value));
+                                if !p.eat(&TokenKind::Comma) || p.at(&TokenKind::RParen) { break; }
+                            }
+                            arg = Some(AttrArg::Named(args));
+                        }
                         TokenKind::Str(s) => {
                             p.bump();
                             arg = Some(AttrArg::Str(s));
