@@ -955,3 +955,17 @@ fn freestanding_owning_slots_preserve_the_contract() {
         assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
     }
 }
+
+#[test]
+fn idle_enable_and_halt_are_adjacent_in_the_caller() {
+    for target in ["x86_64-none", "x86_64-macos"] {
+        let bytes = freestanding("../../tests/freestanding/sti_hlt.tarn", target).unwrap();
+        // Unlike two intrinsic calls, a single FB F4 template cannot acquire
+        // padding or register-allocation instructions between STI and HLT.
+        assert!(bytes.windows(5).any(|w| w == [0xfb, 0xf4, 0x90, 0x90, 0x90]), "{target}: missing contiguous inlined template");
+        let Some(functions) = disassembly_of(&bytes, &format!("idle-{target}"), true, "") else { eprintln!("objdump unavailable; skipping disassembly for {target}"); continue };
+        let code = functions.iter().find(|(name, _)| name.ends_with("tarn_fn_0__main")).unwrap().1;
+        let at = code.iter().position(|i| i == "sti").expect("STI in caller");
+        assert_eq!(code[at + 1], "hlt", "{target}: {code:?}");
+    }
+}

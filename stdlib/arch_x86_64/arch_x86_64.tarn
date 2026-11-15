@@ -37,6 +37,12 @@ extern "intrinsic" fn _cli()
 pub unsafe fn sti() { _sti() }
 extern "intrinsic" fn _sti()
 
+/// Enable interrupts and halt with contiguous STI/HLT (STI interrupt shadow).
+/// Ring 0, IF initially clear; caller masks and checks for work before calling.
+/// Returns with interrupts enabled; pending IRQs cannot fall before the halt.
+pub unsafe fn sti_hlt() { _sti_hlt() }
+extern "intrinsic" fn _sti_hlt()
+
 /// Halt until the next interrupt (`hlt`). Ring 0.
 pub unsafe fn hlt() { _hlt() }
 extern "intrinsic" fn _hlt()

@@ -20,6 +20,7 @@ fn main() {
     serial_write(65)
     unsafe {
         arch_x86_64.cli()
+        arch_x86_64.sti_hlt()
         arch_x86_64.pause()
         arch_x86_64.int3()
         cr0 := arch_x86_64.read_cr0()

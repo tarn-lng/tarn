@@ -61,6 +61,7 @@ Rules
 | `in8/in16/in32(port u16) u8/u16/u32` | `in al/ax/eax, dx` |
 | `out8/out16/out32(port u16, value)` | `out dx, al/ax/eax` |
 | `cli()`, `sti()`, `hlt()`, `pause()` | same name |
+| `sti_hlt()` | contiguous `sti; hlt`, race-free idle |
 | `int3()` | `int3` (software breakpoint, vector 3) |
 | `rdtsc() u64` | `rdtsc` (edx:eax combined) |
 | `read_cr0/cr2/cr3/cr4() u64` | `mov rax, crN` |
@@ -82,6 +83,16 @@ Rules
 `lgdt` does not reload segment registers and `sti` takes effect after the next
 machine instruction, which may be padding or compiler-generated code. Separate
 Tarn intrinsic calls do not promise adjacency (including `sti(); hlt()`).
+Use `sti_hlt()` for idle: mask IRQs, check runnable/deadline state, then call
+this single intrinsic. Its contiguous `FB F4` sequence uses STI's interrupt
+shadow so no maskable IRQ is serviced before HLT. It returns with IF set;
+the caller must mask again before accessing protected state. ABI call-slot
+padding follows HLT, never separates the two instructions (ADR 0111).
+
+On aarch64 WFI wakes for a pending IRQ even with DAIF.I set. The idle pattern
+is `irq_disable(); check_work(); wfi(); irq_enable()` (then mask again before
+protected state access). Enabling IRQs before WFI permits an IRQ to be handled
+before the wait; it does not establish the same no-lost-wakeup condition.
 
 ## `arch_aarch64`
 

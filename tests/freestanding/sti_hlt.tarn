@@ -1,0 +1,8 @@
+// Code-generation regression for Cairn 1E: never run this on a host OS.
+import "arch_x86_64"
+fn main() {
+    unsafe {
+        arch_x86_64.cli()
+        arch_x86_64.sti_hlt()
+    }
+}

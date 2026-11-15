@@ -95,7 +95,7 @@ pub(crate) fn lookup(arch: Arch, op: &str) -> Option<Stub> {
 /// Every operation of an architecture, for documentation and tests.
 pub fn operations(arch: Arch) -> Vec<String> {
     let names: Vec<String> = match arch {
-        Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "hlt", "pause", "int3", "rdtsc",
+        Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "sti_hlt", "hlt", "pause", "int3", "rdtsc",
             "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt",
             "ltr", "str", "cpuid", "ud2", "xgetbv", "xsetbv", "wbinvd", "clflush", "invpcid", "swapgs",
             "rdfsbase", "wrfsbase", "rdgsbase", "wrgsbase", "read_rflags", "call_on_stack", "stac", "clac", "switch_stack", "context_switch"]
@@ -160,6 +160,7 @@ fn x86_64(op: &str) -> Option<Stub> {
               "mov rdi, qword ptr [rsi + 0x40]", "jmp rax", "ret"]),
         "cli" => stub(&[], None, &[0xfa, 0xc3], &["cli", "ret"]),
         "sti" => stub(&[], None, &[0xfb, 0xc3], &["sti", "ret"]),
+        "sti_hlt" => stub(&[], None, &[0xfb, 0xf4, 0xc3], &["sti", "hlt", "ret"]),
         "hlt" => stub(&[], None, &[0xf4, 0xc3], &["hlt", "ret"]),
         "int3" => stub(&[], None, &[0xcc, 0xc3], &["int3", "ret"]),
         "pause" => stub(&[], None, &[0xf3, 0x90, 0xc3], &["pause", "ret"]),
