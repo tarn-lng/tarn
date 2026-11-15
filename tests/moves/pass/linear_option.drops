@@ -1,0 +1,8 @@
+consume bb1: drop _1 -> dead (moved)
+take bb1: drop _1 -> conditional (flag)
+take bb6: drop _3 -> dead (moved)
+main bb2: drop _3 -> dead (moved)
+main bb2: drop _2 -> dead (moved)
+main bb3: drop _5 -> dead (moved)
+main bb3: drop _6 -> dead (moved)
+main bb3: drop _7 -> static

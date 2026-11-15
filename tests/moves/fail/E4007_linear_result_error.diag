@@ -1,0 +1,10 @@
+error[E4007]: must-consume value `result` of type `Result<i32, Frame>` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_result_error.tarn:17:1
+   |
+12 |  result: Result<i32, Frame> := Err(make())
+   |  ----------------------------------------- resource is held here
+17 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

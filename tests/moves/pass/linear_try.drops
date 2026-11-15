@@ -1,0 +1,11 @@
+consume bb1: drop _1 -> dead (moved)
+take bb1: drop _2 -> dead (moved)
+take bb2: drop _2 -> dead (moved)
+take bb2: drop _1 -> static
+take bb3: drop _4 -> dead (moved)
+take bb3: drop _1 -> partial, skip input.Ok.0
+main bb2: drop _3 -> dead (moved)
+main bb2: drop _2 -> dead (moved)
+main bb2: drop _1 -> static
+main bb3: drop _5 -> dead (moved)
+main bb3: drop _4 -> static

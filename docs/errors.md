@@ -165,6 +165,8 @@ stream them:
 | E4003 | `move_out_of_reference` | cannot move a value out from behind a reference |
 | E4004 | `move_out_of_index` | cannot move an element out of an array by index |
 | E4005 | `uninitialized` | use of (possibly) uninitialized `x` |
+| E4007 | `must_consume` | must-consume value would be implicitly dropped; move it into a consuming call, field or return on every path (ADR 0108) |
+| E4008 | `unsupported_linear_operation` | operation cannot preserve a must-consume obligation; use checked storage and statically resolved consuming functions (ADR 0108) |
 | E4006 | `assign_into_moved` | cannot assign to `p.f`: `p` has been moved |
 | W2001 | `confusing_shadow` | `x` is shadowed in an inner scope and used again after it |
 | W2002 | `shadows_item` | `x` shadows the builtin function `x` |
@@ -249,3 +251,18 @@ code has one meaning.
   `unsafe fn`, a slot above 15, and `#[vector_table]` with parameters or an
   argument. `#[pvh_entry]` (P8) reports parameters other than none or one `u64`/raw
   pointer, a result, an argument and `unsafe fn`.
+
+## Must-consume resources (E4007, E4008)
+
+`#[must_consume]` on a private-representation struct forbids implicit destruction.
+E4007 labels the drop site (including scope exits, overwrites, discarded values,
+and early returns) and the owner. Its help explains transfers; a note lists
+known functions taking that type by value. A generic body is also checked with
+linear type arguments, so its diagnostic may name `T` rather than a concrete type.
+
+E4008 rejects an operation whose native, erased, or cancellable representation
+cannot preserve the obligation: native containers with linear elements, owning
+closure captures, indirect consuming calls, virtual resource operations, and
+linear async inputs/outputs. Borrow resources in closures and async code; use
+checked struct/enum containers and direct consuming calls. See
+[ADR 0108](adr/0108-must-consume-types.md) for the precise supported subset.

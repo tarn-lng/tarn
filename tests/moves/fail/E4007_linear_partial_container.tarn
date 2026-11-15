@@ -1,0 +1,18 @@
+#[must_consume]
+struct Frame {
+    addr u64
+}
+fn make() Frame { return Frame{addr: 1} }
+fn consume(frame Frame) {
+    match frame {
+        Frame{addr} => print(addr)
+    }
+}
+struct Pair {
+ first Frame
+ second Frame
+}
+fn main() {
+ p := Pair{first: make(), second: make()}
+ consume(p.first)
+}

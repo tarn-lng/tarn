@@ -1,0 +1,3 @@
+#[must_consume]
+pub struct Resource { handle u64 }
+pub fn make() Resource { return Resource{handle: 1} }

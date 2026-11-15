@@ -1,0 +1,2 @@
+#[must_consume(1)]
+struct Resource { handle u64 }

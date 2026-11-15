@@ -1,0 +1,3 @@
+consume bb1: drop _1 -> dead (moved)
+run bb1: drop _2 -> dead (moved)
+run bb4: drop _3 -> dead (moved)

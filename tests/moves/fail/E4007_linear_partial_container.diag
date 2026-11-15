@@ -1,0 +1,10 @@
+error[E4007]: must-consume value `p` of type `Pair` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_partial_container.tarn:18:1
+   |
+16 |  p := Pair{first: make(), second: make()}
+   |  ---------------------------------------- resource is held here
+18 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

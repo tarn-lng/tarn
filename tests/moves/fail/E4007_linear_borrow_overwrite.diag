@@ -1,0 +1,10 @@
+error[E4007]: must-consume value `value` of type `Frame` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_borrow_overwrite.tarn:12:30
+   |
+12 | fn replace(value &mut Box) { value.item = make() }
+   |            -------------- resource is held here
+   |                              ^^^^^^^^^^^^^^^^^^^ this path leaves an unconsumed resource
+   |
+   = note: functions taking `Frame` by value: consume
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

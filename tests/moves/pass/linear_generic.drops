@@ -1,0 +1,8 @@
+consume bb1: drop _1 -> dead (moved)
+forward bb0: drop _1 -> dead (moved)
+unpack bb0: drop _1 -> partial, skip value.item
+main bb3: drop _3 -> dead (moved)
+main bb3: drop _2 -> dead (moved)
+main bb6: drop _7 -> dead (moved)
+main bb6: drop _6 -> dead (moved)
+main bb6: drop _5 -> dead (moved)

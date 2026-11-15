@@ -1,0 +1,21 @@
+#[must_consume]
+struct Frame {
+    addr u64
+}
+fn make() Frame { return Frame{addr: 1} }
+fn consume(frame Frame) {
+    match frame {
+        Frame{addr} => print(addr)
+    }
+}
+fn run(input Result<Frame, i32>) Result<Frame, i32> {
+ value := try input
+ return Err(2)
+}
+fn main() {
+ result := run(Ok(make()))
+ match result {
+  Ok(f) => consume(f)
+  Err(e) => print(e)
+ }
+}

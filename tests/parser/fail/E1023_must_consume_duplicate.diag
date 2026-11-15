@@ -1,0 +1,6 @@
+error[E1023]: a struct accepts one `#[must_consume]` marker, without arguments, and cannot also be `copy`
+ --> tests/parser/fail/E1023_must_consume_duplicate.tarn:2:1
+  |
+2 | #[must_consume]
+  | ^^^^^^^^^^^^^^^ invalid struct attribute
+

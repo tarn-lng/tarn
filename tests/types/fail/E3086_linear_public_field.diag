@@ -1,0 +1,8 @@
+error[E3086]: must-consume structs must have private fields
+ --> tests/types/fail/E3086_linear_public_field.tarn:2:1
+  |
+2 | pub struct Resource { pub handle u64 }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ resource representation must stay in its defining module
+  |
+  = help: remove `pub` from the fields and expose borrowing accessors and consuming functions
+

@@ -1,0 +1,22 @@
+#[must_consume]
+struct Frame {
+    addr u64
+}
+fn make() Frame { return Frame{addr: 1} }
+fn consume(frame Frame) {
+    match frame {
+        Frame{addr} => print(addr)
+    }
+}
+struct Box<T> { item T }
+fn forward<T>(value Box<T>) T { return value.item }
+fn run(flag bool) {
+    f := forward(Box{item: make()})
+    if flag { consume(f) } else { consume(f) }
+    opt: Option<Frame> := Some(make())
+    match opt {
+        Some(frame) => consume(frame)
+        None => print(0)
+    }
+}
+fn main() { run(true) }

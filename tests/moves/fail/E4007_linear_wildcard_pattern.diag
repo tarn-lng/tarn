@@ -1,0 +1,11 @@
+error[E4007]: must-consume value `f` of type `Frame` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_wildcard_pattern.tarn:14:1
+   |
+12 |  f := make()
+   |  ----------- resource is held here
+14 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = note: functions taking `Frame` by value: consume
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

@@ -1,0 +1,5 @@
+consume bb1: drop _1 -> dead (moved)
+main bb0: drop _1 -> dead (moved)
+main bb0: drop _3 -> dead (moved)
+main bb0: drop _4 -> static
+main bb0: drop _2 -> dead (moved)

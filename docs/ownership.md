@@ -131,3 +131,30 @@ bitmaps so moved elements are never destroyed twice. Panic aborts, with no unwin
 or stack cleanup. Copy values have no owned-resource drop; user destructors are
 not implemented. The post-drop IR is independently verified and printed with
 `tarn ir file.tarn --drops`.
+
+## Must-consume resources
+
+`#[must_consume]` marks a non-Copy struct with private fields. Its values may
+be borrowed and moved normally, but cannot be implicitly dropped (E4007).
+Every normal path must transfer ownership into a consuming call, field, or
+return. The consumer must also honor the obligation; merely accepting an
+owned parameter does not exempt its body. Scope exits, overwrites, discarded
+results, wildcard patterns and `try` exits are all checked. Panic aborts without
+unwinding and has no cleanup obligation.
+
+Only the defining module may explicitly dismantle a marked value using a
+complete owned struct pattern on a local. Accessing a Copy field alone does
+not consume its owner. Any linear fields in that pattern must themselves be
+transferred; wildcards cannot hide them. Bind a nested resource to a local
+before dismantling it.
+
+Containment propagates through fields, enum payloads, nonempty arrays and
+owning generic type arguments. `match` consumes an Option/Result payload on
+its active path; an empty variant carries no obligation. References do not own
+the referent. Generic bodies are checked again for linear argument instances.
+Native containers such as `Vec<Resource>`, owned closure captures, indirect
+consuming calls, virtual operations on linear storage, and linear async
+inputs/outputs are currently rejected (E4008). Borrowing closures and async
+inputs work; async abandonment paths must also discharge any local resource.
+Consuming array loops cannot yet prove an empty remainder. These conservative
+limits and examples are specified in [ADR 0108](adr/0108-must-consume-types.md).

@@ -1,0 +1,8 @@
+error[E3014]: a must-consume value can only be destructured in its defining module
+ --> tests/types/fail/linear_private_pattern/main.tarn:4:12
+  |
+4 |  match r { resource.Resource{handle} => print(handle) }
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^ private resource representation
+  |
+  = help: call a consuming function exported by the defining module
+

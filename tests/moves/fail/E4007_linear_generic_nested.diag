@@ -1,0 +1,10 @@
+error[E4007]: must-consume value `value` of type `Box<T>` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_generic_nested.tarn:14:29
+   |
+14 | fn forget<T>(value Box<T>) {}
+   |              ------------ resource is held here
+   |                             ^ this path leaves an unconsumed resource
+   |
+   = note: functions taking `Box<T>` by value: forget
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

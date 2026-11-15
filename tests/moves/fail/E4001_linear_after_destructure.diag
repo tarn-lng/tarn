@@ -1,0 +1,11 @@
+error[E4001]: use of moved value `f`
+  --> tests/moves/fail/E4001_linear_after_destructure.tarn:14:10
+   |
+13 |  match f { Frame{addr} => print(addr) }
+   |            ----------- value moved here
+14 |  consume(f)
+   |          ^ value used here after move
+   |
+   = note: `Frame` is not a copy type, so assigning or passing it moves it
+   = help: to keep using `f`, borrow it where it is moved (`&f`) instead of moving it
+

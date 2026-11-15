@@ -1,0 +1,17 @@
+#[must_consume]
+struct Frame {
+    addr u64
+}
+fn make() Frame { return Frame{addr: 1} }
+fn consume(frame Frame) {
+    match frame {
+        Frame{addr} => print(addr)
+    }
+}
+struct Box { item Frame }
+fn replace(value &mut Box) { value.item = make() }
+fn main() {
+ var box = Box{item: make()}
+ replace(&mut box)
+ consume(box.item)
+}

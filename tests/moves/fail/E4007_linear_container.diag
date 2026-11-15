@@ -1,0 +1,9 @@
+error[E4007]: must-consume value `b` of type `Box` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_container.tarn:14:36
+   |
+14 | fn main() { b := Box{item: make()} }
+   |             ---------------------- resource is held here
+   |                                    ^ this path leaves an unconsumed resource
+   |
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

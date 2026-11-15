@@ -105,6 +105,73 @@ impl MovePaths {
         mp
     }
 
+    /// Complete linear aggregate paths, including unmentioned siblings and
+    /// inactive enum variants. Ordinary programs retain sparse move paths.
+    pub fn complete_linear(
+        &mut self,
+        f: &Function,
+        t: &tarn_types::Typed,
+        linear: &std::collections::HashSet<tarn_types::ParamId>,
+    ) {
+        fn expand(
+            mp: &mut MovePaths,
+            place: Place,
+            ty: tarn_types::Ty,
+            t: &tarn_types::Typed,
+            linear: &std::collections::HashSet<tarn_types::ParamId>,
+            depth: usize,
+        ) {
+            if depth == 64 || !t.decls.is_must_consume_with(&ty, linear) {
+                return;
+            }
+            mp.intern(&place);
+            if let tarn_types::Ty::Adt(s, args) = ty {
+                if let Some(d) = t.decls.structs.get(&s) {
+                    let map = d.generics.iter().copied().zip(args).collect();
+                    for (i, field) in d.fields.iter().enumerate() {
+                        expand(
+                            mp,
+                            place.project(Proj::Field(i as u32)),
+                            tarn_types::subst(&field.ty, &map),
+                            t,
+                            linear,
+                            depth + 1,
+                        );
+                    }
+                } else if let Some(d) = t.decls.enums.get(&s) {
+                    let map = d.generics.iter().copied().zip(args).collect();
+                    for (v, variant) in d.variants.iter().enumerate() {
+                        let down = place.project(Proj::Downcast(v as u32));
+                        mp.intern(&down);
+                        for (i, field) in variant.fields.iter().enumerate() {
+                            expand(
+                                mp,
+                                down.project(Proj::Field(i as u32)),
+                                tarn_types::subst(field, &map),
+                                t,
+                                linear,
+                                depth + 1,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for (i, l) in f.locals.iter().enumerate() {
+            expand(
+                self,
+                Place::local(LocalId(i as u32)),
+                l.ty.clone(),
+                t,
+                linear,
+                0,
+            );
+        }
+        self.subtree = (0..self.paths.len())
+            .map(|i| self.collect_subtree(MovePathId(i as u32)))
+            .collect();
+    }
+
     fn intern(&mut self, p: &Place) {
         let mut cur = self.roots[p.local.0 as usize];
         for proj in &p.proj {

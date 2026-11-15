@@ -1,0 +1,34 @@
+error[E4008]: native or virtual calls cannot hide must-consume storage
+  --> tests/moves/fail/E4008_linear_vec.tarn:12:27
+   |
+12 |  var frames: Vec<Frame> = Vec.new()
+   |                           ^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: use checked struct or enum storage and statically resolved resource operations
+
+error[E4008]: this indirect or native call cannot consume a must-consume value
+  --> tests/moves/fail/E4008_linear_vec.tarn:13:2
+   |
+13 |  frames.push(make())
+   |  ^^^^^^^^^^^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: use a statically resolved consuming function with a checked body
+
+error[E4008]: native or virtual calls cannot hide must-consume storage
+  --> tests/moves/fail/E4008_linear_vec.tarn:13:2
+   |
+13 |  frames.push(make())
+   |  ^^^^^^^^^^^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: use checked struct or enum storage and statically resolved resource operations
+
+error[E4007]: must-consume value `frames` of type `Vec<Frame>` would be implicitly dropped
+  --> tests/moves/fail/E4008_linear_vec.tarn:14:1
+   |
+12 |  var frames: Vec<Frame> = Vec.new()
+   |  ---------------------------------- resource is held here
+14 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

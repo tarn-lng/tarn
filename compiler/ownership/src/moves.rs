@@ -21,6 +21,9 @@ use tarn_types::{Ty, Typed};
 #[derive(Clone, PartialEq, Debug)]
 struct State {
     init: BitSet,
+    /// Possibly live linear payloads; enum tag refinement only affects these
+    /// bits, never the ordinary move/init state or executable drop plans.
+    obligations: BitSet,
     uninit: BitSet,
     /// Move sites (indices into `Cx::sites`) that may have moved each path.
     moves: BTreeMap<usize, Vec<u32>>,
@@ -34,6 +37,7 @@ impl State {
     fn join(&mut self, o: &State) -> bool {
         let mut changed = self.init.union(&o.init);
         changed |= self.uninit.union(&o.uninit);
+        changed |= self.obligations.union(&o.obligations);
         for (i, sites) in &o.moves {
             let mine = self.moves.entry(*i).or_default();
             for m in sites {
@@ -57,6 +61,7 @@ struct At {
 
 struct Cx<'a> {
     f: &'a Function,
+    linear: HashSet<tarn_types::ParamId>,
     r: &'a Resolved,
     t: &'a Typed,
     mp: MovePaths,
@@ -73,8 +78,25 @@ pub fn check_function(f: &Function, r: &Resolved, t: &Typed) -> (FnMoves, Vec<Di
     if f.blocks.is_empty() {
         return (FnMoves::default(), Vec::new());
     }
-    let mp = MovePaths::build(f);
-    let mut cx = Cx { f, r, t, mp, sites: HashMap::new(), site_info: Vec::new(), report: false, reported: HashSet::new(), diags: Vec::new(), drops: Vec::new(), drop_states: HashMap::new() };
+    check_function_linear(f, r, t, HashSet::new())
+}
+
+pub(crate) fn check_function_linear(
+    f: &Function,
+    r: &Resolved,
+    t: &Typed,
+    linear: HashSet<tarn_types::ParamId>,
+) -> (FnMoves, Vec<Diagnostic>) {
+    if f.blocks.is_empty() {
+        return (FnMoves::default(), Vec::new());
+    }
+    let mut mp = MovePaths::build(f);
+    if !t.decls.must_consume.is_empty() {
+        mp.complete_linear(f, t, &linear);
+    }
+    let mut cx = Cx { f,
+        linear,
+        r, t, mp, sites: HashMap::new(), site_info: Vec::new(), report: false, reported: HashSet::new(), diags: Vec::new(), drops: Vec::new(), drop_states: HashMap::new() };
     let entry = cx.entry_state();
     let n = f.blocks.len();
     let mut ins: Vec<Option<State>> = vec![None; n];
@@ -87,10 +109,12 @@ pub fn check_function(f: &Function, r: &Resolved, t: &Typed) -> (FnMoves, Vec<Di
         cx.block(b, &mut st);
         for s in f.blocks[b].term.successors() {
             let s = s.0 as usize;
+            let mut edge = st.clone();
+            cx.refine_edge(b, s, &mut edge);
             let changed = match &mut ins[s] {
-                Some(cur) => cur.join(&st),
+                Some(cur) => cur.join(&edge),
                 slot @ None => {
-                    *slot = Some(st.clone());
+                    *slot = Some(edge);
                     true
                 }
             };
@@ -101,6 +125,15 @@ pub fn check_function(f: &Function, r: &Resolved, t: &Typed) -> (FnMoves, Vec<Di
     }
     // Reporting pass over the fixpoint.
     cx.report = true;
+    if f.asynchronous.is_some()
+        && (f.params().any(|l| cx.linear_ty(&f.local(l).ty)) || cx.linear_ty(&f.ret))
+    {
+        cx.linear_unsupported(
+            f.span,
+            "async inputs and outputs cannot own must-consume values",
+            "borrow the resource and finish its obligation outside the cancellable computation",
+        );
+    }
     for (b, st) in ins.into_iter().enumerate() {
         if let Some(mut st) = st {
             cx.block(b, &mut st);
@@ -112,13 +145,16 @@ pub fn check_function(f: &Function, r: &Resolved, t: &Typed) -> (FnMoves, Vec<Di
 impl Cx<'_> {
     fn entry_state(&self) -> State {
         let n = self.mp.len();
-        let mut st = State { init: BitSet::new(n), uninit: BitSet::new(n), moves: BTreeMap::new() };
+        let mut st = State { init: BitSet::new(n),
+            obligations: BitSet::new(n),
+            uninit: BitSet::new(n), moves: BTreeMap::new() };
         for i in 0..n {
             st.uninit.insert(i);
         }
         for l in self.f.params() {
             for &p in self.mp.subtree(self.mp.root(l)) {
                 st.init.insert(p.0 as usize);
+                st.obligations.insert(p.0 as usize);
                 st.uninit.remove(p.0 as usize);
             }
         }
@@ -129,6 +165,7 @@ impl Cx<'_> {
         for &q in self.mp.subtree(p) {
             let i = q.0 as usize;
             st.init.insert(i);
+            st.obligations.insert(i);
             st.uninit.remove(i);
             st.moves.remove(&i);
         }
@@ -138,6 +175,7 @@ impl Cx<'_> {
         for &q in self.mp.subtree(p) {
             let i = q.0 as usize;
             st.init.remove(i);
+            st.obligations.remove(i);
             st.uninit.insert(i);
             match site {
                 Some(site) => st.moves.insert(i, vec![site]),
@@ -164,16 +202,37 @@ impl Cx<'_> {
             let at = |k: u32| At { span: s.span, key: (b as u32, si as u32, k) };
             match &s.kind {
                 StatementKind::Assign(place, rv) => {
+                    let transfer = if tarn_ir::post_drop::place_ty(self.f, self.t, place)
+                        .is_some_and(|ty| self.linear_ty(&ty))
+                    {
+                        Some(st.obligations.clone())
+                    } else {
+                        None
+                    };
                     self.rvalue(rv, st, at(0), s.span);
                     self.write(place, st, s.span);
+                    if let Some(before) = transfer {
+                        self.transfer_obligations(place, rv, &before, st);
+                    }
+                    if let Rvalue::Aggregate(tarn_ir::Aggregate::Variant(_, v, _), _) = rv {
+                        self.select_variant(place, *v, st);
+                    }
                 }
                 StatementKind::StorageLive(l) | StatementKind::StorageDead(l) => {
                     let root = self.mp.root(*l);
-                    self.set_uninit(st, root, None);
+                    // Complete marked patterns end a still-live local's storage.
+                    // Record that disposition as a move for later diagnostics;
+                    // ordinary lexical StorageDead follows an already-dead Drop.
+                    let dismantled = matches!(s.kind, StatementKind::StorageDead(_))
+                        && st.init.contains(root.0 as usize)
+                        && matches!(&self.f.local(*l).ty, Ty::Adt(sym, _) if self.t.decls.must_consume.contains(sym));
+                    let site = dismantled.then(|| self.site(at(0), root));
+                    self.set_uninit(st, root, site);
                 }
                 StatementKind::Drop(place) => {
                     if let Lookup::Exact(p) = self.mp.lookup(place) {
                         if self.report {
+                            self.check_linear_drop(place, st, s.span);
                             let d = self.drop_decision(st, p);
                             self.drops.push((BlockId(b as u32), si, d));
                             // Drop elaboration reads only the dropped path's own
@@ -205,6 +264,7 @@ impl Cx<'_> {
                         }
                         self.set_uninit(st, p, None);
                     } else if self.report {
+                        self.check_linear_drop(place, st, s.span);
                         self.drops.push((BlockId(b as u32), si, DropDecision::Static));
                         self.drop_states.insert((BlockId(b as u32), si), vec![(place.clone(), InitState::Live)]);
                     }
@@ -214,6 +274,41 @@ impl Cx<'_> {
         let tspan = blk.term_span;
         match &blk.term {
             Terminator::Call { callee, args, arg_spans, dest, .. } => {
+                if self.report
+                    && matches!(
+                        callee,
+                        Callee::Virtual { .. }
+                            | Callee::Value(_)
+                            | Callee::Intrinsic(_)
+                            | Callee::Opaque(_)
+                    )
+                    && args.iter().any(|a| self.owned_linear(a))
+                {
+                    self.linear_unsupported(
+                        tspan,
+                        "this indirect or native call cannot consume a must-consume value",
+                        "use a statically resolved consuming function with a checked body",
+                    );
+                }
+                if self.report
+                    && matches!(
+                        callee,
+                        Callee::Virtual { .. } | Callee::Intrinsic(_) | Callee::Opaque(_)
+                    )
+                {
+                    let borrowed_linear = args.iter().any(|a| match a {
+                        Operand::Move(p) | Operand::Copy(p) => {
+                            tarn_ir::post_drop::place_ty(self.f, self.t, p)
+                                .is_some_and(|ty| self.linear_ty(&peel(&ty)))
+                        }
+                        _ => false,
+                    });
+                    let output_linear = tarn_ir::post_drop::place_ty(self.f, self.t, dest)
+                        .is_some_and(|ty| self.linear_ty(&ty));
+                    if borrowed_linear || output_linear {
+                        self.linear_unsupported(tspan, "native or virtual calls cannot hide must-consume storage", "use checked struct or enum storage and statically resolved resource operations");
+                    }
+                }
                 if let Callee::Value(o) = callee {
                     self.operand(o, st, At { span: tspan, key: (b as u32, u32::MAX, u32::MAX) });
                 }
@@ -230,8 +325,28 @@ impl Cx<'_> {
 
     fn rvalue(&mut self, rv: &Rvalue, st: &mut State, at: At, span: Span) {
         let at_k = |k: u32| At { span: at.span, key: (at.key.0, at.key.1, k) };
+        if self.report {
+            if let Rvalue::Aggregate(tarn_ir::Aggregate::Closure(_, _), os) = rv {
+                for o in os {
+                    if self.owned_linear(o) {
+                        self.linear_unsupported(span, "owned closure captures cannot erase a must-consume obligation", "borrow the resource in a local closure, or pass it explicitly to a consuming function");
+                    }
+                }
+            }
+            if let Rvalue::Cast(o, _) | Rvalue::Coerce(_, o, _) = rv {
+                if self.owned_linear(o) {
+                    self.linear_unsupported(
+                        span,
+                        "a must-consume value cannot be erased by a cast or coercion",
+                        "borrow it, or consume it before converting its representation",
+                    );
+                }
+            }
+        }
         match rv {
-            Rvalue::Use(o) | Rvalue::Unary(_, o) | Rvalue::Cast(o, _) | Rvalue::Coerce(_, o, _) => self.operand(o, st, at_k(0)),
+            Rvalue::Use(o) | Rvalue::Unary(_, o) | Rvalue::Cast(o, _) | Rvalue::Coerce(_, o, _) => {
+                self.operand(o, st, at_k(0))
+            }
             Rvalue::Binary(_, a, b) => {
                 self.operand(a, st, at_k(0));
                 self.operand(b, st, at_k(1));
@@ -341,11 +456,264 @@ impl Cx<'_> {
             // drop only what remains. Report the moved fields.
             let moved: Vec<String> = sub[1..]
                 .iter()
-                .filter(|q| def_uninit(q) && self.mp.path(**q).parent.is_some_and(|par| !def_uninit(&par)))
+                .filter(|q| {
+                    def_uninit(q) && self.mp.path(**q).parent.is_some_and(|par| !def_uninit(&par))
+                })
                 .map(|q| self.name(*q))
                 .collect();
             DropDecision::Partial(moved)
         }
+    }
+
+    fn transfer_obligations(&self, dest: &Place, rv: &Rvalue, before: &BitSet, st: &mut State) {
+        fn copy(
+            cx: &Cx<'_>,
+            source: MovePathId,
+            dest: MovePathId,
+            before: &BitSet,
+            st: &mut State,
+        ) {
+            if !before.contains(source.0 as usize) {
+                for &p in cx.mp.subtree(dest) {
+                    st.obligations.remove(p.0 as usize);
+                }
+                return;
+            }
+            for &child in &cx.mp.path(dest).children {
+                if let Some(&src) = cx
+                    .mp
+                    .path(source)
+                    .children
+                    .iter()
+                    .find(|p| cx.mp.path(**p).elem == cx.mp.path(child).elem)
+                {
+                    copy(cx, src, child, before, st);
+                }
+            }
+        }
+        let mut transfer = |source: &Operand, target: Place| {
+            if let Operand::Move(source) | Operand::Copy(source) = source {
+                if let (Lookup::Exact(src), Lookup::Exact(dst)) =
+                    (self.mp.lookup(source), self.mp.lookup(&target))
+                {
+                    copy(self, src, dst, before, st);
+                }
+            }
+        };
+        match rv {
+            Rvalue::Use(o) => transfer(o, dest.clone()),
+            Rvalue::Aggregate(tarn_ir::Aggregate::Struct(_, _), os) => {
+                for (i, o) in os.iter().enumerate() {
+                    transfer(o, dest.project(tarn_ir::Proj::Field(i as u32)));
+                }
+            }
+            Rvalue::Aggregate(tarn_ir::Aggregate::Variant(_, v, _), os) => {
+                for (i, o) in os.iter().enumerate() {
+                    transfer(
+                        o,
+                        dest.project(tarn_ir::Proj::Downcast(*v))
+                            .project(tarn_ir::Proj::Field(i as u32)),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn linear_ty(&self, ty: &Ty) -> bool {
+        self.t.decls.is_must_consume_with(ty, &self.linear)
+    }
+
+    fn owned_linear(&self, o: &Operand) -> bool {
+        match o {
+            Operand::Move(p) | Operand::Copy(p) => tarn_ir::post_drop::place_ty(self.f, self.t, p)
+                .is_some_and(|ty| self.linear_ty(&ty)),
+            _ => false,
+        }
+    }
+
+    fn linear_unsupported(&mut self, span: Span, message: &str, help: &str) {
+        if self.report {
+            self.diags.push(
+                Diagnostic::error("E4008", "unsupported_linear_operation", message)
+                    .primary(span, "must-consume obligation cannot be preserved here")
+                    .help(help),
+            );
+        }
+    }
+
+    /// Exclude impossible enum payloads on a switch edge. These are ordinary
+    /// obligation bits, so branch joins retain exactly the live obligations.
+    fn refine_edge(&self, b: usize, target: usize, st: &mut State) {
+        let blk = &self.f.blocks[b];
+        let Terminator::Switch {
+            discr: Operand::Copy(d),
+            cases,
+            otherwise,
+        } = &blk.term
+        else {
+            return;
+        };
+        let Some(statement) = blk
+            .stmts
+            .iter()
+            .rev()
+            .find(|s| matches!(&s.kind, StatementKind::Assign(dest, _) if dest == d))
+        else {
+            return;
+        };
+        let StatementKind::Assign(_, Rvalue::Discriminant(place)) = &statement.kind else {
+            return;
+        };
+        let Some(Ty::Adt(sym, _)) = tarn_ir::post_drop::place_ty(self.f, self.t, place) else {
+            return;
+        };
+        let Some(def) = self.t.decls.enums.get(&sym) else {
+            return;
+        };
+        for v in 0..def.variants.len() {
+            let successor = cases
+                .iter()
+                .find(|(n, _)| *n == v as i128)
+                .map_or(*otherwise, |(_, bb)| *bb);
+            if successor.0 as usize != target {
+                if let Lookup::Exact(p) = self
+                    .mp
+                    .lookup(&place.project(tarn_ir::Proj::Downcast(v as u32)))
+                {
+                    // Only clear the actual downcast, never a sparse ancestor.
+                    if self.mp.path(p).elem == Some(PathElem::Downcast(v as u32)) {
+                        for &q in self.mp.subtree(p) {
+                            st.obligations.remove(q.0 as usize);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn select_variant(&self, place: &Place, variant: u32, st: &mut State) {
+        let Lookup::Exact(root) = self.mp.lookup(place) else {
+            return;
+        };
+        for &p in &self.mp.path(root).children {
+            if let Some(PathElem::Downcast(v)) = self.mp.path(p).elem {
+                if v != variant {
+                    for &q in self.mp.subtree(p) {
+                        st.obligations.remove(q.0 as usize);
+                    }
+                }
+            }
+        }
+    }
+
+    fn remaining_linear(&self, place: &Place, ty: &Ty, st: &State, depth: usize) -> bool {
+        if !self.linear_ty(ty) {
+            return false;
+        }
+        let path = match self.mp.lookup(place) {
+            Lookup::Exact(p) | Lookup::Index(p) | Lookup::Deref(p) => p,
+        };
+        if !st.obligations.contains(path.0 as usize) {
+            return false;
+        }
+        if depth == 64 {
+            return true;
+        }
+        match ty {
+            Ty::Adt(sym, args) if !self.t.decls.must_consume.contains(sym) => {
+                if let Some(d) = self.t.decls.structs.get(sym) {
+                    let map = d
+                        .generics
+                        .iter()
+                        .copied()
+                        .zip(args.iter().cloned())
+                        .collect();
+                    let fields: Vec<_> = d
+                        .fields
+                        .iter()
+                        .map(|f| tarn_types::subst(&f.ty, &map))
+                        .collect();
+                    // Opaque/native storage (Vec, Task, etc.) preserves its type
+                    // arguments even though they are not exposed as fields.
+                    if !fields.iter().any(|t| self.linear_ty(t)) {
+                        return true;
+                    }
+                    fields.iter().enumerate().any(|(i, t)| {
+                        self.remaining_linear(
+                            &place.project(tarn_ir::Proj::Field(i as u32)),
+                            t,
+                            st,
+                            depth + 1,
+                        )
+                    })
+                } else if let Some(d) = self.t.decls.enums.get(sym) {
+                    let map = d
+                        .generics
+                        .iter()
+                        .copied()
+                        .zip(args.iter().cloned())
+                        .collect();
+                    d.variants.iter().enumerate().any(|(v, variant)| {
+                        let down = place.project(tarn_ir::Proj::Downcast(v as u32));
+                        let Lookup::Exact(dp) = self.mp.lookup(&down) else {
+                            return true;
+                        };
+                        st.obligations.contains(dp.0 as usize)
+                            && variant.fields.iter().enumerate().any(|(i, t)| {
+                                self.remaining_linear(
+                                    &down.project(tarn_ir::Proj::Field(i as u32)),
+                                    &tarn_types::subst(t, &map),
+                                    st,
+                                    depth + 1,
+                                )
+                            })
+                    })
+                } else {
+                    true
+                }
+            }
+            _ => true,
+        }
+    }
+
+    fn check_linear_drop(&mut self, place: &Place, st: &State, span: Span) {
+        let Some(ty) = tarn_ir::post_drop::place_ty(self.f, self.t, place) else {
+            return;
+        };
+        if !self.remaining_linear(place, &ty, st, 0) {
+            return;
+        }
+        let path = match self.mp.lookup(place) {
+            Lookup::Exact(p) | Lookup::Index(p) | Lookup::Deref(p) => p,
+        };
+        if !self.reported.insert(path) {
+            return;
+        }
+        let name = self.name(path);
+        let shown = self.ty_name(&ty);
+        let mut d = Diagnostic::error("E4007", "must_consume", format!("must-consume value `{name}` of type `{shown}` would be implicitly dropped"))
+            .primary(span, "this path leaves an unconsumed resource")
+            .secondary(self.f.local(place.local).span, "resource is held here")
+            .help("move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it");
+        let mut consumers: Vec<_> = self
+            .t
+            .decls
+            .fns
+            .iter()
+            .filter(|(_, sig)| sig.params.iter().any(|p| p == &ty))
+            .map(|(s, _)| self.r.symbol(*s).name.clone())
+            .collect();
+        consumers.sort();
+        consumers.dedup();
+        consumers.truncate(8);
+        if !consumers.is_empty() {
+            d = d.note(format!(
+                "functions taking `{shown}` by value: {}",
+                consumers.join(", ")
+            ));
+        }
+        self.diags.push(d);
     }
 
     // ------------------------------------------------------------ names

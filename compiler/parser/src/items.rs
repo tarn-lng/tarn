@@ -222,6 +222,20 @@ impl Parser {
             match &mut kind {
                 ItemKind::Fn(f) => f.attrs = attrs,
                 ItemKind::Static(d) => d.attrs = attrs,
+                ItemKind::Struct(d) => {
+                    for a in attrs {
+                        if a.name == "must_consume"
+                            && a.arg.is_none()
+                            && !d.must_consume
+                            && !d.is_copy
+                        {
+                            d.must_consume = true;
+                        } else {
+                            self.error(Diagnostic::error("E1023", "invalid_attribute", "a struct accepts one `#[must_consume]` marker, without arguments, and cannot also be `copy`")
+                                .primary(a.span, "invalid struct attribute"));
+                        }
+                    }
+                }
                 ItemKind::Error => {}
                 _ => {
                     self.error(
@@ -407,7 +421,9 @@ impl Parser {
             let ty = p.parse_type();
             fields.push(FieldDecl { id, span: p.since(start), is_pub, name, ty });
         });
-        ItemKind::Struct(StructDecl { is_copy, name, generics, fields })
+        ItemKind::Struct(StructDecl {
+            must_consume: false,
+            is_copy, name, generics, fields })
     }
 
     fn parse_enum(&mut self, is_copy: bool) -> ItemKind {

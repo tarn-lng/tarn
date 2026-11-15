@@ -1,0 +1,2 @@
+#[must_consume]
+enum Resource { Empty }

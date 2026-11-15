@@ -61,7 +61,7 @@ impl Dumper {
                 self.s(")");
             }
             ItemKind::Struct(s) => {
-                let _ = write!(self.out, "({p}{}struct {}", if s.is_copy { "copy " } else { "" }, s.name.name);
+                let _ = write!(self.out, "({p}{}{}struct {}", if s.must_consume { "#[must_consume] " } else { "" }, if s.is_copy { "copy " } else { "" }, s.name.name);
                 self.generics(&s.generics);
                 for f in &s.fields {
                     self.nl(ind + 1);

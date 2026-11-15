@@ -853,6 +853,18 @@ impl<'e, 'a> FnCx<'e, 'a> {
                     }
                 };
                 let Some(def) = self.env.decls.structs.get(&s) else { return };
+                if self.env.decls.must_consume.contains(&s) && def.module != self.m {
+                    self.err(
+                        Diagnostic::error(
+                            "E3014",
+                            "private_field",
+                            "a must-consume value can only be destructured in its defining module",
+                        )
+                        .primary(p.span, "private resource representation")
+                        .help("call a consuming function exported by the defining module"),
+                    );
+                    return;
+                }
                 let map: HashMap<ParamId, Ty> = def.generics.iter().copied().zip(targs).collect();
                 for fp in fields {
                     let Some(fd) = def.fields.iter().find(|f| f.name == fp.name.name) else {

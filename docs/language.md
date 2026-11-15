@@ -653,3 +653,36 @@ binary bodies, sequential keep-alive, strict framing and stage deadlines are
 specified in [HTTP](http.md) and [ADR 0046](adr/0046-bounded-async-http.md).
 See [the native server example](../examples/http_server.tarn). This phase adds no
 implicit try conversion or HTTP-specific main ABI.
+
+## Must-consume types
+
+A resource can opt into mandatory explicit consumption:
+
+```tarn
+#[must_consume]
+struct Ticket {
+    id u64
+}
+fn settle(ticket Ticket) {
+    match ticket {
+        Ticket{id} => print(id)
+    }
+}
+fn main() {
+    ticket := Ticket{id: 42}
+    settle(ticket)
+}
+```
+
+Such structs cannot be `copy` and must have private fields. Every normal path
+must move each value into an owned call, field, or return, or explicitly
+structurally dismantle it inside its defining module. An implicit drop,
+overwrite or discarded result is E4007. The property propagates through
+containers and generic instances; an empty Option variant is fine. Panic
+aborts and does not unwind. Borrowing is unchanged.
+
+The first version conservatively rejects native linear containers, owning
+closure captures, indirect consuming calls, virtual operations on linear
+storage, and linear async inputs/outputs (E4008). Use ordinary checked wrappers
+and borrowing closures/async inputs. See [ownership.md](ownership.md) and
+[ADR 0108](adr/0108-must-consume-types.md) for examples and supported operations.

@@ -1011,7 +1011,7 @@ impl<'a, 'l> Builder<'a, 'l> {
                     return;
                 }
                 if let Some(sym) = self.def(p.id) {
-                    self.bind_one(p.id, sym, place, p.span);
+                    self.bind_one(p.id, sym, place.clone(), p.span);
                 }
             }
             PatternKind::Variant { args, .. } => {
@@ -1038,6 +1038,35 @@ impl<'a, 'l> Builder<'a, 'l> {
                 }
             }
             PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Range { .. } | PatternKind::Error => {}
+        }
+        // Complete owned destructuring ends the nominal obligation. Explicit
+        // field drops first preserve obligations of omitted/wildcard payloads.
+        // Projected destructuring remains conservative: bind it to a local first.
+        if let PatternKind::Struct { fields, .. } = &p.kind
+            && place.proj.is_empty()
+            && let Ty::Adt(s, args) = &ty
+            && self.lx.t.decls.must_consume.contains(s)
+        {
+            let def = &self.lx.t.decls.structs[s];
+            if fields.len() == def.fields.len() {
+                let map = def
+                    .generics
+                    .iter()
+                    .copied()
+                    .zip(args.iter().cloned())
+                    .collect();
+                let remaining: Vec<_> = def
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| self.needs_drop(&tarn_types::subst(&f.ty, &map)))
+                    .map(|(i, _)| place.project(Proj::Field(i as u32)))
+                    .collect();
+                for field in remaining {
+                    self.push(StatementKind::Drop(field), p.span);
+                }
+                self.push(StatementKind::StorageDead(place.local), p.span);
+            }
         }
     }
 

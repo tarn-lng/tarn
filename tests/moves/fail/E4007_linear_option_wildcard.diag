@@ -1,0 +1,10 @@
+error[E4007]: must-consume value `f` of type `Option<Frame>` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_option_wildcard.tarn:17:1
+   |
+12 |  f: Option<Frame> := Some(make())
+   |  -------------------------------- resource is held here
+17 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

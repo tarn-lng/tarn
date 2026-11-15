@@ -1,0 +1,21 @@
+#[must_consume]
+struct Frame {
+    addr u64
+}
+fn make() Frame { return Frame{addr: 1} }
+fn consume(frame Frame) {
+    match frame {
+        Frame{addr} => print(addr)
+    }
+}
+#[must_consume]
+struct Group {
+ child Frame
+ label string
+}
+fn main() {
+ group := Group{child: make(), label: "group"}
+ match group {
+  Group{child, label: _} => consume(child)
+ }
+}

@@ -1,0 +1,18 @@
+error[E4008]: owned closure captures cannot erase a must-consume obligation
+  --> tests/moves/fail/E4007_linear_closure.tarn:13:14
+   |
+13 |  callback := move fn() { consume(f) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: borrow the resource in a local closure, or pass it explicitly to a consuming function
+
+error[E4007]: must-consume value `value` of type `Frame` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_closure.tarn:13:37
+   |
+13 |  callback := move fn() { consume(f) }
+   |              ------------------------ resource is held here
+   |                                     ^ this path leaves an unconsumed resource
+   |
+   = note: functions taking `Frame` by value: consume
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

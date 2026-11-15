@@ -1,0 +1,8 @@
+error[E4008]: this indirect or native call cannot consume a must-consume value
+  --> tests/moves/fail/E4008_linear_indirect.tarn:11:44
+   |
+11 | fn call(callback fn(Frame), frame Frame) { callback(frame) }
+   |                                            ^^^^^^^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: use a statically resolved consuming function with a checked body
+

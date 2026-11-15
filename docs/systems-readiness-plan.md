@@ -1,6 +1,6 @@
 # Systems readiness plan (from the Cairn OS proving ground)
 
-Status: planned. Source: friction recorded while building Cairn phase 0
+Status: in progress; L1 complete, remaining items planned. Source: friction recorded while building Cairn phase 0
 (`../cairn/docs/phase-0-progress.md`), after patches T1–T6 (ADRs 0102–0107).
 
 ## Rule
@@ -14,7 +14,7 @@ special case or escape hatch. Items that are only workarounds are rejected.
 
 | # | Capability | Friction seen | Why it is general value |
 |---|---|---|---|
-| L1 | **Must-consume (linear) types**: a type marked so that values cannot be silently dropped; the compiler requires an explicit consuming call (`frame_free`, `close`, `commit`) on every path | A `Frame` that goes out of scope leaks physical memory silently | Leaks of any resource (frames, file handles, transactions, locks, sockets, payments) become compile errors; few languages have this |
+| L1 ✓ | **[Must-consume (linear) types](adr/0108-must-consume-types.md) — done**: a type marked so that values cannot be silently dropped; the compiler requires an explicit consuming call (`frame_free`, `close`, `commit`) on every path | A `Frame` that goes out of scope leaks physical memory silently | Leaks of any resource (frames, file handles, transactions, locks, sockets, payments) become compile errors; few languages have this |
 | L2 | **Generic interfaces** (interfaces with type parameters) | `rangeset` and `bitmap` each declare their own `Words` interface (E1021) | Reusable containers, iterators, codecs, collections |
 | L3 | **Type aliases** | `rangeset.RangeSet<words.MemWords>` spelled everywhere | Readability across all code |
 | L4 | **Repeat array literal** (`[N]T` filled with one value) | Every local array spelled element by element | Buffers, tables, matrices |
@@ -45,7 +45,7 @@ special case or escape hatch. Items that are only workarounds are rejected.
 
 ## Order
 
-1. L1 (must-consume types) — the flagship: turns the OS's resource discipline into a language guarantee.
+1. L1 **done** ([ADR 0108](adr/0108-must-consume-types.md); [pinned Cairn follow-up](must-consume-report.md)) — the flagship: turns the OS's resource discipline into a language guarantee.
 2. C1 (path/workspace dependencies) — unblocks clean modular builds.
 3. A1–A3 — required by Cairn phases 1–2.
 4. L2, L3, L5, L6 — broad ergonomics.

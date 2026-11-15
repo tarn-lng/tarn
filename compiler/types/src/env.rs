@@ -97,6 +97,8 @@ pub const TASK_INTRINSICS: [&str; 7] = ["_task_new", "_task_complete", "_task_ta
 pub struct Decls {
     /// Trusted static C adapter constructor (ADR 0080), found by identity.
     pub ffi_callback: Option<SymbolId>,
+    /// Nominal linear obligations, independent of runtime layout.
+    pub must_consume: std::collections::HashSet<SymbolId>,
     /// Scalar-only unsafe memory bridge; never returns a Tarn reference.
     pub ffi_read: Option<SymbolId>,
     pub ffi_write: Option<SymbolId>,
@@ -366,6 +368,14 @@ impl<'a> Env<'a> {
                 match &item.kind {
                     ItemKind::Struct(s) => {
                         let Some(sym) = self.def(m, item.id) else { continue };
+                        if s.must_consume {
+                            self.decls.must_consume.insert(sym);
+                            if s.fields.iter().any(|f| f.is_pub) {
+                                self.diags.push(Diagnostic::error("E3086", "invalid_attribute", "must-consume structs must have private fields")
+                                    .primary(item.span, "resource representation must stay in its defining module")
+                                    .help("remove `pub` from the fields and expose borrowing accessors and consuming functions"));
+                            }
+                        }
                         let generics = self.params_of(m, &s.generics);
                         let fields = s.fields.iter().map(|f| FieldDef { name: f.name.name.clone(), ty: self.lower(m, &f.ty), is_pub: f.is_pub }).collect();
                         self.decls.structs.insert(sym, StructDef { module: m, generics, fields, is_copy: s.is_copy });

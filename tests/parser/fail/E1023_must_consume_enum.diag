@@ -1,0 +1,6 @@
+error[E1023]: attributes apply only to functions and statics
+ --> tests/parser/fail/E1023_must_consume_enum.tarn:1:1
+  |
+1 | #[must_consume]
+  | ^^^^^^^^^^^^^^^ remove this attribute
+

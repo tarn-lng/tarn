@@ -1,0 +1,18 @@
+error[E4008]: async inputs and outputs cannot own must-consume values
+  --> tests/moves/fail/E4008_linear_async.tarn:11:1
+   |
+11 | async fn run(frame Frame) { consume(frame) }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: borrow the resource and finish its obligation outside the cancellable computation
+
+error[E4007]: must-consume value `frame` of type `Frame` would be implicitly dropped
+  --> tests/moves/fail/E4008_linear_async.tarn:11:1
+   |
+11 | async fn run(frame Frame) { consume(frame) }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this path leaves an unconsumed resource
+   |              ----------- resource is held here
+   |
+   = note: functions taking `Frame` by value: consume, run
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

@@ -1,0 +1,5 @@
+consume bb1: drop _1 -> dead (moved)
+main bb2: drop _3 -> dead (moved)
+main bb2: drop _2 -> dead (moved)
+main bb2: drop _1 -> dead (moved)
+main bb4: drop _4 -> partial, skip p.first, p.second

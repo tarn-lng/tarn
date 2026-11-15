@@ -1,0 +1,4 @@
+#[must_consume]
+pub struct Resource {
+ handle u64
+}

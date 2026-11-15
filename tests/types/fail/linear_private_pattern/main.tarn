@@ -1,0 +1,5 @@
+import "resource"
+fn main() {
+ r := resource.make()
+ match r { resource.Resource{handle} => print(handle) }
+}

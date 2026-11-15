@@ -161,6 +161,8 @@ pub struct GenericParam {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructDecl {
+    /// Source marker: values must be explicitly consumed (ADR 0108).
+    pub must_consume: bool,
     pub is_copy: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,

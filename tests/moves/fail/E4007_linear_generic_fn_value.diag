@@ -1,0 +1,18 @@
+error[E4007]: must-consume value `v` of type `T` would be implicitly dropped
+  --> tests/moves/fail/E4007_linear_generic_fn_value.tarn:11:21
+   |
+11 | fn discard<T>(v T) {}
+   |               --- resource is held here
+   |                     ^ this path leaves an unconsumed resource
+   |
+   = note: functions taking `T` by value: discard
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+
+error[E4008]: this indirect or native call cannot consume a must-consume value
+  --> tests/moves/fail/E4007_linear_generic_fn_value.tarn:12:45
+   |
+12 | fn apply(callback fn(Frame), frame Frame) { callback(frame) }
+   |                                             ^^^^^^^^^^^^^^^ must-consume obligation cannot be preserved here
+   |
+   = help: use a statically resolved consuming function with a checked body
+

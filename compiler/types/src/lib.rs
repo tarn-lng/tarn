@@ -5,6 +5,7 @@
 //! pattern variants) — the AST stays untouched. Rules: `docs/types.md`.
 
 mod captures;
+mod linear;
 mod capabilities;
 pub use capabilities::{Capability, NativeCapabilities};
 mod check;

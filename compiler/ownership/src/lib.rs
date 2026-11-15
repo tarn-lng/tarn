@@ -8,6 +8,7 @@
 
 mod borrows;
 mod drops;
+mod linear;
 mod moves;
 mod paths;
 mod util;
@@ -86,11 +87,22 @@ impl MoveResults {
 pub fn check_moves(p: &Program, r: &Resolved, t: &Typed) -> (MoveResults, Vec<Diagnostic>) {
     let mut results = MoveResults::default();
     let mut diags = Vec::new();
-    let checked = util::par_map(p.functions.iter().collect(), |f| (f.id, moves::check_function(f, r, t)));
+    let checked = util::par_map(p.functions.iter().collect(), |f| {
+        (f.id, moves::check_function(f, r, t))
+    });
     for (id, (mut m, mut d)) in checked {
         m.has_errors = !d.is_empty();
         diags.append(&mut d);
         results.functions.insert(id, m);
+    }
+    let instantiated = linear::check_instances(p, r, t);
+    if !instantiated.is_empty() {
+        // Generic obligation failures stop the pipeline just like ordinary
+        // move errors; drop elaboration must never see an invalid instance.
+        for m in results.functions.values_mut() {
+            m.has_errors = true;
+        }
+        diags.extend(instantiated);
     }
     (results, diags)
 }
