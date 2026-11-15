@@ -1885,7 +1885,10 @@ impl Cx<'_, '_> {
                         }
                         BinOp::Div | BinOp::Rem => {
                             // A constant divisor needs only the checks it can fail.
-                            let divisor = self.constant(y);
+                            // `constant` reports narrow immediates zero-extended, so a signed
+                            // `-1` must be recognised at the operand width.
+                            let width = if let Ty::Int(i) = a.ty { int_bits(i) } else { 64 };
+                            let divisor = self.constant(y).map(|d| if width < 64 && signed { (d << (64 - width)) >> (64 - width) } else { d });
                             if divisor.is_none_or(|d| d == 0) {
                                 let zero = self.b.ins().icmp_imm(IntCC::Equal, y, 0);
                                 self.fault_if(zero);

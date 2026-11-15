@@ -141,6 +141,11 @@ fn checked_arithmetic_and_panic_abort() {
         ("mul_overflow", "a: u64 := 18446744073709551615\n    b: u64 := 2\n    print(a * b)"),
         ("divide_zero", "a := 10\n    b := 0\n    print(a / b)"),
         ("divide_min", "a: i64 := -9223372036854775808\n    b: i64 := -1\n    print(a / b)"),
+        // Soundness audit S2: a constant -1 divisor of a narrow signed type skipped the MIN / -1 check.
+        ("divide_min_i32", "a: i32 := -2147483648\n    b: i32 := -1\n    print(a / b)"),
+        ("divide_min_i16", "a: i16 := -32768\n    b: i16 := -1\n    print(a / b)"),
+        ("divide_min_i8", "a: i8 := -128\n    b: i8 := -1\n    print(a / b)"),
+        ("remainder_min_i32", "a: i32 := -2147483648\n    b: i32 := -1\n    print(a % b)"),
         ("cast_range", "a: i16 := 300\n    print(u8(a))"),
         ("shift_width", "a: u8 := 1\n    print(a << 8)"),
         ("shift_negative", "a := 1\n    print(a >> -1)"),
