@@ -101,14 +101,14 @@ static mut NAME Type                 // all bytes zero (.bss)
 ```
 
 A static is fixed-layout global data. `Type` is an integer, float, `bool`, raw
-pointer, fixed array (not empty), or non-generic struct of those. Structs use
+pointer, fixed array (not empty), instantiated struct or enum of those. Structs use
 declaration order and natural alignment, which is the C layout, with no
 size limit (a 1 MiB table is fine; ordinary values stay limited to 64 KiB).
 The initializer is evaluated at compile time: literals, `const` names and
 arithmetic, `[N]T{...}` and `Struct{...}` literals giving every element and
 field, `ffi.null()`, `ffi.from_address(n)`, `ffi.callback(function)`, and the
 name of another static (stored as its address, a relocation). Anything else
-is E3085. Function addresses work in nested arrays and structs too:
+is E3085. Payload-free enum variants such as `None` are also const initializers; owning and enum-containing statics require an explicit initializer. Enum layout is the ordinary u32 tag plus aligned payload union (ADR 0110), rather than a C enum ABI. Function addresses work in nested arrays and structs too:
 
 ```tarn
 import "ffi"
@@ -493,3 +493,22 @@ The result preserves pointer mutability. Projection and access require
 `unsafe`; indices are bounds checked. Use `ffi.read_volatile` and
 `ffi.write_volatile` on the projected pointers for MMIO. The example kernel
 uses projection for its handler table and PVH boot-info prefix.
+
+## Owning static slots (L1.1)
+
+Non-Copy and must-consume values can inhabit fixed-layout static roots.
+Initialize optional slots explicitly with None, for example
+`static mut TASKS [2]Option<Task> = [2]Option<Task>{None, None}`.
+Inside unsafe, `ffi.replace_owned(TASKS[index], incoming)` returns the previous
+Option and installs incoming without dropping either owner. Consume every
+returned Some payload; exchange with None to extract and leave an empty slot.
+`ffi.take_owned` instead leaves uninitialized memory and must be paired with
+`ffi.write_owned` before another read. write_owned requires an uninitialized
+destination, so it must never overwrite a live owner. Existing scalar/Copy
+ffi.read/write do not become an aggregate copy gateway.
+
+Statics are never dropped: drain at reclamation/shutdown or document permanent
+ownership. This is an unsafe root contract, including synchronization and
+exclusive access; local exclusive Option.take/replace/put remain safe.
+[ADR 0110](adr/0110-owning-slots.md) and [the integration report](owning-slots-report.md)
+give full rules and the Cairn task-table pattern.

@@ -1,0 +1,9 @@
+error[E4007]: must-consume value `value` of type `Option<Task>` would be implicitly dropped
+ --> tests/moves/fail/E4007_slot_take_discard.tarn:3:35
+  |
+3 | fn leak(slot &mut Option<Task>) { slot.take() }
+  |                                   ^^^^^^^^^^^ this path leaves an unconsumed resource
+  |                                   ----------- resource is held here
+  |
+  = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

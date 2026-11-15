@@ -1,0 +1,5 @@
+#[must_consume]
+struct Task { id u64 }
+static mut TASK Option<Task>
+static mut TASKS [2]Option<Task>
+static mut OWNER Task

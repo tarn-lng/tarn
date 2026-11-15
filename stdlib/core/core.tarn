@@ -636,3 +636,34 @@ pub struct Location {
 }
 pub fn Location.text(&self) &string { return &self.text }
 impl Display for Location { fn display(&self, out &mut Builder) { out.push(&self.text) } }
+
+/// Remove an element without preserving order, or None if out of bounds.
+pub fn Vec<T>.take(&mut self, index usize) Option<T> {
+    if index >= self.len() { return None }
+    return Some(self.swap_remove(index))
+}
+/// Release the allocation only after every element has been removed.
+/// For must-consume elements, a nonempty vector aborts.
+pub fn Vec<T>.finish(self) { finish_empty(self) }
+/// Discard all elements; unavailable for must-consume element instances.
+pub fn Vec<T>.clear(&mut self) {
+    for !self.is_empty() { discarded := self.pop() }
+}
+/// Discard the tail; unavailable for must-consume element instances.
+pub fn Vec<T>.truncate(&mut self, length usize) {
+    for self.len() > length { discarded := self.pop() }
+}
+
+/// Exchange an exclusively borrowed initialized place, returning its old owner.
+pub extern "intrinsic" fn replace_owned<T>(place &mut T, value T) T borrows(place)
+/// Consume empty owning storage. Aborts if any must-consume payload remains.
+/// Supports optional slots, arrays and vectors; never destroys a live resource.
+pub extern "intrinsic" fn finish_empty<T>(value T)
+pub fn Option<T>.take(&mut self) Option<T> { return replace_owned(self, None) }
+pub fn Option<T>.replace(&mut self, value T) Option<T> { return replace_owned(self, Some(value)) }
+/// Insert only into an empty slot. A nonempty slot aborts without dropping it.
+pub fn Option<T>.put(&mut self, value T) {
+    if self.is_some() { panic("put requires an empty slot") }
+    old := self.replace(value)
+    finish_empty(old)
+}

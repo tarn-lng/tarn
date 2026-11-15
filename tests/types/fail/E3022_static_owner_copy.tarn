@@ -1,0 +1,5 @@
+import "ffi"
+#[must_consume]
+struct Task { id u64 }
+static mut SLOT Option<Task> = None
+fn duplicate() Option<Task> { unsafe { return ffi.read(SLOT) } }

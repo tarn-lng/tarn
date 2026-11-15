@@ -1,0 +1,9 @@
+#[must_consume]
+struct Task { id u64 }
+fn consume(task Option<Task>) { finish_empty(task) }
+fn broken(slot &mut Option<Task>) {
+    observed := &*slot
+    extracted := slot.take()
+    print(observed.is_none())
+    consume(extracted)
+}

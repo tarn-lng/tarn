@@ -99,6 +99,10 @@ pub struct Decls {
     pub ffi_callback: Option<SymbolId>,
     /// Nominal linear obligations, independent of runtime layout.
     pub must_consume: std::collections::HashSet<SymbolId>,
+    /// Trusted ownership-transfer primitives; raw operations require unsafe wrappers.
+    pub slot_replace: Option<SymbolId>,
+    pub slot_finish: Option<SymbolId>,
+    pub ffi_owned: Vec<SymbolId>,
     /// Scalar-only unsafe memory bridge; never returns a Tarn reference.
     pub ffi_read: Option<SymbolId>,
     pub ffi_write: Option<SymbolId>,
@@ -232,11 +236,16 @@ impl<'a> Env<'a> {
         let method = |module: usize, owner: Option<SymbolId>, name: &str| r.symbols.iter().enumerate().find(|(_, s)| {
             s.name == name && s.module == Some(ModuleId(module as u32)) && matches!(s.kind, SymbolKind::Method { owner: o } if Some(o) == owner)
         }).map(|(i, _)| SymbolId(i as u32));
+        if let Some((_, core)) = stdlib("core") {
+            env.decls.slot_replace = core.get("replace_owned");
+            env.decls.slot_finish = core.get("finish_empty");
+        }
         if let Some((_, ffi)) = stdlib("ffi") {
             env.decls.ffi_callback = ffi.get("callback");
             env.decls.ffi_null = ffi.get("null");
             env.decls.ffi_from_address = ffi.get("from_address");
             env.decls.ffi_to_const = ffi.get("to_const");
+            env.decls.ffi_owned = ["_write_owned", "_take_owned", "_replace_owned"].iter().filter_map(|name| ffi.get(name)).collect();
             env.decls.ffi_read = ffi.get("_read");
             env.decls.ffi_write = ffi.get("_write");
             env.decls.ffi_read_volatile = ffi.get("_read_volatile");
@@ -304,7 +313,7 @@ impl<'a> Env<'a> {
             let Some((_, scope)) = stdlib(module) else { continue };
             for id in &scope.symbols {
                 let symbol = r.symbol(*id);
-                let separate_abi = Some(*id) == env.decls.exec_async_waker || Some(*id) == env.decls.exec_async_park || env.decls.task_intrinsics.contains(id)
+                let separate_abi = env.decls.ffi_owned.contains(id) || Some(*id) == env.decls.exec_async_waker || Some(*id) == env.decls.exec_async_park || env.decls.task_intrinsics.contains(id)
                     || [env.decls.ffi_read, env.decls.ffi_write, env.decls.ffi_read_volatile, env.decls.ffi_write_volatile].contains(&Some(*id));
                 if !separate_abi && symbol.name.starts_with("_") && env.decls.fns.get(id).is_some_and(|sig| sig.abi.as_deref() == Some("intrinsic")) {
                     let catalog = if *module == "fs" { &mut env.decls.fs_intrinsics } else if *module == "process" { &mut env.decls.process_intrinsics } else { &mut env.decls.net_intrinsics };
@@ -531,7 +540,7 @@ impl<'a> Env<'a> {
         // This trusted primitive only executes for scalars/raw pointers. Native
         // ABI validation rejects every loan-bearing instantiation (ADR 0080).
         let scalar_read = Some(sym) == self.decls.ffi_read || Some(sym) == self.decls.ffi_read_volatile;
-        let result = if scalar_read { ResultContract::Copy } else if task_join || sync_constructor { ResultContract::Owned } else if !holds(&ret) {
+        let result = if scalar_read { ResultContract::Copy } else if task_join || sync_constructor || self.decls.ffi_owned.contains(&sym) { ResultContract::Owned } else if !holds(&ret) {
             if self.decls.is_copy(&ret) { ResultContract::Copy } else { ResultContract::Owned }
         } else if f.body.is_some() {
             ResultContract::InferredBorrow

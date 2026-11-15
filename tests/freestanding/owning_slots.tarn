@@ -1,0 +1,25 @@
+import "ffi"
+#[must_consume]
+struct Task { id u64 }
+static mut TASKS [2]Option<Task> = [2]Option<Task>{None, None}
+fn dispose(task Task) u64 {
+    match task { Task{id} => return id }
+}
+fn main() {
+    unsafe {
+        empty := ffi.replace_owned(TASKS[0], Some(Task{id: 42}))
+        finish_empty(empty)
+        owned := ffi.replace_owned(TASKS[0], None)
+        match owned {
+            Some(task) => { id := dispose(task) }
+            None => {}
+        }
+    }
+    var slots: [2]Option<Task> = [2]Option<Task>{None, None}
+    slots[1].put(Task{id: 43})
+    match slots[1].take() {
+        Some(task) => { id := dispose(task) }
+        None => {}
+    }
+    finish_empty(slots)
+}

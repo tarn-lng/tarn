@@ -1,0 +1,77 @@
+import "ffi"
+#[must_consume]
+struct Task { id u64 }
+fn consume(task Task) {
+    match task { Task{id} => print(id) }
+}
+fn consume_opt(task Option<Task>) {
+    match task { Some(task) => consume(task)
+        None => {} }
+}
+struct Context { sp u64 }
+static mut CONTEXTS [2]Context
+static mut QUEUE Option<Vec<Task>> = None
+static mut TEXT Option<string> = None
+static mut SLOT Option<Task> = None
+static mut TABLE [2]Option<Task> = [2]Option<Task>{None, None}
+fn assert(value bool) { if !value { panic("slot address changed") } }
+fn main() {
+    var slot: Option<Task> = None
+    slot.put(Task{id: 1})
+    consume_opt(slot.replace(Task{id: 2}))
+    consume_opt(slot.take())
+    finish_empty(slot)
+    var current = Task{id: 9}
+    consume(replace_owned(&mut current, Task{id: 10}))
+    consume(current)
+    var queue: Vec<Task> = Vec.new()
+    queue.push(Task{id: 3})
+    queue.push(Task{id: 4})
+    consume_opt(queue.pop())
+    consume_opt(queue.take(0))
+    queue.finish()
+    var slots: [2]Option<Task> = [2]Option<Task>{None, None}
+    slots[0].put(Task{id: 5})
+    consume_opt(slots[0].take())
+    finish_empty(slots)
+    var stored: Vec<Task> = Vec.new()
+    stored.push(Task{id: 11})
+    unsafe {
+        vacant_queue := ffi.replace_owned(QUEUE, Some(stored))
+        finish_empty(vacant_queue)
+        match ffi.replace_owned(QUEUE, None) {
+            Some(items) => {
+                var drained = items
+                consume_opt(drained.pop())
+                drained.finish()
+            }
+            None => {}
+        }
+        previous_text := ffi.replace_owned(TEXT, Some("stored text"))
+        match ffi.replace_owned(TEXT, None) {
+            Some(text) => print(text)
+            None => {}
+        }
+        old := ffi.replace_owned(SLOT, Some(Task{id: 6}))
+        finish_empty(old)
+        consume_opt(ffi.replace_owned(SLOT, None))
+        old_table := ffi.replace_owned(TABLE[1], Some(Task{id: 7}))
+        finish_empty(old_table)
+        consume_opt(ffi.replace_owned(TABLE[1], None))
+        address := ffi.address(ffi.to_const(TABLE[1]))
+        context_address := ffi.address(ffi.to_const(CONTEXTS[1]))
+        ffi.write(CONTEXTS[1].sp, 4096)
+        var index: u64 = 0
+        for index < 3 {
+            vacant := ffi.replace_owned(TABLE[1], Some(Task{id: 8}))
+            finish_empty(vacant)
+            assert(ffi.address(ffi.to_const(TABLE[1])) == address)
+            assert(ffi.address(ffi.to_const(CONTEXTS[1])) == context_address)
+            assert(ffi.read(ffi.to_const(CONTEXTS[1].sp)) == 4096)
+            extracted := ffi.take_owned(TABLE[1])
+            ffi.write_owned(TABLE[1], None)
+            consume_opt(extracted)
+            index = index + 1
+        }
+    }
+}

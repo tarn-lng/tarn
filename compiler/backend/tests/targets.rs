@@ -945,3 +945,13 @@ fn execution_context_and_user_access_apis_require_unsafe() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn freestanding_owning_slots_preserve_the_contract() {
+    for target in ["x86_64-none", "aarch64-none"] {
+        let bytes = freestanding("../../tests/freestanding/owning_slots.tarn", target)
+            .unwrap_or_else(|e| panic!("{target}: {e}"));
+        let (undefined, _) = symbols(&bytes, target);
+        assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{target}: {undefined:?}");
+    }
+}

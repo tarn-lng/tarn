@@ -109,6 +109,7 @@ fn fill(t: &Typed, ty: &Ty, init: &StaticInit, at: usize, buf: &mut [u8], relocs
     let size = |ty: &Ty| tarn_ir::layout::static_layout(t, ty).map(|l| l.size as usize).map_err(|e| Error::unsupported(e.message));
     match (init, ty) {
         (StaticInit::Zero, _) => {}
+        (StaticInit::Variant(tag), Ty::Adt(..)) => buf[at..at + 4].copy_from_slice(&tag.to_le_bytes()),
         (StaticInit::Int(v), Ty::Int(_)) => {
             let n = size(ty)?;
             buf[at..at + n].copy_from_slice(&v.to_le_bytes()[..n]);

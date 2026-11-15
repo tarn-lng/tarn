@@ -274,7 +274,8 @@ impl Cx<'_> {
         let tspan = blk.term_span;
         match &blk.term {
             Terminator::Call { callee, args, arg_spans, dest, .. } => {
-                if self.report
+                let preserving = matches!(callee, Callee::Intrinsic(name) if tarn_types::owning_slot_intrinsic(name));
+                if self.report && !preserving
                     && matches!(
                         callee,
                         Callee::Virtual { .. }
@@ -290,7 +291,7 @@ impl Cx<'_> {
                         "use a statically resolved consuming function with a checked body",
                     );
                 }
-                if self.report
+                if self.report && !preserving
                     && matches!(
                         callee,
                         Callee::Virtual { .. } | Callee::Intrinsic(_) | Callee::Opaque(_)

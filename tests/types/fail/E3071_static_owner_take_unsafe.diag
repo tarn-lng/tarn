@@ -1,0 +1,8 @@
+error[E3071]: calling the unsafe function `take_owned` requires `unsafe`
+ --> tests/types/fail/E3071_static_owner_take_unsafe.tarn:5:36
+  |
+5 | fn extract() Option<Task> { return ffi.take_owned(SLOT) }
+  |                                    ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: wrap the call in `unsafe { ... }` after checking the function's documented requirements
+

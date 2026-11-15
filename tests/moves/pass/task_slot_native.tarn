@@ -1,0 +1,4 @@
+#[must_consume]
+struct Task { id u64 }
+fn make() Vec<Task> { return Vec.new() }
+fn remove(queue &mut Vec<Task>) Option<Task> { return queue.pop() }

@@ -1,0 +1,12 @@
+error[E4101]: cannot borrow `slot` as mutable because it is also borrowed as shared
+ --> tests/borrows/fail/E4101_slot_alias.tarn:6:18
+  |
+5 |     observed := &*slot
+  |                 ------ shared borrow of `slot` starts here
+6 |     extracted := slot.take()
+  |                  ^^^^ mutable borrow conflicts here
+7 |     print(observed.is_none())
+  |           -------- the borrow is still used here
+  |
+  = note: a borrow lasts until the last use of the reference that holds it
+

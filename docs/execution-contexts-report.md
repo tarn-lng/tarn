@@ -75,6 +75,7 @@ were needed. The updated type-dump golden also passes without blessing.
    Replace `jump_on_stack` with:
 
    ```tarn
+   import "arch_aarch64"
    pub fn jump_on_stack(entry *u8, stack_top u64) never {
        unsafe { arch_aarch64.switch_stack_el0(stack_top, entry, 0) }
    }

@@ -1,0 +1,2 @@
+exchange bb1: drop _1 -> dead (moved)
+replace_owned bb1: drop _2 -> dead (moved)

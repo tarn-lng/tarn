@@ -1,0 +1,8 @@
+error[E3085]: a static initializer cannot construct private fields from another module
+ --> tests/types/fail/owning_static_private/main.tarn:3:39
+  |
+3 | static mut FORGED resource.Resource = resource.Resource{handle: 1}
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: initialize an optional owning root with None, then publish a value from its defining module
+

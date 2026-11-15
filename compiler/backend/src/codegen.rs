@@ -2363,6 +2363,7 @@ impl Cx<'_, '_> {
         if let Some(result) = self.filesystem(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.process(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.networking(name, args, dest)? { return Ok(result); }
+        if let Some(result) = self.owning_slot(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.synchronization(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.vector(name, args, dest)? { return Ok(result); }
         if let Some(result) = self.ffi(name, args, dest)? { return Ok(result); }
@@ -2706,6 +2707,8 @@ fn validate_table(p: &post::Program, t: &Typed, interface: tarn_resolve::SymbolI
 
 #[path = "synchronization.rs"]
 mod synchronization;
+#[path = "owning_slots.rs"]
+mod owning_slots;
 
 #[path = "vectors.rs"]
 mod vectors;

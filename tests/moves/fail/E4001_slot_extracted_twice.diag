@@ -1,0 +1,11 @@
+error[E4001]: use of moved value `task`
+ --> tests/moves/fail/E4001_slot_extracted_twice.tarn:8:21
+  |
+7 |         Some(task) => { consume(task)
+  |                                 ---- value moved here
+8 |             consume(task) }
+  |                     ^^^^ value used here after move
+  |
+  = note: `Task` is not a copy type, so assigning or passing it moves it
+  = help: to keep using `task`, borrow it where it is moved (`&task`) instead of moving it
+

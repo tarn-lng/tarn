@@ -152,9 +152,30 @@ Containment propagates through fields, enum payloads, nonempty arrays and
 owning generic type arguments. `match` consumes an Option/Result payload on
 its active path; an empty variant carries no obligation. References do not own
 the referent. Generic bodies are checked again for linear argument instances.
-Native containers such as `Vec<Resource>`, owned closure captures, indirect
+Owned closure captures, indirect
 consuming calls, virtual operations on linear storage, and linear async
 inputs/outputs are currently rejected (E4008). Borrowing closures and async
 inputs work; async abandonment paths must also discharge any local resource.
 Consuming array loops cannot yet prove an empty remainder. These conservative
 limits and examples are specified in [ADR 0108](adr/0108-must-consume-types.md).
+
+## Owning slots and empty completion (L1.1)
+
+`replace_owned(&mut place, replacement)` exchanges an initialized exclusive
+place and returns the previous owner. `Option.take()` replaces with None;
+`Option.replace(value)` returns the previous Option; `Option.put(value)`
+requires an empty slot and aborts otherwise. Returned owners retain E4007.
+
+Vectors support linear push/pop/replace/swap_remove/take without discarding
+elements. Implicit vector disposal, clear and truncate remain compile errors
+for linear elements. Drain and consume each returned owner, then explicitly
+call `vector.finish()`. Fixed optional arrays can be drained with indexed take
+and consumed with `finish_empty(array)`. This explicit operation checks dynamic
+emptiness before normal destruction; a live nominal resource always aborts,
+including a zero-sized one. Static analysis never assumes a loop drained a
+container. See [ADR 0110](adr/0110-owning-slots.md) for the precise contracts.
+
+Static roots may retain owners permanently. Access remains unsafe through raw
+addresses; `ffi.replace_owned` exchanges an initialized slot, `ffi.take_owned`
+leaves it uninitialized, and `ffi.write_owned` consumes into uninitialized
+storage. The unsafe caller owns initialization, exclusivity and lifetime.

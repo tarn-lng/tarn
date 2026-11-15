@@ -27,6 +27,13 @@ pub fn stdlib_intrinsic_operation(name: &str) -> Option<&str> {
     // from the fixed native I/O bridges (ADR 0080).
     (module != "ffi" && tarn_resolve::STDLIB_LAYERS.contains(&module)).then_some(operation)
 }
+/// Operations with an explicit ownership-preserving storage contract (ADR 0110).
+pub fn owning_slot_intrinsic(name: &str) -> bool {
+    matches!(name, "core.replace_owned" | "core.finish_empty" | "ffi._write_owned" | "ffi._take_owned" | "ffi._replace_owned")
+        || name.strip_prefix("Vec.").is_some_and(|op| matches!(op,
+            "new" | "with_capacity" | "len" | "is_empty" | "push" | "pop" | "get" | "get_mut" |
+            "replace" | "swap" | "swap_remove" | "as_slice" | "as_mut_slice"))
+}
 pub use ty::{FloatTy, IntTy, ParamId, Ty};
 
 use std::collections::HashMap;

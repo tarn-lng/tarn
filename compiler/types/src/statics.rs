@@ -2,8 +2,9 @@
 //! (ADR 0101, P6).
 //!
 //! A static is fixed-layout global data: integers, floats, `bool`, raw
-//! pointers, fixed arrays and structs of those, laid out in declaration order
-//! with natural alignment (the C layout). The initializer is evaluated at
+//! pointers, fixed arrays, structs and tagged enums. Structs use declaration
+//! order and natural alignment; enums use the ordinary tagged-union layout.
+//! The initializer is evaluated at
 //! compile time into a `StaticInit` tree; omitting it zero-fills the object.
 //! Using a static's name as an expression yields its address (`*T`, or
 //! `*mut T` for `static mut`); nothing ever borrows static storage, so the
@@ -21,6 +22,8 @@ use tarn_resolve::{ModuleId, Res, SymbolId, SymbolKind};
 pub enum StaticInit {
     /// Every byte zero.
     Zero,
+    /// A const-constructed payload-free enum variant.
+    Variant(u32),
     Int(i128),
     /// Literal text, as written.
     Float(String),
@@ -240,8 +243,8 @@ pub fn evaluate(env: &mut Env<'_>) {
         if ty == Ty::Error {
             continue;
         }
-        if let Err(why) = storable(env, &ty, 0) {
-            env.diags.push(invalid_static(d.ty.span, format!("a static cannot have type `{}`: {why}", crate::show(&ty, env.r, &env.decls.param_names, &|_| "_"))).note("statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those"));
+        if let Err(why) = storable(env, &ty, 0, false) {
+            env.diags.push(invalid_static(d.ty.span, format!("a static cannot have type `{}`: {why}", crate::show(&ty, env.r, &env.decls.param_names, &|_| "_"))).note("statics hold fixed-layout scalars, raw pointers, arrays, structs and enums"));
             continue;
         }
         let mut diags = Vec::new();
@@ -261,7 +264,12 @@ pub fn evaluate(env: &mut Env<'_>) {
     for (sym, m, d, _) in &list {
         let Some(def) = env.decls.statics.get(sym) else { continue };
         let ty = def.ty.clone();
-        let Some(value) = &d.value else { continue };
+        let Some(value) = &d.value else {
+            if env.decls.is_must_consume(&ty) || contains_enum(env, &ty, 0) {
+                env.diags.push(invalid_static(d.ty.span, "owning and enum statics require an explicit const initializer").help("initialize optional owning slots with None"));
+            }
+            continue;
+        };
         match init(env, *m, value, &ty) {
             Ok(i) => {
                 if let Some(def) = env.decls.statics.get_mut(sym) {
@@ -375,7 +383,7 @@ fn function_problems(env: &Env<'_>, f: &FnDecl, sym: SymbolId, parsed: &Parsed) 
 }
 
 /// Why `ty` cannot be the type of a static, if it cannot.
-fn storable(env: &Env<'_>, ty: &Ty, depth: usize) -> Result<(), String> {
+fn storable(env: &Env<'_>, ty: &Ty, depth: usize, in_variant: bool) -> Result<(), String> {
     if depth > 32 {
         return Err("nesting is too deep".into());
     }
@@ -383,17 +391,38 @@ fn storable(env: &Env<'_>, ty: &Ty, depth: usize) -> Result<(), String> {
         Ty::Bool | Ty::Int(_) | Ty::Float(_) => Ok(()),
         Ty::Ptr(_, inner) if matches!(**inner, Ty::Slice(_) | Ty::Any(_)) => Err("raw pointers to unsized values are not allowed".into()),
         Ty::Ptr(..) => Ok(()),
+        // Inactive enum payloads need a layout, not a const value. Native
+        // containers use zero-length generic element markers in their headers.
+        Ty::Array(_, 0) if in_variant => Ok(()),
         Ty::Array(_, 0) => Err("a zero-length array has no storage".into()),
-        Ty::Array(e, _) => storable(env, e, depth + 1),
+        Ty::Array(e, _) => storable(env, e, depth + 1, in_variant),
         Ty::Adt(s, args) => {
-            let Some(def) = env.decls.structs.get(s) else { return Err("only structs have a fixed layout; enums do not".into()) };
-            if !args.is_empty() || !def.generics.is_empty() {
-                return Err("generic structs are not allowed".into());
-            }
-            def.fields.iter().try_for_each(|f| storable(env, &f.ty, depth + 1).map_err(|e| format!("field `{}`: {e}", f.name)))
+            if let Some(def) = env.decls.structs.get(s) {
+                let map = def.generics.iter().copied().zip(args.iter().cloned()).collect();
+                def.fields.iter().try_for_each(|f| storable(env, &crate::subst(&f.ty, &map), depth + 1, in_variant).map_err(|e| format!("field `{}`: {e}", f.name)))
+            } else if let Some(def) = env.decls.enums.get(s) {
+                let map = def.generics.iter().copied().zip(args.iter().cloned()).collect();
+                def.variants.iter().flat_map(|v| &v.fields).try_for_each(|f| storable(env, &crate::subst(f, &map), depth + 1, true))
+            } else { Err("opaque types have no static layout".into()) }
         }
+        Ty::Str if in_variant => Ok(()),
         Ty::Str => Err("`string` owns heap memory; use a `[N]u8` array and a length".into()),
         _ => Err("this type has no fixed C layout".into()),
+    }
+}
+
+fn contains_enum(env: &Env<'_>, ty: &Ty, depth: usize) -> bool {
+    if depth > 32 { return true; }
+    match ty {
+        Ty::Array(e, _) => contains_enum(env, e, depth + 1),
+        Ty::Adt(id, args) => {
+            if env.decls.enums.contains_key(id) { return true; }
+            env.decls.structs.get(id).is_some_and(|d| {
+                let map = d.generics.iter().copied().zip(args.iter().cloned()).collect();
+                d.fields.iter().any(|f| contains_enum(env, &crate::subst(&f.ty, &map), depth + 1))
+            })
+        }
+        _ => false,
     }
 }
 
@@ -401,7 +430,7 @@ type Fail = Box<Diagnostic>;
 
 fn init(env: &mut Env<'_>, m: ModuleId, e: &tarn_ast::Expr, ty: &Ty) -> Result<StaticInit, Fail> {
     let bad = |what: &str| -> Fail {
-        Box::new(invalid_static(e.span, format!("{what} is not a valid initializer here")).note("static initializers are literals, constants, struct and array literals of those, `ffi.null()`, `ffi.from_address(n)`, `ffi.callback(function)` and the names of other statics"))
+        Box::new(invalid_static(e.span, format!("{what} is not a valid initializer here")).note("static initializers are literals, constants, payload-free enum variants, struct and array literals of those, `ffi.null()`, `ffi.from_address(n)`, `ffi.callback(function)` and the names of other statics"))
     };
     if let ExprKind::Paren(inner) = &e.kind {
         return init(env, m, inner, ty);
@@ -470,10 +499,25 @@ fn init(env: &mut Env<'_>, m: ModuleId, e: &tarn_ast::Expr, ty: &Ty) -> Result<S
             let items = elems.iter().map(|x| init(env, m, x, elem)).collect::<Result<Vec<_>, _>>()?;
             Ok(StaticInit::Aggregate(items))
         }
-        Ty::Adt(s, _) => {
+        Ty::Adt(s, _) if env.decls.enums.contains_key(s) => {
+            let variant = env.r.tables[m.0 as usize].uses.get(&e.id).and_then(|u| match &u.res {
+                Res::Symbol(v) => Some(*v), _ => None,
+            });
+            let def = &env.decls.enums[s];
+            let index = def.variants.iter().position(|v| Some(v.sym) == variant);
+            if let Some(index) = index {
+                if def.variants[index].fields.is_empty() { return Ok(StaticInit::Variant(index as u32)); }
+            }
+            Err(bad("only a payload-free enum variant"))
+        }
+        Ty::Adt(s, args) => {
             let ExprKind::StructLit { fields, .. } = &e.kind else { return Err(bad("this expression")) };
             let Some(def) = env.decls.structs.get(s) else { return Err(bad("this expression")) };
-            let declared: Vec<(String, Ty)> = def.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
+            let map = def.generics.iter().copied().zip(args.iter().cloned()).collect();
+            let declared: Vec<(String, Ty)> = def.fields.iter().map(|f| (f.name.clone(), crate::subst(&f.ty, &map))).collect();
+            if def.module != m && def.fields.iter().any(|f| !f.is_pub) {
+                return Err(Box::new(invalid_static(e.span, "a static initializer cannot construct private fields from another module").help("initialize an optional owning root with None, then publish a value from its defining module")));
+            }
             let mut values: Vec<Option<StaticInit>> = vec![None; declared.len()];
             for f in fields {
                 let Some(at) = declared.iter().position(|(n, _)| *n == f.name.name) else {

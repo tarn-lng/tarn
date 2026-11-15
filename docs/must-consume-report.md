@@ -110,8 +110,10 @@ page-table accounting.
 
 ## Supported subset and limits
 
+L1.1 supersedes the original native-storage limitation: see [owning slots](owning-slots-report.md) and [ADR 0110](adr/0110-owning-slots.md).
+
 Only structs have the explicit marker; enums propagate it through payloads.
-Native containers (including Vec with linear elements), native/virtual
+Other erasing native/virtual
 operations on linear storage, owned closure captures, indirect consuming
 calls, and linear async inputs/outputs reject E4008. Borrowing closures and
 async inputs work. Async local resources must also satisfy abandonment paths.

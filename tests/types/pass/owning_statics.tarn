@@ -1,0 +1,12 @@
+import "ffi"
+#[must_consume]
+struct Task { id u64 }
+struct Wrapper<T> { value T }
+static mut SLOT Option<Task> = None
+static mut TASKS [2]Option<Task> = [2]Option<Task>{None, None}
+static mut WRAPPED Wrapper<Option<Task>> = Wrapper{value: None}
+fn store(task Task) Option<Task> {
+    unsafe { return ffi.replace_owned(WRAPPED.value, Some(task)) }
+}
+static mut QUEUE Option<Vec<Task>> = None
+static mut TEXT Option<string> = None

@@ -643,3 +643,56 @@ fn destruction_trace_oracle_detects_missing_and_duplicate_unlocks() {
     }
     std::fs::remove_dir_all(exe.parent().unwrap()).unwrap();
 }
+
+#[test]
+fn owning_storage_rejects_nonempty_finish_and_put() {
+    for (tag, body) in [
+        ("vec", "var values: Vec<Token> = Vec.new()\nvalues.push(Token{id: 1})\nvalues.finish()"),
+        ("option", "value: Option<Token> := Some(Token{id: 1})\nfinish_empty(value)"),
+        ("array", "values: [1]Option<Token> := [1]Option<Token>{Some(Token{id: 1})}\nfinish_empty(values)"),
+        ("put", "var value: Option<Token> = Some(Token{id: 1})\nvalue.put(Token{id: 2})\nfinish_empty(value)"),
+    ] {
+        let source = format!("#[must_consume]\nstruct Token {{ id u64 }}\nfn main() {{\n{body}\n}}\n");
+        let (exe, _) = compile(&source, &format!("owning-nonempty-{tag}"));
+        let output = Command::new(&exe).output().unwrap();
+        assert!(!output.status.success(), "{tag} silently destroyed an owner");
+        std::fs::remove_dir_all(exe.parent().unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn zero_sized_nominal_owners_cannot_finish_empty() {
+    let (exe, _) = compile("#[must_consume]\nstruct Token {}\nfn main() { finish_empty(Token{}) }\n", "zero-sized-owner");
+    assert!(!Command::new(&exe).output().unwrap().status.success());
+    std::fs::remove_dir_all(exe.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn owning_slot_abi_corruption_is_rejected_without_panics() {
+    let (exe, result) = compile("fn main() { var value = 1\nprevious := replace_owned(&mut value, 2) }", "owning-slot-abi");
+    let source = result.drops.as_ref().unwrap();
+    for mutation in 0..4 {
+        let mut program = tarn_ir::post_drop::Program { functions: source.functions.clone(), by_symbol: source.by_symbol.clone() };
+        let args = program.functions.iter_mut().flat_map(|f| &mut f.blocks).find_map(|b| match &mut b.term {
+            tarn_ir::Terminator::Call { callee: tarn_ir::Callee::Intrinsic(name), args, .. } if name == "core.replace_owned" => Some(args),
+            _ => None,
+        }).unwrap();
+        match mutation {
+            0 => { args.pop(); }
+            1 => args.push(tarn_ir::Operand::Const(tarn_ir::Const::Bool(false))),
+            2 => args[0] = tarn_ir::Operand::Const(tarn_ir::Const::Bool(false)),
+            3 => args[1] = tarn_ir::Operand::Const(tarn_ir::Const::Bool(false)),
+            _ => unreachable!(),
+        }
+        let emitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tarn_backend::emit_object(&program, result.typed.as_ref().unwrap())));
+        assert!(emitted.is_ok() && emitted.unwrap().is_err(), "mutation {mutation} accepted an invalid owning slot ABI");
+    }
+    std::fs::remove_dir_all(exe.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn opaque_generic_owners_cannot_finish_empty() {
+    let (exe, _) = compile("#[must_consume]\nstruct Token { id u64 }\nstruct Owner<T> { raw usize }\nfn main() { owner: Owner<Token> := Owner{raw: 1}\nfinish_empty(owner) }\n", "opaque-generic-owner");
+    assert!(!Command::new(&exe).output().unwrap().status.success());
+    std::fs::remove_dir_all(exe.parent().unwrap()).unwrap();
+}

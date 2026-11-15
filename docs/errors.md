@@ -261,8 +261,12 @@ known functions taking that type by value. A generic body is also checked with
 linear type arguments, so its diagnostic may name `T` rather than a concrete type.
 
 E4008 rejects an operation whose native, erased, or cancellable representation
-cannot preserve the obligation: native containers with linear elements, owning
+cannot preserve the obligation: unsupported erasing native operations, owning
 closure captures, indirect consuming calls, virtual resource operations, and
 linear async inputs/outputs. Borrow resources in closures and async code; use
 checked struct/enum containers and direct consuming calls. See
-[ADR 0108](adr/0108-must-consume-types.md) for the precise supported subset.
+[ADR 0108](adr/0108-must-consume-types.md) for the original subset and
+[ADR 0110](adr/0110-owning-slots.md) for the supported owning-slot/vector APIs.
+Use take/replace to return the old owner rather than assigning through a
+borrowed slot. Drain linear vectors and call finish; clear/truncate discard
+elements and therefore report E4007 for linear instances.

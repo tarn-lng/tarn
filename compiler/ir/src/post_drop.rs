@@ -153,6 +153,29 @@ pub fn verify(p: &Program, t: &Typed) -> Vec<String> {
             if !valid { errors.push("invalid scalar FFI memory declaration".into()); }
         }
     }
+    // Trusted owning-slot declarations have one generic value and transfer it
+    // intact. Raw results stay owned; safe exchange retains conservative
+    // place provenance. None may acquire a Copy bound.
+    for id in [t.decls.slot_replace, t.decls.slot_finish].into_iter().flatten().chain(t.decls.ffi_owned.iter().copied()) {
+        let valid = t.decls.fns.get(&id).is_some_and(|sig| {
+            let [parameter] = sig.generics.as_slice() else { return false };
+            let value = Ty::Param(*parameter);
+            let finish = Some(id) == t.decls.slot_finish;
+            let safe_replace = Some(id) == t.decls.slot_replace;
+            let raw_take = t.decls.ffi_owned.get(1) == Some(&id);
+            let raw_write = t.decls.ffi_owned.first() == Some(&id);
+            let params = if finish { vec![value.clone()] }
+                else if safe_replace { vec![Ty::Ref(true, Box::new(value.clone())), value.clone()] }
+                else if raw_take { vec![Ty::Ptr(true, Box::new(value.clone()))] }
+                else { vec![Ty::Ptr(true, Box::new(value.clone())), value.clone()] };
+            sig.abi.as_deref() == Some("intrinsic") && sig.receiver.is_none() && !sig.is_async
+                && sig.params == params && sig.ret == if finish || raw_write { Ty::Void } else { value }
+                && t.decls.bounds.get(parameter).is_none_or(|bounds| bounds.is_empty())
+                && (if safe_replace { sig.contract.result == tarn_types::ResultContract::Borrowed(vec![0]) }
+                    else { sig.contract.result == tarn_types::ResultContract::Owned || finish })
+        });
+        if !valid { errors.push("invalid owning-slot intrinsic declaration".into()); }
+    }
     for f in &p.functions {
         let mut err = |msg: String| errors.push(format!("{}: {msg}", f.decl.name));
         if !f.decl.blocks.is_empty() {

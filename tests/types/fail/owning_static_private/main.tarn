@@ -1,0 +1,3 @@
+import "resource"
+static mut EMPTY Option<resource.Resource> = None
+static mut FORGED resource.Resource = resource.Resource{handle: 1}

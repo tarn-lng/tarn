@@ -1,0 +1,9 @@
+error[E4007]: must-consume value `value` of type `Option<Task>` would be implicitly dropped
+ --> tests/moves/fail/E4007_static_replace_discard.tarn:5:34
+  |
+5 | fn publish(task Task) { unsafe { ffi.replace_owned(SLOT, Some(task)) } }
+  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this path leaves an unconsumed resource
+  |                                  ----------------------------------- resource is held here
+  |
+  = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

@@ -391,6 +391,12 @@ Summary (full rules in `ownership.md`):
   the result may borrow from), stored in its interface (ADR 0010). When the
   compiler cannot determine or prove it, the program is rejected.
 
+Exclusive initialized places support `replace_owned(&mut place, replacement)`,
+which returns the previous owner. Optional slots expose take/replace/put;
+linear vectors expose returning removal operations and explicit empty finish.
+Static owner access stays unsafe through raw owned transfers. See
+[ADR 0110](adr/0110-owning-slots.md) for storage and completion contracts.
+
 ## 11. Generics
 
 ```tarn sketch

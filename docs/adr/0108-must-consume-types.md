@@ -2,6 +2,8 @@
 
 Status: accepted and implemented (systems readiness L1).
 
+The native-container/storage restriction below is superseded by [ADR 0110](0110-owning-slots.md) (L1.1); other L1 guarantees remain in force.
+
 ## Motivation and syntax
 
 Move-only ownership prevents duplicate use but permits losing the last owner.

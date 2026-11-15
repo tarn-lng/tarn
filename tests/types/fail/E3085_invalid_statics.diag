@@ -4,23 +4,7 @@ error[E3085]: a static cannot have type `string`: `string` owns heap memory; use
 14 | static TEXT string = "no"
    |             ^^^^^^
    |
-   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
-
-error[E3085]: a static cannot have type `Mode`: only structs have a fixed layout; enums do not
-  --> tests/types/fail/E3085_invalid_statics.tarn:15:13
-   |
-15 | static MODE Mode = Mode.Fast
-   |             ^^^^
-   |
-   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
-
-error[E3085]: a static cannot have type `Wrapper<i64>`: generic structs are not allowed
-  --> tests/types/fail/E3085_invalid_statics.tarn:16:16
-   |
-16 | static GENERIC Wrapper<i64> = Wrapper{value: 1}
-   |                ^^^^^^^^^^^^
-   |
-   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
+   = note: statics hold fixed-layout scalars, raw pointers, arrays, structs and enums
 
 error[E3085]: a static cannot have type `[0]u8`: a zero-length array has no storage
   --> tests/types/fail/E3085_invalid_statics.tarn:17:14
@@ -28,7 +12,7 @@ error[E3085]: a static cannot have type `[0]u8`: a zero-length array has no stor
 17 | static EMPTY [0]u8
    |              ^^^^^
    |
-   = note: statics hold integers, floats, `bool`, raw pointers, fixed arrays and structs of those
+   = note: statics hold fixed-layout scalars, raw pointers, arrays, structs and enums
 
 error[E3084]: constant value 300 does not fit in `u8`
   --> tests/types/fail/E3085_invalid_statics.tarn:18:17

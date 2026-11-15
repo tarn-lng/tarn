@@ -1,0 +1,9 @@
+error[E4207]: cannot store a reference to `value` into `slot`
+ --> tests/borrows/fail/E4207_slot_replacement_loan.tarn:3:37
+  |
+3 |     previous := replace_owned(slot, &value)
+  |                                     ^^^^^^ this call may keep the reference behind `slot`
+  |
+  = note: `slot` belongs to the caller; `value` is dropped when this function returns
+  = help: pass an owned value, or keep the data in storage that outlives the caller
+

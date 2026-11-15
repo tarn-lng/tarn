@@ -1,0 +1,24 @@
+error[E3085]: owning and enum statics require an explicit const initializer
+ --> tests/types/fail/E3085_uninitialized_owning_static.tarn:3:17
+  |
+3 | static mut TASK Option<Task>
+  |                 ^^^^^^^^^^^^
+  |
+  = help: initialize optional owning slots with None
+
+error[E3085]: owning and enum statics require an explicit const initializer
+ --> tests/types/fail/E3085_uninitialized_owning_static.tarn:4:18
+  |
+4 | static mut TASKS [2]Option<Task>
+  |                  ^^^^^^^^^^^^^^^
+  |
+  = help: initialize optional owning slots with None
+
+error[E3085]: owning and enum statics require an explicit const initializer
+ --> tests/types/fail/E3085_uninitialized_owning_static.tarn:5:18
+  |
+5 | static mut OWNER Task
+  |                  ^^^^
+  |
+  = help: initialize optional owning slots with None
+

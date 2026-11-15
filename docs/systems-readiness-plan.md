@@ -1,6 +1,6 @@
 # Systems readiness plan (from the Cairn OS proving ground)
 
-Status: in progress; L1 complete, A1–A3 complete, remaining items planned. Source: friction recorded while building Cairn phase 0
+Status: in progress; L1 and L1.1 complete, A1–A3 complete, remaining items planned. Source: friction recorded while building Cairn phase 0
 (`../cairn/docs/phase-0-progress.md`), after patches T1–T6 (ADRs 0102–0107).
 
 ## Rule
@@ -15,6 +15,7 @@ special case or escape hatch. Items that are only workarounds are rejected.
 | # | Capability | Friction seen | Why it is general value |
 |---|---|---|---|
 | L1 ✓ | **[Must-consume (linear) types](adr/0108-must-consume-types.md) — done**: a type marked so that values cannot be silently dropped; the compiler requires an explicit consuming call (`frame_free`, `close`, `commit`) on every path | A `Frame` that goes out of scope leaks physical memory silently | Leaks of any resource (frames, file handles, transactions, locks, sockets, payments) become compile errors; few languages have this |
+| L1.1 ✓ | **[Owning slots for must-consume values](adr/0110-owning-slots.md) — done**: exclusive take/replace, linear vectors and optional arrays, explicit empty completion, owning static roots and unsafe raw transfers | Task tables need stable storage with checked publication and extraction | Pools, job queues, caches of open files and schedulers preserve resource obligations across storage |
 | L2 | **Generic interfaces** (interfaces with type parameters) | `rangeset` and `bitmap` each declare their own `Words` interface (E1021) | Reusable containers, iterators, codecs, collections |
 | L3 | **Type aliases** | `rangeset.RangeSet<words.MemWords>` spelled everywhere | Readability across all code |
 | L4 | **Repeat array literal** (`[N]T` filled with one value) | Every local array spelled element by element | Buffers, tables, matrices |
@@ -46,10 +47,11 @@ special case or escape hatch. Items that are only workarounds are rejected.
 ## Order
 
 1. L1 **done** ([ADR 0108](adr/0108-must-consume-types.md); [pinned Cairn follow-up](must-consume-report.md)) — the flagship: turns the OS's resource discipline into a language guarantee.
-2. C1 (path/workspace dependencies) — unblocks clean modular builds.
-3. A1–A3 **done** ([ADR 0109](adr/0109-execution-contexts-and-user-access.md)) — guarded exception stacks, PAN/SMAP windows and cooperative/preemptive C ABI contexts; Cairn integration described in [the follow-up](execution-contexts-report.md).
-4. L2, L3, L5, L6 — broad ergonomics.
-5. L4, L7, C2, C3 — smaller completions.
+2. L1.1 **done** ([ADR 0110](adr/0110-owning-slots.md); [Cairn task-table integration](owning-slots-report.md)) — reusable owning storage preserves L1 obligations.
+3. C1 (path/workspace dependencies) — unblocks clean modular builds.
+4. A1–A3 **done** ([ADR 0109](adr/0109-execution-contexts-and-user-access.md)) — guarded exception stacks, PAN/SMAP windows and cooperative/preemptive C ABI contexts; Cairn integration described in [the follow-up](execution-contexts-report.md).
+5. L2, L3, L5, L6 — broad ergonomics.
+6. L4, L7, C2, C3 — smaller completions.
 
 Each lands as its own 0.5.x patch with an ADR, tests, docs, and a Cairn
 change that removes the corresponding workaround (proof that it was needed).

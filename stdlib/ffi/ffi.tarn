@@ -101,3 +101,15 @@ pub extern "intrinsic" fn fence()
 
 extern "intrinsic" fn _read_volatile<T: Copy>(pointer *T) T
 extern "intrinsic" fn _write_volatile<T: Copy>(pointer *mut T, value T)
+
+/// Move into uninitialized storage. Caller must own the destination exclusively;
+/// any previous owner must already have been extracted. No old value is dropped.
+pub unsafe fn write_owned<T>(pointer *mut T, value T) { _write_owned(pointer, value) }
+extern "intrinsic" fn _write_owned<T>(pointer *mut T, value T)
+/// Move out of initialized, exclusively owned storage, leaving it uninitialized.
+/// Caller must not read it again until reinitialization.
+pub unsafe fn take_owned<T>(pointer *mut T) T { return _take_owned(pointer) }
+extern "intrinsic" fn _take_owned<T>(pointer *mut T) T
+/// Exchange an initialized raw place, returning the previous owner.
+pub unsafe fn replace_owned<T>(pointer *mut T, value T) T { return _replace_owned(pointer, value) }
+extern "intrinsic" fn _replace_owned<T>(pointer *mut T, value T) T

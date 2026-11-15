@@ -1,0 +1,5 @@
+fn bad(slot &mut &string) {
+    value := "temporary"
+    previous := replace_owned(slot, &value)
+    print(previous)
+}

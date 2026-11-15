@@ -1,0 +1,7 @@
+import "ffi"
+#[must_consume]
+struct Task { id u64 }
+static mut SLOT Option<Task> = None
+fn exchange(task Option<Task>) Option<Task> {
+    unsafe { return ffi.replace_owned(SLOT, task) }
+}

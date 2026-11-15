@@ -1,0 +1,8 @@
+error[E3022]: `Option<Task>` does not implement `Copy`
+ --> tests/types/fail/E3022_static_owner_copy.tarn:5:47
+  |
+5 | fn duplicate() Option<Task> { unsafe { return ffi.read(SLOT) } }
+  |                                               ^^^^^^^^^^^^^^ required by a bound `Copy` here
+  |
+  = help: `Option<Task>` is not a copy type; copy types are numbers, `bool`, `&T` and types declared with `copy`
+

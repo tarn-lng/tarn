@@ -1,0 +1,6 @@
+#[must_consume]
+struct Task { id u64 }
+fn publish(slot &mut Option<Task>, task Task) Option<Task> {
+    return slot.replace(task)
+}
+fn exchange(slot &mut Task, task Task) Task { return replace_owned(slot, task) }

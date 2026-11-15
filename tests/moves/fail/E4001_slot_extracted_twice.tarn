@@ -1,0 +1,11 @@
+#[must_consume]
+struct Task { id u64 }
+fn consume(task Task) { match task { Task{id} => {} } }
+fn broken(slot &mut Option<Task>) {
+    extracted := slot.take()
+    match extracted {
+        Some(task) => { consume(task)
+            consume(task) }
+        None => {}
+    }
+}

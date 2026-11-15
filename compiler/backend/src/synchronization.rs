@@ -3,36 +3,6 @@ use super::*;
 // Private synchronization execution. Types, loans, and initialized destruction
 // are frontend/post-drop decisions; this module only executes their contracts.
 impl Cx<'_, '_> {
-    fn sync_slot(&mut self, ty: &Ty) -> Result<cl::Value> {
-        let layout = layout::layout(self.t, ty)?;
-        let slot = self.stack(layout.size, layout.align);
-        Ok(self.b.ins().stack_addr(types::I64, slot, 0))
-    }
-
-    fn sync_read(&mut self, addr: cl::Value, ty: &Ty) -> Result<Val> {
-        let layout = layout::layout(self.t, ty)?;
-        let value = if layout.size == 0 { None }
-            else if let Some(st) = scalar(ty) { Some(self.b.ins().load(st, cl::MemFlags::new(), addr, 0)) }
-            else {
-                // Snapshot before replace writes the payload. In particular an
-                // aggregate result must not alias the newly installed value.
-                let copy = self.sync_slot(ty)?;
-                self.copy(copy, addr, layout.size);
-                Some(copy)
-            };
-        Ok(Val { value, ty: ty.clone() })
-    }
-
-    fn sync_write(&mut self, addr: cl::Value, value: &Val) -> Result<()> {
-        let l = layout::layout(self.t, &value.ty)?;
-        if l.size != 0 {
-            let v = value.value.ok_or_else(|| Error::bug("missing synchronization payload"))?;
-            if scalar(&value.ty).is_some() { self.b.ins().store(cl::MemFlags::new(), v, addr, 0); }
-            else { self.copy(addr, v, l.size); }
-        }
-        Ok(())
-    }
-
     pub(super) fn synchronization(&mut self, name: &str, args: &[Val], dest: &Ty) -> Result<Option<Val>> {
         let Some((owner, operation)) = name.split_once('.') else { return Ok(None) };
         if owner == "Mutex" && operation == "new" {
@@ -40,11 +10,11 @@ impl Cx<'_, '_> {
             if Some(*id) != self.t.decls.mutex || ts.len() != 1 || args.len() != 1 || args[0].ty != ts[0] {
                 return Err(Error::bug("mutex construction ABI"));
             }
-            let addr = self.sync_slot(dest)?;
+            let addr = self.owned_slot(dest)?;
             let native = self.runtime("tarn_rt_mutex_create", &[])[0];
             self.b.ins().store(cl::MemFlags::new(), native, addr, 0);
             let payload = self.b.ins().iadd_imm(addr, i64::from(layout::layout(self.t, dest)?.fields[1].0));
-            self.sync_write(payload, &args[0])?;
+            self.owned_write(payload, &args[0])?;
             return Ok(Some(Val { value: Some(addr), ty: dest.clone() }));
         }
         if owner == "Mutex" && operation == "lock" {
@@ -71,10 +41,10 @@ impl Cx<'_, '_> {
             let payload = self.b.ins().load(types::I64, cl::MemFlags::new(), addr, 8);
             let value = match operation {
                 "value" if *mutable && args.len() == 1 && *dest == Ty::Ref(true, Box::new(ty.clone())) => Val { value: Some(payload), ty: dest.clone() },
-                "read" if args.len() == 1 && dest == ty && self.t.decls.is_copy(ty) => self.sync_read(payload, ty)?,
+                "read" if args.len() == 1 && dest == ty && self.t.decls.is_copy(ty) => self.owned_read(payload, ty)?,
                 "replace" if *mutable && args.len() == 2 && dest == ty && args[1].ty == *ty => {
-                    let old = self.sync_read(payload, ty)?;
-                    self.sync_write(payload, &args[1])?;
+                    let old = self.owned_read(payload, ty)?;
+                    self.owned_write(payload, &args[1])?;
                     old
                 }
                 _ => return Err(Error::bug("guard operation ABI")),
@@ -108,7 +78,7 @@ impl Cx<'_, '_> {
         }
         let result = self.runtime(&format!("tarn_rt_atomic_{atomic}_{operation}"), &values);
         let value = if operation == "new" {
-            let addr = self.sync_slot(dest)?;
+            let addr = self.owned_slot(dest)?;
             self.b.ins().store(cl::MemFlags::new(), result[0], addr, 0);
             Some(addr)
         } else { result.first().copied() };

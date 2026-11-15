@@ -1,0 +1,3 @@
+#[must_consume]
+struct Task { id u64 }
+fn shrink(queue &mut Vec<Task>) { queue.truncate(0) }
