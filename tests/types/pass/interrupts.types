@@ -90,33 +90,63 @@
 99:29 descriptor: *u8
 102:20 descriptor: *u8
 103:29 descriptor: *u8
-129:15 frame: *InterruptFrame
-129:38 index: usize
-130:5 base: *u64
-134:25 frame: *InterruptFrame
-136:24 frame: *InterruptFrame
-138:28 frame: *InterruptFrame
-140:25 frame: *InterruptFrame
-142:24 frame: *InterruptFrame
-144:29 frame: *mut InterruptFrame
-144:56 rip: u64
-145:5 base: *mut u64
-154:28 idt: *mut u8
-154:41 vector: usize
-154:55 handler: *u8
-154:68 selector: u16
-154:82 ist: u8
-154:90 gate: u8
-155:5 address: u64
-156:5 entry: *mut u8
-157:5 low: *mut u16
-158:5 sel: *mut u16
-159:5 mid: *mut u16
-160:5 high: *mut u32
-161:5 reserved: *mut u32
-175:24 idt: *u8
-175:33 entries: usize
-176:9 descriptor: [10]u8
-177:5 limit: u64
-178:5 base: u64
-179:9 index: usize
+109:19 selector: u16
+110:28 selector: u16
+126:21 leaf: u32
+126:31 subleaf: u32
+127:9 out: [4]u32
+131:30 leaf: u32
+131:40 subleaf: u32
+131:53 out: *mut u32
+138:22 xcr: u32
+139:31 xcr: u32
+142:22 xcr: u32
+142:31 value: u64
+143:31 xcr: u32
+143:40 value: u64
+150:23 address: u64
+151:32 address: u64
+156:23 kind: u64
+156:33 descriptor: *u8
+157:32 kind: u64
+157:42 descriptor: *u8
+168:24 value: u64
+169:33 value: u64
+176:24 value: u64
+177:33 value: u64
+196:29 stack_top: u64
+196:44 entry: *u8
+196:55 arg: u64
+197:38 stack_top: u64
+197:53 entry: *u8
+197:64 arg: u64
+223:15 frame: *InterruptFrame
+223:38 index: usize
+224:5 base: *u64
+228:25 frame: *InterruptFrame
+230:24 frame: *InterruptFrame
+232:28 frame: *InterruptFrame
+234:25 frame: *InterruptFrame
+236:24 frame: *InterruptFrame
+238:29 frame: *mut InterruptFrame
+238:56 rip: u64
+239:5 base: *mut u64
+248:28 idt: *mut u8
+248:41 vector: usize
+248:55 handler: *u8
+248:68 selector: u16
+248:82 ist: u8
+248:90 gate: u8
+249:5 address: u64
+250:5 entry: *mut u8
+251:5 low: *mut u16
+252:5 sel: *mut u16
+253:5 mid: *mut u16
+254:5 high: *mut u32
+255:5 reserved: *mut u32
+269:24 idt: *u8
+269:33 entries: usize
+270:9 descriptor: [10]u8
+271:5 limit: u64
+272:5 base: u64
+273:9 index: usize

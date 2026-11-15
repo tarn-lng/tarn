@@ -14,6 +14,8 @@ fn serial_write(byte u8) {
     }
 }
 
+fn on_stack(value u64) {}
+
 fn main() {
     serial_write(65)
     unsafe {
@@ -34,6 +36,23 @@ fn main() {
         arch_x86_64.lgdt(ffi.to_const(table))
         arch_x86_64.lidt(ffi.to_const(table))
         ticks := arch_x86_64.rdtsc()
+        // ADR 0107 (T6)
+        arch_x86_64.ltr(40)
+        tr := arch_x86_64.str()
+        id := arch_x86_64.cpuid(0, 0)
+        arch_x86_64.ud2()
+        xcr := arch_x86_64.xgetbv(0)
+        arch_x86_64.xsetbv(0, xcr)
+        arch_x86_64.wbinvd()
+        arch_x86_64.clflush(cr2)
+        arch_x86_64.invpcid(2, ffi.to_const(table))
+        arch_x86_64.swapgs()
+        fs := arch_x86_64.rdfsbase()
+        gs := arch_x86_64.rdgsbase()
+        arch_x86_64.wrfsbase(fs)
+        arch_x86_64.wrgsbase(gs + u64(id.eax + id.ebx + id.ecx + id.edx) + u64(tr))
+        flags := arch_x86_64.read_rflags()
+        arch_x86_64.call_on_stack(flags, ffi.callback(on_stack), 1)
         arch_x86_64.sti()
         arch_x86_64.hlt()
     }

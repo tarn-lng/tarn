@@ -271,8 +271,24 @@ fn crash(name &string, frame *mut arch_x86_64.InterruptFrame, code u64) {
     exit(EXIT_FAILED)
 }
 
+// The deliberate double fault of `double_fault_demo` (below) is expected once.
+static mut EXPECT_DF u64 = 0
+
 #[interrupt]
 fn double_fault(frame *mut arch_x86_64.InterruptFrame, code u64) {
+    if peek(ffi.address(EXPECT_DF)) == 1 {
+        // IST1 gave this handler its own stack: a local variable is in IST_STACK.
+        var marker: u64 = 0
+        here := ffi.address(ffi.of(&marker))
+        base := ffi.address(IST_STACK)
+        if here < base || here >= base + IST_SIZE { panic("double fault did not run on the IST stack") }
+        print_text("double fault: bad rsp=")
+        unsafe { print_hex(arch_x86_64.frame_rsp(ffi.to_const(frame))) }
+        newline()
+        println("double fault: handled on the IST stack")
+        println("tarn kernel: done")
+        exit(EXIT_OK)
+    }
     crash("double fault", frame, code)
 }
 
@@ -306,7 +322,7 @@ fn install_idt() {
     unsafe {
         arch_x86_64.idt_set_gate(idt, 3, handler_address(0), 8, 0, arch_x86_64.gate_trap())
         arch_x86_64.idt_set_gate(idt, 6, handler_address(1), 8, 0, arch_x86_64.gate_interrupt())
-        arch_x86_64.idt_set_gate(idt, 8, handler_address(2), 8, 0, arch_x86_64.gate_interrupt())
+        arch_x86_64.idt_set_gate(idt, 8, handler_address(2), 8, 1, arch_x86_64.gate_interrupt())
         arch_x86_64.idt_set_gate(idt, 13, handler_address(3), 8, 0, arch_x86_64.gate_interrupt())
         arch_x86_64.idt_set_gate(idt, 14, handler_address(4), 8, 0, arch_x86_64.gate_interrupt())
         arch_x86_64.idt_set_gate(idt, 32, handler_address(5), 8, 0, arch_x86_64.gate_interrupt())
@@ -337,6 +353,104 @@ fn init_pit() {
         arch_x86_64.out8(PIT_CHANNEL0, u8(11932 & 0xff))
         arch_x86_64.out8(PIT_CHANNEL0, u8(11932 >> 8))
     }
+}
+
+// ---------------------------------------------------------------- GDT, TSS, cpuid, stacks (ADR 0107)
+
+const IST_SIZE usize = 16384
+#[align(16)]
+static mut IST_STACK [16384]u8
+#[align(16)]
+static mut SIDE_STACK [16384]u8
+#[align(16)]
+static mut GDT [48]u8
+#[align(16)]
+static mut GDTR [16]u8
+#[align(16)]
+static mut TSS [128]u8
+static mut SIDE_RAN u64 = 0
+static mut SIDE_ARG u64 = 0
+
+fn print_vendor(value u32) {
+    var shift: u32 = 0
+    for shift < 32 {
+        serial_byte(u8((value >> shift) & 255))
+        shift = shift + 8
+    }
+}
+
+fn cpuid_demo() {
+    unsafe {
+        id := arch_x86_64.cpuid(0, 0)
+        print_text("cpuid vendor: ")
+        print_vendor(id.ebx)
+        print_vendor(id.edx)
+        print_vendor(id.ecx)
+        newline()
+        print_text("cpuid max leaf: ")
+        print_number(u64(id.eax))
+        newline()
+    }
+}
+
+// GDT: null, 64-bit code (8), data (16), available 64-bit TSS (24, 16 bytes).
+// The code and data descriptors equal the boot GDT's, so no segment reload is needed.
+fn install_tss() {
+    gdt := ffi.address(GDT)
+    tss := ffi.address(TSS)
+    poke(gdt, 0)
+    poke(gdt + 8, 0x00af9b000000ffff)
+    poke(gdt + 16, 0x00cf93000000ffff)
+    poke(gdt + 24, 103 | ((u64(tss) & 0xffff) << 16) | (((u64(tss) >> 16) & 0xff) << 32) | (0x89 << 40) | (((u64(tss) >> 24) & 0xff) << 56))
+    poke(gdt + 32, u64(tss) >> 32)
+    // TSS: IST1 at offset 0x24; I/O map base (0x66) = 104 = no I/O bitmap.
+    poke(tss + 0x24, u64(ffi.address(IST_STACK) + IST_SIZE))
+    poke(tss + 0x64, 104 << 16)
+    gdtr := ffi.address(GDTR)
+    poke(gdtr, 39 | (u64(gdt) << 16))
+    poke(gdtr + 8, u64(gdt) >> 48)
+    unsafe {
+        arch_x86_64.lgdt(ffi.from_address(gdtr))
+        arch_x86_64.ltr(24)
+        if arch_x86_64.str() != 24 { panic("str does not report the loaded task register") }
+    }
+    println("tss: loaded with ltr, str reports selector 0x18")
+}
+
+fn on_side_stack(arg u64) {
+    var marker: u64 = 0
+    here := ffi.address(ffi.of(&marker))
+    base := ffi.address(SIDE_STACK)
+    if here < base || here >= base + IST_SIZE { panic("call_on_stack: callee is not on the new stack") }
+    poke(ffi.address(SIDE_ARG), arg)
+    poke(ffi.address(SIDE_RAN), 1)
+}
+
+fn call_on_stack_demo() {
+    var marker: u64 = 0
+    here := ffi.address(ffi.of(&marker))
+    base := ffi.address(SIDE_STACK)
+    if here >= base && here < base + IST_SIZE { panic("test starts on the side stack") }
+    unsafe { arch_x86_64.call_on_stack(u64(base + IST_SIZE), ffi.callback(on_side_stack), 77) }
+    if peek(ffi.address(SIDE_RAN)) != 1 || peek(ffi.address(SIDE_ARG)) != 77 { panic("call_on_stack did not run the callee") }
+    println("call_on_stack: ran on the new stack and returned")
+    // A second call proves the old stack and callee-saved state came back intact.
+    unsafe { arch_x86_64.call_on_stack(u64(base + IST_SIZE), ffi.callback(on_side_stack), 78) }
+    if peek(ffi.address(SIDE_ARG)) != 78 { panic("second call_on_stack failed") }
+    println("call_on_stack: twice")
+}
+
+fn on_bad_stack(arg u64) {
+    panic("unreachable: the bad stack has no memory")
+}
+
+// A stack that is canonical but unmapped: the callee's return address push
+// faults, the #PF delivery faults on the same stack, and the CPU raises #DF,
+// which the IDT gives IST1: the handler runs on `IST_STACK` and ends the kernel.
+fn double_fault_demo() {
+    poke(ffi.address(EXPECT_DF), 1)
+    unsafe { arch_x86_64.call_on_stack(0x700000000000, ffi.callback(on_bad_stack), 0) }
+    panic("no double fault was raised")
 }
 
 // ---------------------------------------------------------------- tests
@@ -415,6 +529,9 @@ fn kmain(info u64) {
         panic("breakpoint handler did not run")
     }
     println("int3: breakpoint handled")
+    cpuid_demo()
+    install_tss()
+    call_on_stack_demo()
 
     init_pic()
     init_pit()
@@ -426,6 +543,5 @@ fn kmain(info u64) {
     print_number(peek(ffi.address(TICKS)))
     println(" timer interrupts")
     println("ticks ok")
-    println("tarn kernel: done")
-    exit(EXIT_OK)
+    double_fault_demo()
 }

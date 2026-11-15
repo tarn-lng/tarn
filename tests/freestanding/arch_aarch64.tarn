@@ -1,6 +1,9 @@
 // Every aarch64 CPU intrinsic in a freestanding program (ADR 0101, P5).
 // Compiled only; running these needs EL1.
 import "arch_aarch64"
+import "ffi"
+
+fn on_stack(value u64) {}
 
 fn main() {
     unsafe {
@@ -54,5 +57,35 @@ fn main() {
         arch_aarch64.write_icc_pmr_el1(i1)
         arch_aarch64.write_icc_igrpen1_el1(i2)
         arch_aarch64.write_icc_eoir1_el1(i3 + i4)
+        // ADR 0107 (T6)
+        arch_aarch64.tlbi_vmalle1()
+        arch_aarch64.tlbi_vmalle1is()
+        arch_aarch64.tlbi_vae1(r0, 7)
+        arch_aarch64.tlbi_vae1is(r0, 7)
+        arch_aarch64.tlbi_vale1(r0, 7)
+        arch_aarch64.tlbi_aside1(7)
+        arch_aarch64.dsb_ish()
+        arch_aarch64.dsb_ishst()
+        arch_aarch64.dsb_nsh()
+        arch_aarch64.dsb_nshst()
+        arch_aarch64.dmb_ish()
+        arch_aarch64.dmb_ishld()
+        arch_aarch64.dmb_ishst()
+        arch_aarch64.ic_iallu()
+        arch_aarch64.ic_ialluis()
+        arch_aarch64.ic_ivau(r0)
+        arch_aarch64.dc_civac(r0)
+        arch_aarch64.dc_cvac(r0)
+        arch_aarch64.dc_ivac(r0)
+        arch_aarch64.dc_zva(r0)
+        arch_aarch64.dc_cvau(r0)
+        arch_aarch64.at_s1e1r(r0)
+        arch_aarch64.at_s1e1w(r0)
+        par := arch_aarch64.read_par_el1()
+        ids := arch_aarch64.read_id_aa64mmfr0_el1() + arch_aarch64.read_id_aa64mmfr1_el1() + arch_aarch64.read_id_aa64pfr0_el1()
+        ids2 := arch_aarch64.read_ctr_el0() + arch_aarch64.read_dczid_el0() + arch_aarch64.read_midr_el1() + arch_aarch64.read_mpidr_el1()
+        sp0 := arch_aarch64.read_sp_el0()
+        arch_aarch64.write_sp_el0(sp0 + par + ids + ids2)
+        arch_aarch64.call_on_stack(sp0, ffi.callback(on_stack), 1)
     }
 }

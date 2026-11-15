@@ -307,6 +307,166 @@ fn memory_size(dtb usize) u64 {
     panic("FDT has no QEMU memory node")
 }
 
+// ---- Identity-mapped MMU, cache maintenance, call_on_stack (ADR 0107, T6) ----
+//
+// One level-1 table of 1 GiB blocks (4 KiB granule, 39-bit VA, T0SZ = 25):
+// 0-1 GiB device-nGnRnE (UART, GIC), 1-2 GiB normal write-back RAM; the rest faults.
+#[align(4096)]
+static mut L1 [512]u64
+#[align(64)]
+static mut ZERO_BLOCK [64]u8
+#[align(16)]
+static mut SIDE_STACK [16384]u8
+static mut SIDE_ARG u64
+static mut SIDE_RAN u64
+
+fn enable_mmu() {
+    table := ffi.address(L1)
+    poke(table, 0x401)                     // block, AF, AttrIndx 0 (device-nGnRnE)
+    poke(table + 8, 0x40000000 | 0x705)   // block, AF, inner shareable, AttrIndx 1 (normal WB)
+    unsafe {
+        // The table is written with caches off, but clean it to the PoC anyway: the walker may be coherent or not.
+        arch_aarch64.dc_cvac(u64(table))
+        arch_aarch64.dc_cvac(u64(table + 8))
+        arch_aarch64.dsb_ishst()
+        arch_aarch64.write_mair_el1(0xff00)
+        parange := arch_aarch64.read_id_aa64mmfr0_el1() & 15
+        // T0SZ 25, WB WA inner/outer, inner shareable, 4 KiB granule, no TTBR1 walks, IPS = PARange.
+        arch_aarch64.write_tcr_el1(25 | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 23) | (parange << 32))
+        arch_aarch64.write_ttbr0_el1(u64(table))
+        arch_aarch64.isb()
+        arch_aarch64.tlbi_vmalle1()
+        arch_aarch64.dsb_nsh()
+        arch_aarch64.isb()
+        arch_aarch64.ic_iallu()
+        arch_aarch64.dsb_nsh()
+        arch_aarch64.isb()
+        // M | C | I
+        arch_aarch64.write_sctlr_el1(arch_aarch64.read_sctlr_el1() | 0x1005)
+        arch_aarch64.isb()
+    }
+}
+
+fn mmu_demo() {
+    unsafe {
+        print_text("midr_el1: ")
+        print_hex(arch_aarch64.read_midr_el1())
+        newline()
+        print_text("id_aa64mmfr0_el1 PARange: ")
+        print_number(arch_aarch64.read_id_aa64mmfr0_el1() & 15)
+        newline()
+    }
+    enable_mmu()
+    unsafe {
+        if (arch_aarch64.read_sctlr_el1() & 1) == 0 { panic("MMU did not turn on") }
+    }
+    println("mmu: on, identity map, caches on")
+    unsafe {
+        // Translate with the hardware walker: the RAM address of this table is identity mapped, 2 GiB is not.
+        mapped := u64(ffi.address(L1))
+        arch_aarch64.at_s1e1r(mapped)
+        arch_aarch64.isb()
+        par := arch_aarch64.read_par_el1()
+        if (par & 1) != 0 || (par & 0xfffffffff000) != (mapped & 0xfffffffff000) { panic("at s1e1r: wrong translation") }
+        arch_aarch64.at_s1e1w(mapped)
+        arch_aarch64.isb()
+        if (arch_aarch64.read_par_el1() & 1) != 0 { panic("at s1e1w: faulted") }
+        arch_aarch64.at_s1e1r(0x80000000)
+        arch_aarch64.isb()
+        if (arch_aarch64.read_par_el1() & 1) != 1 { panic("at s1e1r: unmapped address translated") }
+        print_text("at s1e1r: ")
+        print_hex(par)
+        println(" mapped, 0x80000000 faults")
+        // Map the third GiB, translate, unmap it again: only `tlbi` makes the removal visible
+        // (the walker caches the block). Then the other forms of tlbi run on live entries.
+        table := ffi.address(L1)
+        poke(table + 16, 0x80000000 | 0x705)
+        arch_aarch64.dsb_ishst()
+        arch_aarch64.isb()
+        arch_aarch64.at_s1e1r(0x80001000)
+        arch_aarch64.isb()
+        far := arch_aarch64.read_par_el1()
+        if (far & 1) != 0 || (far & 0xfffffffff000) != 0x80001000 { panic("at s1e1r: new mapping not translated") }
+        poke(table + 16, 0)
+        arch_aarch64.dsb_ishst()
+        arch_aarch64.tlbi_vae1is(0x80001000, 0)
+        arch_aarch64.dsb_ish()
+        arch_aarch64.isb()
+        arch_aarch64.at_s1e1r(0x80001000)
+        arch_aarch64.isb()
+        let_fault := arch_aarch64.read_par_el1() & 1
+        arch_aarch64.tlbi_vale1(0x40000000, 0)
+        arch_aarch64.tlbi_aside1(0)
+        arch_aarch64.tlbi_vae1(0x40000000, 0)
+        arch_aarch64.tlbi_vmalle1is()
+        arch_aarch64.dsb_nsh()
+        arch_aarch64.isb()
+        if let_fault != 1 { panic("tlbi vae1is did not drop the mapping") }
+        println("tlbi: stale entry dropped, other forms run")
+        // Cache maintenance on normal memory; dc zva zeroes a block of DCZID size.
+        block := u64(ffi.address(ZERO_BLOCK))
+        var i: usize = 0
+        for i < 64 {
+            poke(ffi.address(ZERO_BLOCK) + i, 0xffffffffffffffff)
+            i = i + 8
+        }
+        size := u64(4) << (arch_aarch64.read_dczid_el0() & 15)
+        if size > 64 || (arch_aarch64.read_dczid_el0() & 16) != 0 { panic("unexpected dc zva block size") }
+        arch_aarch64.dc_zva(block)
+        arch_aarch64.dsb_ish()
+        arch_aarch64.dc_civac(block)
+        arch_aarch64.dc_cvau(block)
+        arch_aarch64.ic_ivau(block)
+        arch_aarch64.dc_cvac(block)
+        arch_aarch64.dsb_ish()
+        arch_aarch64.isb()
+        arch_aarch64.dmb_ish()
+        arch_aarch64.dmb_ishld()
+        arch_aarch64.dmb_ishst()
+        arch_aarch64.dsb_nshst()
+        arch_aarch64.ic_ialluis()
+        arch_aarch64.dsb_ish()
+        arch_aarch64.isb()
+        if peek(ffi.address(ZERO_BLOCK)) != 0 || peek(ffi.address(ZERO_BLOCK) + usize(size) - 8) != 0 { panic("dc zva did not zero the block") }
+        print_text("dc zva: zeroed ")
+        print_number(size)
+        println(" bytes")
+        print_text("ctr_el0: ")
+        print_hex(arch_aarch64.read_ctr_el0())
+        print_text(" mpidr_el1: ")
+        print_hex(arch_aarch64.read_mpidr_el1())
+        print_text(" id_aa64mmfr1_el1: ")
+        print_hex(arch_aarch64.read_id_aa64mmfr1_el1())
+        print_text(" id_aa64pfr0_el1: ")
+        print_hex(arch_aarch64.read_id_aa64pfr0_el1())
+        newline()
+        arch_aarch64.write_sp_el0(0x1234560)
+        if arch_aarch64.read_sp_el0() != 0x1234560 { panic("sp_el0 round trip failed") }
+        println("sp_el0: round trip ok")
+    }
+}
+
+fn on_side_stack(arg u64) {
+    var marker: u64 = 0
+    here := ffi.address(ffi.of(&marker))
+    base := ffi.address(SIDE_STACK)
+    if here < base || here >= base + 16384 { panic("call_on_stack: callee is not on the new stack") }
+    poke(ffi.address(SIDE_ARG), arg)
+    poke(ffi.address(SIDE_RAN), 1)
+}
+
+fn call_on_stack_demo() {
+    var marker: u64 = 0
+    here := ffi.address(ffi.of(&marker))
+    base := ffi.address(SIDE_STACK)
+    if here >= base && here < base + 16384 { panic("test starts on the side stack") }
+    unsafe { arch_aarch64.call_on_stack(u64(base + 16384), ffi.callback(on_side_stack), 77) }
+    if peek(ffi.address(SIDE_RAN)) != 1 || peek(ffi.address(SIDE_ARG)) != 77 { panic("call_on_stack did not run the callee") }
+    unsafe { arch_aarch64.call_on_stack(u64(base + 16384), ffi.callback(on_side_stack), 78) }
+    if peek(ffi.address(SIDE_ARG)) != 78 { panic("second call_on_stack failed") }
+    println("call_on_stack: ran on the new stack and returned (twice)")
+}
+
 static mut TICKS u64
 static mut SYNC u64
 #[vector_table]
@@ -317,6 +477,10 @@ fn synchronous(frame *mut arch_aarch64.ExceptionFrame) {
         class := arch_aarch64.read_esr_el1() >> 26
         if class == 21 {
             poke(ffi.address(SYNC), peek(ffi.address(SYNC)) + 1)
+            // The interrupted sp is the kernel stack: 16-byte aligned, nonzero.
+            sp := arch_aarch64.frame_sp(frame)
+            if sp == 0 || (sp & 15) != 0 { panic("bad saved sp") }
+            if arch_aarch64.frame_x(frame, 30) == 0 { panic("x30 is the return address of svc's caller") }
             println("svc: handler reached")
         } else if class == 60 {
             // brk leaves ELR at the instruction itself: step over it.
@@ -385,6 +549,8 @@ fn kmain(dtb u64) {
     unsafe { arch_aarch64.brk() }
     if peek(ffi.address(SYNC)) != 11 { panic("brk handler did not return") }
     println("brk: returned")
+    mmu_demo()
+    call_on_stack_demo()
     heap_reuse()
     start_timer()
     for peek(ffi.address(TICKS)) < 10 { unsafe { arch_aarch64.wfi() } }

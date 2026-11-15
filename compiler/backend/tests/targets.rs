@@ -265,11 +265,31 @@ fn oversized_x86_sequences_keep_their_frameless_stub_calls() {
     let Some(functions) = disassembly_of(&bytes, "remaining-calls", true, "") else { eprintln!("objdump unavailable; skipping x86_64"); return };
     let code = &functions["tarn_fn_0__main"];
     // Checked arithmetic also emits indirect calls to the fault contract.
-    assert_eq!(code.iter().filter(|i| i.starts_with("call 0x")).count(), 3, "{code:?}");
-    for name in ["rdtsc", "rdmsr", "wrmsr"] {
+    // rdtsc, rdmsr, wrmsr, cpuid, xgetbv, xsetbv and call_on_stack are too long to inline (ADR 0107).
+    assert_eq!(code.iter().filter(|i| i.starts_with("call 0x")).count(), 7, "{code:?}");
+    // The short T6 instructions are in place of their calls.
+    for instruction in ["ltr di", "str eax", "ud2", "wbinvd", "clflush byte ptr [rdi]", "swapgs", "rdfsbase rax", "rdgsbase rax", "wrfsbase rdi", "wrgsbase rdi", "pushfq", "invpcid rdi, xmmword ptr [rsi]"] {
+        assert!(code.iter().any(|i| i == instruction), "missing {instruction}: {code:?}");
+    }
+    for name in ["rdtsc", "rdmsr", "wrmsr", "xgetbv", "xsetbv"] {
         let stub = &functions[&format!("tarn_arch_x86_64_{name}")];
         assert!(!stub.iter().any(|i| i.starts_with("push") || i.starts_with("pop") || i.contains("rsp") || i.contains("rbp")), "{name}: {stub:?}");
     }
+}
+
+#[test]
+fn aarch64_maintenance_instructions_replace_their_calls() {
+    let bytes = freestanding("../../tests/freestanding/arch_aarch64.tarn", "aarch64-none").unwrap();
+    let Some(functions) = disassembly_of(&bytes, "t6-aarch64", false, "") else { eprintln!("objdump unavailable; skipping aarch64"); return };
+    let code = &functions["tarn_fn_0__main"];
+    for instruction in ["tlbi vmalle1", "tlbi vmalle1is", "tlbi vae1, x0", "tlbi vae1is, x0", "tlbi vale1, x0", "tlbi aside1, x0",
+        "dsb ish", "dsb ishst", "dsb nsh", "dsb nshst", "dmb ish", "dmb ishld", "dmb ishst", "ic iallu", "ic ialluis", "ic ivau, x0",
+        "dc civac, x0", "dc cvac, x0", "dc ivac, x0", "dc zva, x0", "dc cvau, x0", "at s1e1r, x0", "at s1e1w, x0",
+        "mrs x0, par_el1", "mrs x0, ctr_el0", "mrs x0, dczid_el0", "mrs x0, midr_el1", "mrs x0, mpidr_el1", "mrs x0, sp_el0", "msr sp_el0, x0"] {
+        assert!(code.iter().any(|i| i == instruction), "missing {instruction}: {code:?}");
+    }
+    // The only remaining branch-and-link calls are the long stubs: semihost_exit and call_on_stack.
+    assert_eq!(code.iter().filter(|i| i.starts_with("bl ")).count(), 2, "{code:?}");
 }
 
 #[test]

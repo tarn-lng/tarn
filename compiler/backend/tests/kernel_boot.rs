@@ -117,8 +117,14 @@ fn the_example_kernel_boots_and_reports_success() {
         "vec of 1000 squares sums to 332833500",
         "heap ok: ",
         "int3: breakpoint handled",
+        "cpuid vendor: ",
+        "tss: loaded with ltr, str reports selector 0x18",
+        "call_on_stack: ran on the new stack and returned",
+        "call_on_stack: twice",
         "10 timer interrupts",
         "ticks ok",
+        "double fault: bad rsp=0x0000700000000000",
+        "double fault: handled on the IST stack",
         "tarn kernel: done",
     ];
     // The heap demo runs twice; every expected line appears, in order.
@@ -128,6 +134,9 @@ fn the_example_kernel_boots_and_reports_success() {
         at += found + 1;
     }
     assert_eq!(status, EXIT_OK, "exit status; serial output:\n{output}");
+    let vendor = lines.iter().find_map(|l| l.strip_prefix("cpuid vendor: ")).unwrap();
+    assert_eq!(vendor.len(), 12, "twelve-byte vendor string: {vendor:?}");
+    assert!(vendor.bytes().all(|b| b.is_ascii_graphic()), "{vendor:?}");
 }
 
 #[test]

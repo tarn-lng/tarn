@@ -92,6 +92,13 @@ fn check_success(output: &str) {
         "svc: returned",
         "brk: breakpoint handled",
         "brk: returned",
+        "midr_el1: ",
+        "mmu: on, identity map, caches on",
+        "at s1e1r: ",
+        "tlbi: stale entry dropped, other forms run",
+        "dc zva: zeroed 64 bytes",
+        "sp_el0: round trip ok",
+        "call_on_stack: ran on the new stack and returned (twice)",
         "hello, heap world",
         "vec of 1000 squares sums to 332833500",
         "heap ok: ",
@@ -155,4 +162,17 @@ fn a_panic_reports_failure_through_semihosting() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(status, 1, "{output}");
     assert!(output.contains("PANIC: boom"), "{output}");
+}
+
+#[test]
+fn frame_x_rejects_registers_above_x30() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("frame-x");
+    let source = example().replace("arch_aarch64.frame_x(frame, 30) == 0", "arch_aarch64.frame_x(frame, 31) == 0");
+    assert_ne!(source, example());
+    let image = build(&dir, &source, &linker);
+    let (output, status) = boot(&qemu, &image, "virt,gic-version=3", "cortex-a72");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(status, 1, "{output}");
+    assert!(output.contains("PANIC: frame_x: register index out of range 0..=30"), "{output}");
 }

@@ -22,7 +22,9 @@
 //! out32  (port u16, v u32) 89 fa 89 f0 ef c3      mov edx, edi ; mov eax, esi ; out dx, eax ; ret
 //! ```
 //!
-//! The remaining encodings are in the table in `x86_64`.
+//! The remaining encodings are in the table in `x86_64`. Sequences longer than
+//! the call slot (`cpuid`, `call_on_stack`, ...) are never inlined, so they may
+//! use the stack and any caller-saved register (ADR 0107).
 
 use crate::{Arch, Error, Result, Target};
 use cranelift_codegen::ir::{types, Type};
@@ -93,10 +95,14 @@ pub(crate) fn lookup(arch: Arch, op: &str) -> Option<Stub> {
 pub fn operations(arch: Arch) -> Vec<String> {
     let names: Vec<String> = match arch {
         Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "hlt", "pause", "int3", "rdtsc",
-            "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt"]
+            "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt",
+            "ltr", "str", "cpuid", "ud2", "xgetbv", "xsetbv", "wbinvd", "clflush", "invpcid", "swapgs",
+            "rdfsbase", "wrfsbase", "rdgsbase", "wrgsbase", "read_rflags", "call_on_stack"]
             .iter().map(|s| s.to_string()).collect(),
         Arch::Aarch64 => {
             let mut v: Vec<String> = ["wfi", "wfe", "isb", "dsb_sy", "dmb_sy", "irq_enable", "irq_disable", "svc", "brk", "semihost_exit"].iter().map(|s| s.to_string()).collect();
+            for (name, ..) in A64_SYS { v.push(name.to_string()); }
+            v.push("call_on_stack".into());
             for (name, ..) in SYSREGS { v.push(format!("read_{name}")); }
             for (name, _, writable) in SYSREGS.iter().map(|(n, e, w)| (n, e, w)) { if *writable { v.push(format!("write_{name}")); } }
             v
@@ -152,6 +158,36 @@ fn x86_64(op: &str) -> Option<Stub> {
             &["mov ecx, edi", "mov rax, rsi", "mov rdx, rsi", "shr rdx, 0x20", "wrmsr", "ret"]),
         "lgdt" => stub(&[I64], None, &[0x0f, 0x01, 0x17, 0xc3], &["lgdt [rdi]", "ret"]),
         "lidt" => stub(&[I64], None, &[0x0f, 0x01, 0x1f, 0xc3], &["lidt [rdi]", "ret"]),
+        // ADR 0107 (T6). Inline-sized (<= 5 bytes before `ret`) unless noted.
+        "ltr" => stub(&[I16], None, &[0x0f, 0x00, 0xdf, 0xc3], &["ltr di", "ret"]),
+        "str" => stub(&[], Some(I16), &[0x0f, 0x00, 0xc8, 0xc3], &["str eax", "ret"]),
+        "ud2" => stub(&[], None, &[0x0f, 0x0b, 0xc3], &["ud2", "ret"]),
+        "wbinvd" => stub(&[], None, &[0x0f, 0x09, 0xc3], &["wbinvd", "ret"]),
+        "clflush" => stub(&[I64], None, &[0x0f, 0xae, 0x3f, 0xc3], &["clflush byte ptr [rdi]", "ret"]),
+        "swapgs" => stub(&[], None, &[0x0f, 0x01, 0xf8, 0xc3], &["swapgs", "ret"]),
+        "rdfsbase" => stub(&[], Some(I64), &[0xf3, 0x48, 0x0f, 0xae, 0xc0, 0xc3], &["rdfsbase rax", "ret"]),
+        "rdgsbase" => stub(&[], Some(I64), &[0xf3, 0x48, 0x0f, 0xae, 0xc8, 0xc3], &["rdgsbase rax", "ret"]),
+        "wrfsbase" => stub(&[I64], None, &[0xf3, 0x48, 0x0f, 0xae, 0xd7, 0xc3], &["wrfsbase rdi", "ret"]),
+        "wrgsbase" => stub(&[I64], None, &[0xf3, 0x48, 0x0f, 0xae, 0xdf, 0xc3], &["wrgsbase rdi", "ret"]),
+        // invpcid type (rdi), descriptor (rsi): `invpcid rdi, [rsi]`.
+        "invpcid" => stub(&[I64, I64], None, &[0x66, 0x0f, 0x38, 0x82, 0x3e, 0xc3], &["invpcid rdi, xmmword ptr [rsi]", "ret"]),
+        // pushfq / pop rax uses only the stack slot below rsp.
+        "read_rflags" => stub(&[], Some(I64), &[0x9c, 0x58, 0xc3], &["pushfq", "pop rax", "ret"]),
+        "xgetbv" => stub(&[I32], Some(I64), &[0x89, 0xf9, 0x0f, 0x01, 0xd0, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0xc3],
+            &["mov ecx, edi", "xgetbv", "shl rdx, 0x20", "or rax, rdx", "ret"]),
+        "xsetbv" => stub(&[I32, I64], None, &[0x89, 0xf9, 0x48, 0x89, 0xf0, 0x48, 0x89, 0xf2, 0x48, 0xc1, 0xea, 0x20, 0x0f, 0x01, 0xd1, 0xc3],
+            &["mov ecx, edi", "mov rax, rsi", "mov rdx, rsi", "shr rdx, 0x20", "xsetbv", "ret"]),
+        // cpuid(leaf edi, subleaf esi, out rdx): writes eax, ebx, ecx, edx to out[0..4].
+        // rbx is callee-saved, so it is pushed. Not inline-sized: always a call.
+        "cpuid" => stub(&[I32, I32, I64], None,
+            &[0x53, 0x89, 0xf8, 0x89, 0xf1, 0x48, 0x89, 0xd6, 0x0f, 0xa2, 0x89, 0x06, 0x89, 0x5e, 0x04, 0x89, 0x4e, 0x08, 0x89, 0x56, 0x0c, 0x5b, 0xc3],
+            &["push rbx", "mov eax, edi", "mov ecx, esi", "mov rsi, rdx", "cpuid", "mov dword ptr [rsi], eax", "mov dword ptr [rsi + 0x4], ebx",
+              "mov dword ptr [rsi + 0x8], ecx", "mov dword ptr [rsi + 0xc], edx", "pop rbx", "ret"]),
+        // call_on_stack(stack_top rdi, entry rsi, arg rdx): see ADR 0107. rbp is callee-saved
+        // and survives the call, so it carries the old rsp.
+        "call_on_stack" => stub(&[I64, I64, I64], None,
+            &[0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0xfc, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x89, 0xd7, 0xff, 0xd6, 0x48, 0x89, 0xec, 0x5d, 0xc3],
+            &["push rbp", "mov rbp, rsp", "mov rsp, rdi", "and rsp, -0x10", "mov rdi, rdx", "call rsi", "mov rsp, rbp", "pop rbp", "ret"]),
         _ => return None,
     })
 }
@@ -183,6 +219,48 @@ pub(crate) const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
     ("icc_iar1_el1", (3, 0, 12, 12, 0), false),
     ("icc_eoir1_el1", (3, 0, 12, 12, 1), true),
     ("cntvct_el0", (3, 3, 14, 0, 2), false),
+    // ADR 0107 (T6): address translation result, stack pointer of EL0, ID registers.
+    ("par_el1", (3, 0, 7, 4, 0), false),
+    ("sp_el0", (3, 0, 4, 1, 0), true),
+    ("id_aa64mmfr0_el1", (3, 0, 0, 7, 0), false),
+    ("id_aa64mmfr1_el1", (3, 0, 0, 7, 1), false),
+    ("id_aa64pfr0_el1", (3, 0, 0, 4, 0), false),
+    ("ctr_el0", (3, 3, 0, 0, 1), false),
+    ("dczid_el0", (3, 3, 0, 0, 7), false),
+    ("midr_el1", (3, 0, 0, 0, 0), false),
+    ("mpidr_el1", (3, 0, 0, 0, 5), false),
+];
+
+/// aarch64 barriers and SYS-class maintenance instructions: `(name, word,
+/// assembly, takes x0)`. `sys #op1, Cn, Cm, #op2, Xt` is
+/// `0xd5080000 | op1 << 16 | CRn << 12 | CRm << 8 | op2 << 5 | Xt`; the
+/// operand operations use x0. `dsb` is `0xd503309f | CRm << 8`, `dmb`
+/// `0xd50330bf | CRm << 8` (CRm: ish 0b1011, ishst 0b1010, ishld 0b1001,
+/// nsh 0b0111, nshst 0b0110).
+pub(crate) const A64_SYS: &[(&str, u32, &str, bool)] = &[
+    ("tlbi_vmalle1", 0xd508871f, "tlbi vmalle1", false),
+    ("tlbi_vmalle1is", 0xd508831f, "tlbi vmalle1is", false),
+    ("tlbi_vae1", 0xd5088720, "tlbi vae1, x0", true),
+    ("tlbi_vae1is", 0xd5088320, "tlbi vae1is, x0", true),
+    ("tlbi_vale1", 0xd50887a0, "tlbi vale1, x0", true),
+    ("tlbi_aside1", 0xd5088740, "tlbi aside1, x0", true),
+    ("dsb_ish", 0xd5033b9f, "dsb ish", false),
+    ("dsb_ishst", 0xd5033a9f, "dsb ishst", false),
+    ("dsb_nsh", 0xd503379f, "dsb nsh", false),
+    ("dsb_nshst", 0xd503369f, "dsb nshst", false),
+    ("dmb_ish", 0xd5033bbf, "dmb ish", false),
+    ("dmb_ishld", 0xd50339bf, "dmb ishld", false),
+    ("dmb_ishst", 0xd5033abf, "dmb ishst", false),
+    ("ic_iallu", 0xd508751f, "ic iallu", false),
+    ("ic_ialluis", 0xd508711f, "ic ialluis", false),
+    ("ic_ivau", 0xd50b7520, "ic ivau, x0", true),
+    ("dc_civac", 0xd50b7e20, "dc civac, x0", true),
+    ("dc_cvac", 0xd50b7a20, "dc cvac, x0", true),
+    ("dc_ivac", 0xd5087620, "dc ivac, x0", true),
+    ("dc_zva", 0xd50b7420, "dc zva, x0", true),
+    ("dc_cvau", 0xd50b7b20, "dc cvau, x0", true),
+    ("at_s1e1r", 0xd5087800, "at s1e1r, x0", true),
+    ("at_s1e1w", 0xd5087820, "at s1e1w, x0", true),
 ];
 
 fn words(w: &[u32]) -> Vec<u8> {
@@ -193,7 +271,15 @@ fn aarch64(op: &str) -> Option<Stub> {
     use types::I64;
     const RET: u32 = 0xd65f03c0;
     let fixed = |word: u32, asm: &str| Some(Stub { params: vec![], ret: None, code: words(&[word, RET]), asm: vec![asm.into(), "ret".into()] });
+    if let Some((_, word, asm, operand)) = A64_SYS.iter().find(|(n, ..)| *n == op) {
+        return Some(Stub { params: if *operand { vec![I64] } else { vec![] }, ret: None, code: words(&[*word, RET]), asm: vec![asm.to_string(), "ret".into()] });
+    }
     match op {
+        // call_on_stack(stack_top x0, entry x1, arg x2): see ADR 0107. x29 is callee-saved
+        // and carries the old sp; x30 is saved on the old stack.
+        "call_on_stack" => return Some(Stub { params: vec![I64, I64, I64], ret: None,
+            code: words(&[0xa9bf7bfd, 0x910003fd, 0x927cec03, 0x9100007f, 0xaa0203e0, 0xd63f0020, 0x910003bf, 0xa8c17bfd, RET]),
+            asm: vec!["stp x29, x30, [sp, #-0x10]!", "mov x29, sp", "and x3, x0, #0xfffffffffffffff0", "mov sp, x3", "mov x0, x2", "blr x1", "mov sp, x29", "ldp x29, x30, [sp], #0x10", "ret"].into_iter().map(str::to_string).collect() }),
         "svc" => return fixed(0xd4000001, "svc #0"),
         "brk" => return fixed(0xd4200000, "brk #0"),
         "semihost_exit" => return Some(Stub { params: vec![I64], ret: None,

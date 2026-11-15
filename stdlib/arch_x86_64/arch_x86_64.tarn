@@ -102,6 +102,100 @@ extern "intrinsic" fn _lgdt(descriptor *u8)
 pub unsafe fn lidt(descriptor *u8) { _lidt(descriptor) }
 extern "intrinsic" fn _lidt(descriptor *u8)
 
+// ---- Task register, CPU identification, system state (ADR 0107, T6) ---------
+
+/// Load the task register with the TSS descriptor selected by `selector` (`ltr di`). Ring 0.
+/// Requires: the GDT holds an available 64-bit TSS descriptor (type 9, 16 bytes) at `selector`; the CPU marks it busy.
+pub unsafe fn ltr(selector u16) { _ltr(selector) }
+extern "intrinsic" fn _ltr(selector u16)
+
+/// Store the task register selector (`str eax`; only the low 16 bits are the selector). Unprivileged unless CR4.UMIP is set.
+pub unsafe fn str() u16 { return _str() }
+extern "intrinsic" fn _str() u16
+
+/// The registers `cpuid` returns.
+pub struct CpuidResult {
+    pub eax u32
+    pub ebx u32
+    pub ecx u32
+    pub edx u32
+}
+
+/// Execute `cpuid` with `eax = leaf`, `ecx = subleaf` (`cpuid`; the stub saves and restores `rbx`). Unprivileged.
+/// Leaf 0 returns the vendor string in `ebx`, `edx`, `ecx` order (little-endian bytes).
+pub unsafe fn cpuid(leaf u32, subleaf u32) CpuidResult {
+    var out: [4]u32 = [4]u32 { 0, 0, 0, 0 }
+    unsafe { _cpuid(leaf, subleaf, ffi.of_mut(&mut out[0])) }
+    return CpuidResult { eax: out[0], ebx: out[1], ecx: out[2], edx: out[3] }
+}
+extern "intrinsic" fn _cpuid(leaf u32, subleaf u32, out *mut u32)
+
+/// Raise an invalid-opcode exception, vector 6 (`ud2`). Unprivileged.
+pub unsafe fn ud2() { _ud2() }
+extern "intrinsic" fn _ud2()
+
+/// Read extended control register `xcr` (`xgetbv`; xcr 0 is XCR0). Requires CR4.OSXSAVE.
+pub unsafe fn xgetbv(xcr u32) u64 { return _xgetbv(xcr) }
+extern "intrinsic" fn _xgetbv(xcr u32) u64
+
+/// Write extended control register `xcr` (`xsetbv`). Ring 0, CR4.OSXSAVE; `value` must be valid for the CPU or the write raises #GP.
+pub unsafe fn xsetbv(xcr u32, value u64) { _xsetbv(xcr, value) }
+extern "intrinsic" fn _xsetbv(xcr u32, value u64)
+
+/// Write back and invalidate all caches (`wbinvd`). Ring 0. Very slow.
+pub unsafe fn wbinvd() { _wbinvd() }
+extern "intrinsic" fn _wbinvd()
+
+/// Flush the cache line containing `address` (`clflush [address]`). Unprivileged; faults on an unmapped or non-readable address.
+pub unsafe fn clflush(address u64) { _clflush(address) }
+extern "intrinsic" fn _clflush(address u64)
+
+/// Invalidate TLB entries by PCID (`invpcid kind, [descriptor]`). Ring 0, CR4.PCIDE or CPUID.7.EBX.INVPCID.
+/// `kind`: 0 one address, 1 one PCID, 2 all including globals, 3 all except globals.
+/// Requires: `descriptor` points at 16 readable bytes (u64 pcid in bits 0..11, u64 linear address).
+pub unsafe fn invpcid(kind u64, descriptor *u8) { _invpcid(kind, descriptor) }
+extern "intrinsic" fn _invpcid(kind u64, descriptor *u8)
+
+/// Swap the GS base with the `IA32_KERNEL_GS_BASE` MSR (`swapgs`). Ring 0, 64-bit mode.
+pub unsafe fn swapgs() { _swapgs() }
+extern "intrinsic" fn _swapgs()
+
+/// Read the FS base (`rdfsbase`). Requires CR4.FSGSBASE.
+pub unsafe fn rdfsbase() u64 { return _rdfsbase() }
+extern "intrinsic" fn _rdfsbase() u64
+
+/// Write the FS base (`wrfsbase`). Requires CR4.FSGSBASE and a canonical `value`.
+pub unsafe fn wrfsbase(value u64) { _wrfsbase(value) }
+extern "intrinsic" fn _wrfsbase(value u64)
+
+/// Read the GS base (`rdgsbase`). Requires CR4.FSGSBASE.
+pub unsafe fn rdgsbase() u64 { return _rdgsbase() }
+extern "intrinsic" fn _rdgsbase() u64
+
+/// Write the GS base (`wrgsbase`). Requires CR4.FSGSBASE and a canonical `value`.
+pub unsafe fn wrgsbase(value u64) { _wrgsbase(value) }
+extern "intrinsic" fn _wrgsbase(value u64)
+
+/// Read RFLAGS (`pushfq; pop rax`). Unprivileged. Bit 9 is IF.
+pub unsafe fn read_rflags() u64 { return _read_rflags() }
+extern "intrinsic" fn _read_rflags() u64
+
+/// Switch to a new stack, call `entry(arg)` on it and return to the original stack.
+/// `entry` is `ffi.callback(f)` of an ordinary `fn f(arg u64)`.
+/// The stub saves `rbp` on the old stack, copies the old `rsp` into `rbp`
+/// (callee-saved, so `entry` restores it), sets `rsp = stack_top & ~15`, so
+/// `entry` sees the usual `rsp % 16 == 8` after the call pushes its return
+/// address, calls, then restores `rsp` and `rbp`. Callee-saved registers are
+/// preserved by `entry` itself (it is an ordinary C-ABI function).
+/// Requires: `stack_top` is one past the end of at least a few KiB of writable
+/// stack (it grows down; nothing at or above `stack_top` is touched); `entry`
+/// returns normally, does not unwind and does not rely on the old stack
+/// (no pointers to locals of the old stack are reachable from the new stack's
+/// own frames after it returns, and none may be freed while it runs). An `#[interrupt]` that
+/// runs on the new stack uses the new stack unless the IDT selects an IST.
+pub unsafe fn call_on_stack(stack_top u64, entry *u8, arg u64) { _call_on_stack(stack_top, entry, arg) }
+extern "intrinsic" fn _call_on_stack(stack_top u64, entry *u8, arg u64)
+
 // ---- Interrupts (ADR 0101, P7) ----------------------------------------------
 
 /// What the CPU pushes on an interrupt or exception in 64-bit mode (Intel SDM

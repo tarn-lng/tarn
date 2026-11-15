@@ -158,6 +158,160 @@ extern "intrinsic" fn _read_cntfrq_el0() u64
 pub unsafe fn read_cntvct_el0() u64 { return _read_cntvct_el0() }
 extern "intrinsic" fn _read_cntvct_el0() u64
 
+
+// ---- TLB, barriers, cache maintenance, address translation (ADR 0107, T6) ---
+
+/// Invalidate all stage-1 EL1&0 TLB entries of this core (`tlbi vmalle1`). EL1.
+/// Follow with `dsb_nsh()` and `isb()`.
+pub unsafe fn tlbi_vmalle1() { _tlbi_vmalle1() }
+extern "intrinsic" fn _tlbi_vmalle1()
+
+/// As `tlbi_vmalle1` for the Inner Shareable domain (`tlbi vmalle1is`). Follow with `dsb_ish()` and `isb()`.
+pub unsafe fn tlbi_vmalle1is() { _tlbi_vmalle1is() }
+extern "intrinsic" fn _tlbi_vmalle1is()
+
+/// The `Xt` operand of the by-VA TLB instructions: `VA[55:12]` in bits [43:0], `asid` in bits [63:48].
+/// For a global entry (nG = 0) the ASID is ignored by the hardware; pass 0.
+pub fn tlbi_operand(va u64, asid u64) u64 { return ((va >> 12) & 0xfffffffffff) | ((asid & 0xffff) << 48) }
+
+/// Invalidate the entries for the page containing `va` and `asid` (`tlbi vae1, Xt`, operand `tlbi_operand(va, asid)`). EL1.
+pub unsafe fn tlbi_vae1(va u64, asid u64) { _tlbi_vae1(tlbi_operand(va, asid)) }
+extern "intrinsic" fn _tlbi_vae1(operand u64)
+
+/// Inner Shareable `tlbi_vae1` (`tlbi vae1is, Xt`).
+pub unsafe fn tlbi_vae1is(va u64, asid u64) { _tlbi_vae1is(tlbi_operand(va, asid)) }
+extern "intrinsic" fn _tlbi_vae1is(operand u64)
+
+/// Invalidate only last-level (leaf) entries for `va` and `asid` (`tlbi vale1, Xt`). Walk-cache entries stay.
+pub unsafe fn tlbi_vale1(va u64, asid u64) { _tlbi_vale1(tlbi_operand(va, asid)) }
+extern "intrinsic" fn _tlbi_vale1(operand u64)
+
+/// Invalidate every entry tagged with `asid` (`tlbi aside1, Xt`, ASID in bits [63:48]). EL1.
+pub unsafe fn tlbi_aside1(asid u64) { _tlbi_aside1((asid & 0xffff) << 48) }
+extern "intrinsic" fn _tlbi_aside1(operand u64)
+
+/// Data synchronization barrier, Inner Shareable, loads and stores (`dsb ish`).
+pub unsafe fn dsb_ish() { _dsb_ish() }
+extern "intrinsic" fn _dsb_ish()
+
+/// Data synchronization barrier, Inner Shareable, stores only (`dsb ishst`).
+pub unsafe fn dsb_ishst() { _dsb_ishst() }
+extern "intrinsic" fn _dsb_ishst()
+
+/// Data synchronization barrier, Non-shareable (`dsb nsh`).
+pub unsafe fn dsb_nsh() { _dsb_nsh() }
+extern "intrinsic" fn _dsb_nsh()
+
+/// Data synchronization barrier, Non-shareable, stores only (`dsb nshst`).
+pub unsafe fn dsb_nshst() { _dsb_nshst() }
+extern "intrinsic" fn _dsb_nshst()
+
+/// Data memory barrier, Inner Shareable (`dmb ish`).
+pub unsafe fn dmb_ish() { _dmb_ish() }
+extern "intrinsic" fn _dmb_ish()
+
+/// Data memory barrier, Inner Shareable, loads (`dmb ishld`).
+pub unsafe fn dmb_ishld() { _dmb_ishld() }
+extern "intrinsic" fn _dmb_ishld()
+
+/// Data memory barrier, Inner Shareable, stores (`dmb ishst`).
+pub unsafe fn dmb_ishst() { _dmb_ishst() }
+extern "intrinsic" fn _dmb_ishst()
+
+/// Invalidate all instruction caches to the Point of Unification, this core (`ic iallu`). EL1.
+pub unsafe fn ic_iallu() { _ic_iallu() }
+extern "intrinsic" fn _ic_iallu()
+
+/// As `ic_iallu` for the Inner Shareable domain (`ic ialluis`).
+pub unsafe fn ic_ialluis() { _ic_ialluis() }
+extern "intrinsic" fn _ic_ialluis()
+
+/// Invalidate the instruction cache line containing `va` to the PoU (`ic ivau, Xt`). Needs EL0 access (SCTLR_EL1.UCI) or EL1.
+pub unsafe fn ic_ivau(va u64) { _ic_ivau(va) }
+extern "intrinsic" fn _ic_ivau(va u64)
+
+/// Clean and invalidate the data cache line containing `va` to the Point of Coherency (`dc civac, Xt`).
+pub unsafe fn dc_civac(va u64) { _dc_civac(va) }
+extern "intrinsic" fn _dc_civac(va u64)
+
+/// Clean the data cache line containing `va` to the PoC (`dc cvac, Xt`).
+pub unsafe fn dc_cvac(va u64) { _dc_cvac(va) }
+extern "intrinsic" fn _dc_cvac(va u64)
+
+/// Invalidate (without cleaning) the data cache line containing `va` to the PoC (`dc ivac, Xt`). EL1. Discards dirty data
+/// of the line and of unrelated data sharing it: only for lines the caller owns entirely.
+pub unsafe fn dc_ivac(va u64) { _dc_ivac(va) }
+extern "intrinsic" fn _dc_ivac(va u64)
+
+/// Zero the block containing `va` (`dc zva, Xt`); its size is `4 << (dczid_el0() & 15)` bytes and `va` selects the aligned block.
+/// Faults if `dczid_el0()` bit 4 is set. Needs normal memory.
+pub unsafe fn dc_zva(va u64) { _dc_zva(va) }
+extern "intrinsic" fn _dc_zva(va u64)
+
+/// Clean the data cache line containing `va` to the Point of Unification (`dc cvau, Xt`).
+pub unsafe fn dc_cvau(va u64) { _dc_cvau(va) }
+extern "intrinsic" fn _dc_cvau(va u64)
+
+/// Translate `va` for an EL1 read with stage 1 (`at s1e1r, Xt`); the result is in `read_par_el1()`. EL1. Follow with `isb()` before reading PAR_EL1.
+pub unsafe fn at_s1e1r(va u64) { _at_s1e1r(va) }
+extern "intrinsic" fn _at_s1e1r(va u64)
+
+/// Translate `va` for an EL1 write with stage 1 (`at s1e1w, Xt`); the result is in `read_par_el1()`. EL1. Follow with `isb()`.
+pub unsafe fn at_s1e1w(va u64) { _at_s1e1w(va) }
+extern "intrinsic" fn _at_s1e1w(va u64)
+
+/// Read `ID_AA64MMFR0_EL1: memory model features (PARange, ASIDBits, granule support)`. Read-only.
+pub unsafe fn read_id_aa64mmfr0_el1() u64 { return _read_id_aa64mmfr0_el1() }
+extern "intrinsic" fn _read_id_aa64mmfr0_el1() u64
+
+/// Read `ID_AA64MMFR1_EL1: memory model features 1 (HAFDBS, VH, PAN, ...)`. Read-only.
+pub unsafe fn read_id_aa64mmfr1_el1() u64 { return _read_id_aa64mmfr1_el1() }
+extern "intrinsic" fn _read_id_aa64mmfr1_el1() u64
+
+/// Read `ID_AA64PFR0_EL1: processor features 0 (EL support, FP, AdvSIMD, GIC)`. Read-only.
+pub unsafe fn read_id_aa64pfr0_el1() u64 { return _read_id_aa64pfr0_el1() }
+extern "intrinsic" fn _read_id_aa64pfr0_el1() u64
+
+/// Read `CTR_EL0: cache type (line sizes, IDC, DIC)`. Read-only.
+pub unsafe fn read_ctr_el0() u64 { return _read_ctr_el0() }
+extern "intrinsic" fn _read_ctr_el0() u64
+
+/// Read `DCZID_EL0: `dc zva` block size (bits 3:0 is log2 of words; bit 4 prohibits)`. Read-only.
+pub unsafe fn read_dczid_el0() u64 { return _read_dczid_el0() }
+extern "intrinsic" fn _read_dczid_el0() u64
+
+/// Read `MIDR_EL1: main ID (implementer, part number)`. Read-only.
+pub unsafe fn read_midr_el1() u64 { return _read_midr_el1() }
+extern "intrinsic" fn _read_midr_el1() u64
+
+/// Read `MPIDR_EL1: multiprocessor affinity`. Read-only.
+pub unsafe fn read_mpidr_el1() u64 { return _read_mpidr_el1() }
+extern "intrinsic" fn _read_mpidr_el1() u64
+
+/// Read `PAR_EL1: result of the last `at_*` (bit 0 F = fault, bits 47:12 output page, FST in 6:1 on a fault)`. Read-only.
+pub unsafe fn read_par_el1() u64 { return _read_par_el1() }
+extern "intrinsic" fn _read_par_el1() u64
+
+/// Read `SP_EL0`: the EL0 stack pointer (`mrs x0, sp_el0`). EL1.
+pub unsafe fn read_sp_el0() u64 { return _read_sp_el0() }
+extern "intrinsic" fn _read_sp_el0() u64
+
+/// Write `SP_EL0` (`msr sp_el0, x0`). EL1. Takes effect immediately for EL0 and for EL1 code running with SPSel = 0.
+pub unsafe fn write_sp_el0(value u64) { _write_sp_el0(value) }
+extern "intrinsic" fn _write_sp_el0(value u64)
+
+/// Switch to a new stack, call `entry(arg)` on it and return to the original stack.
+/// `entry` is `ffi.callback(f)` of an ordinary `fn f(arg u64)`.
+/// The stub pushes x29/x30 on the old stack, keeps the old sp in x29
+/// (callee-saved, so `entry` preserves it), sets `sp = stack_top & ~15`,
+/// `blr`s `entry` with `x0 = arg`, then restores sp, x29 and x30 and returns.
+/// Requires: `stack_top` is one past the end of at least a few KiB of writable
+/// normal memory (the stack grows down; nothing at or above it is touched) and
+/// `entry` returns normally. Exceptions taken while on the new stack use the
+/// new stack (`SP_ELx`); it must stay mapped.
+pub unsafe fn call_on_stack(stack_top u64, entry *u8, arg u64) { _call_on_stack(stack_top, entry, arg) }
+extern "intrinsic" fn _call_on_stack(stack_top u64, entry *u8, arg u64)
+
 // ---- Exceptions (ADR 0101, P7) -----------------------------------------------
 //
 // `#[interrupt(slot)]` puts a handler's trampoline in the compiler-generated
@@ -193,11 +347,21 @@ fn set_frame_word(frame *mut ExceptionFrame, index usize, value u64) {
     unsafe { ffi.write(ffi.offset_mut(base, index), value) }
 }
 
-/// Saved general register `x<index>` (0..=30); index 31 would read ELR; use `frame_elr`.
+/// Saved general register `x<index>`. `index` must be 0..=30 (x30 is the link register); a larger index
+/// panics instead of reading ELR/SPSR/SP, which have `frame_elr`, `frame_spsr` and `frame_sp`.
 /// Requires: `frame` points at a live `ExceptionFrame`.
-pub unsafe fn frame_x(frame *ExceptionFrame, index usize) u64 { return frame_word(frame, index) }
-/// Change the value `x<index>` has after `eret`. Requires: the handler's own frame, `index` 0..=30.
-pub unsafe fn set_frame_x(frame *mut ExceptionFrame, index usize, value u64) { set_frame_word(frame, index, value) }
+pub unsafe fn frame_x(frame *ExceptionFrame, index usize) u64 {
+    if index > 30 { panic("frame_x: register index out of range 0..=30") }
+    return frame_word(frame, index)
+}
+/// Change the value `x<index>` has after `eret`. `index` must be 0..=30 (panics otherwise). Requires: the handler's own frame.
+pub unsafe fn set_frame_x(frame *mut ExceptionFrame, index usize, value u64) {
+    if index > 30 { panic("set_frame_x: register index out of range 0..=30") }
+    set_frame_word(frame, index, value)
+}
+/// The stack pointer of the interrupted code (`SP_EL0` or `SP_EL1`, according to its SPSR.M and SPSel).
+/// The trampoline records it; changing it is not supported (the slot is not restored).
+pub unsafe fn frame_sp(frame *ExceptionFrame) u64 { return frame_word(frame, 33) }
 /// Saved ELR_EL1: where `eret` resumes.
 pub unsafe fn frame_elr(frame *ExceptionFrame) u64 { return frame_word(frame, 31) }
 /// Change where `eret` resumes. Requires: the handler's own frame; `elr` is code to run at the saved level.
