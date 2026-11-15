@@ -1407,3 +1407,17 @@ Tarn should grow from evidence gathered through:
 Prefer real pressure from actual programs over speculative complexity.
 
 A small coherent language is better than a large language made of prematurely copied features.
+
+## Resource limits (mandatory)
+
+Builds, tests and emulators must never saturate the developer machine (a
+laptop; saturation has forced reboots):
+- At most 2 parallel compiler jobs and 2 test threads (`.cargo/config.toml`
+  enforces `jobs = 2` and `RUST_TEST_THREADS = 2` in Tarn).
+- Run heavy commands with `nice -n 10` (Cairn tools renice themselves).
+- One QEMU instance at a time, 1 vCPU, no more than 512 MiB unless a test needs
+  more; no parallel test suites.
+- Only one agent builds or runs tests at any time; agents working in parallel
+  must not run heavy commands simultaneously.
+- Prefer targeted tests (`--test name`, a single case) and run full suites only
+  before committing.
