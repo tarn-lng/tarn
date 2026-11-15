@@ -1,0 +1,28 @@
+#[must_consume]
+struct Task { id u64 }
+fn reap(task Task) { match task { Task{id} => print(id) } }
+fn fill(slot &mut Option<Task>) { slot.put(Task{id: 1}) }
+fn build() Option<Task> {
+    var slot: Option<Task> = None
+    fill(&mut slot)
+    return slot
+}
+fn main() {
+    var slot: Option<Task> = None
+    fill(&mut slot)
+    match slot {
+        Some(task) => reap(task)
+        None => {}
+    }
+    match build() {
+        Some(task) => reap(task)
+        None => {}
+    }
+    var drained: Option<Task> = None
+    drained.put(Task{id: 2})
+    match drained.take() {
+        Some(task) => reap(task)
+        None => {}
+    }
+    finish_empty(drained)
+}

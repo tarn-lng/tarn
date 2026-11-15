@@ -358,9 +358,17 @@ impl Cx<'_> {
                     self.operand(o, st, at_k(i as u32));
                 }
             }
-            Rvalue::Ref(_, p) => self.read(p, st, span, true),
-            Rvalue::SliceRef { base, start, end, .. } => {
+            Rvalue::Ref(mutable, p) => {
+                self.read(p, st, span, true);
+                if *mutable {
+                    self.forget_empty_variants(p, st);
+                }
+            }
+            Rvalue::SliceRef { mutable, base, start, end } => {
                 self.read(base, st, span, true);
+                if *mutable {
+                    self.forget_empty_variants(base, st);
+                }
                 for (i, o) in start.iter().chain(end.iter()).enumerate() {
                     self.operand(o, st, at_k(i as u32));
                 }
@@ -589,6 +597,26 @@ impl Cx<'_> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// An exclusive borrow can install an owner the checker does not see
+    /// (`slot.put(v)`, `replace_owned(&mut slot, Some(v))`, a callee or a
+    /// capturing closure). Knowledge that a payload is absent (a `None`
+    /// construction or a discriminant edge) therefore ends where the place is
+    /// mutably borrowed: every initialized path below it owes its payload
+    /// again until a later discriminant test proves otherwise.
+    fn forget_empty_variants(&self, place: &Place, st: &mut State) {
+        if self.t.decls.must_consume.is_empty() {
+            return;
+        }
+        let Lookup::Exact(root) = self.mp.lookup(place) else {
+            return;
+        };
+        for &p in self.mp.subtree(root) {
+            if st.init.contains(p.0 as usize) {
+                st.obligations.insert(p.0 as usize);
             }
         }
     }

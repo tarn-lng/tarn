@@ -1,0 +1,12 @@
+#[must_consume]
+struct Task { id u64 }
+fn reap(task Task) { match task { Task{id} => print(id) } }
+struct Table { current Result<Task, u64> }
+fn main() {
+    var table: Table = Table{current: Err(0)}
+    old := replace_owned(&mut table.current, Ok(Task{id: 1}))
+    match old {
+        Ok(task) => reap(task)
+        Err(code) => print(code)
+    }
+}

@@ -1,0 +1,12 @@
+#[must_consume]
+struct Task { id u64 }
+fn reap(task Task) { match task { Task{id} => print(id) } }
+fn fill(slot &mut Option<Task>) { slot.put(Task{id: 1}) }
+fn run(input Option<Task>) {
+    var slot: Option<Task> = input
+    match slot {
+        Some(task) => reap(task)
+        None => fill(&mut slot)
+    }
+}
+fn main() { run(None) }

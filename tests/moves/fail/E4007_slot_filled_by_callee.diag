@@ -1,0 +1,11 @@
+error[E4007]: must-consume value `slot` of type `Option<Task>` would be implicitly dropped
+  --> tests/moves/fail/E4007_slot_filled_by_callee.tarn:11:1
+   |
+ 6 |     var slot: Option<Task> = input
+   |     ------------------------------ resource is held here
+11 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = note: functions taking `Option<Task>` by value: run
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

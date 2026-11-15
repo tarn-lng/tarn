@@ -1,0 +1,10 @@
+error[E4007]: must-consume value `table` of type `Table` would be implicitly dropped
+  --> tests/moves/fail/E4007_slot_field_exchanged.tarn:12:1
+   |
+ 6 |     var table: Table = Table{current: Err(0)}
+   |     ----------------------------------------- resource is held here
+12 | }
+   | ^ this path leaves an unconsumed resource
+   |
+   = help: move it into a consuming call, a returned value, or an owned field on every path; only its defining module may explicitly destructure it
+

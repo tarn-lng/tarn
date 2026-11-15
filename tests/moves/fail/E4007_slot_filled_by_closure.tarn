@@ -1,0 +1,7 @@
+#[must_consume]
+struct Task { id u64 }
+fn main() {
+    var slot: Option<Task> = None
+    fill := fn() { slot.put(Task{id: 1}) }
+    fill()
+}
