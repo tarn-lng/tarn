@@ -52,8 +52,12 @@ fn boot(qemu: &Path, elf: &Path) -> (String, i32) {
 }
 
 fn boot_with_memory(qemu: &Path, elf: &Path, memory: &str) -> (String, i32) {
+    boot_with_cpu(qemu, elf, memory, "qemu64")
+}
+
+fn boot_with_cpu(qemu: &Path, elf: &Path, memory: &str, cpu: &str) -> (String, i32) {
     let mut child = Command::new(qemu)
-        .args(["-kernel"]).arg(elf)
+        .args(["-cpu", cpu, "-kernel"]).arg(elf)
         .args(["-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-m", memory])
         .args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"])
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
@@ -280,4 +284,25 @@ fn maximum_identity_map_encodes_physical_addresses_above_four_gib() {
     assert_eq!(status, EXIT_OK, "{output}");
     assert!(output.contains("identity 512GiB: first, 4GiB and final page entries ok"), "{output}");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn check_task_switching(output: &str) {
+    let tasks: Vec<_> = output.lines().filter(|l| l.starts_with("coop: task ") || l.starts_with("preempt: task ")).collect();
+    assert_eq!(tasks, ["coop: task 1 turn 0", "coop: task 2 turn 0", "coop: task 1 turn 1", "coop: task 2 turn 1", "coop: task 1 turn 2", "coop: task 2 turn 2",
+        "preempt: task 1", "preempt: task 2", "preempt: task 1", "preempt: task 2", "preempt: task 1", "preempt: task 2"], "{output}");
+    assert!(output.contains("switch_stack: entered new stack without return"), "{output}");
+    assert!(output.contains("coop: contexts restored"), "{output}");
+    assert!(output.contains("preempt: timer switched both busy tasks"), "{output}");
+}
+
+#[test]
+fn contexts_and_smap_execute_on_a_max_cpu() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("contexts-smap");
+    let elf = build(&dir, &example(), &linker);
+    let (output, status) = boot_with_cpu(&qemu, &elf, "64", "max");
+    let _ = std::fs::remove_dir_all(dir);
+    assert_eq!(status, 33, "{output}");
+    check_task_switching(&output);
+    assert!(output.contains("smap: stac/clac window ok"), "{output}");
 }

@@ -83,6 +83,10 @@ fn boot(qemu: &Path, image: &Path, machine: &str, cpu: &str) -> (String, i32) {
 }
 
 fn check_success(output: &str) {
+    check_task_switching(output);
+    assert!(output.contains("sp_el0: exception returned on task stack"), "{output}");
+    assert!(output.contains("stack overflow: recursive task hit guard page"), "{output}");
+    assert!(output.contains("stack overflow: reported on separate SP_EL1 exception stack"), "{output}");
     let lines: Vec<&str> = output.lines().collect();
     let expected = [
         "tarn arm64: booted",
@@ -175,4 +179,25 @@ fn frame_x_rejects_registers_above_x30() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(status, 1, "{output}");
     assert!(output.contains("PANIC: frame_x: register index out of range 0..=30"), "{output}");
+}
+
+fn check_task_switching(output: &str) {
+    let tasks: Vec<_> = output.lines().filter(|l| l.starts_with("coop: task ") || l.starts_with("preempt: task ")).collect();
+    assert_eq!(tasks, ["coop: task 1 turn 0", "coop: task 2 turn 0", "coop: task 1 turn 1", "coop: task 2 turn 1", "coop: task 1 turn 2", "coop: task 2 turn 2",
+        "preempt: task 1", "preempt: task 2", "preempt: task 1", "preempt: task 2", "preempt: task 1", "preempt: task 2"], "{output}");
+    assert!(output.contains("switch_stack: entered new stack without return"), "{output}");
+    assert!(output.contains("coop: contexts restored"), "{output}");
+    assert!(output.contains("preempt: timer switched both busy tasks"), "{output}");
+}
+
+#[test]
+fn contexts_pan_and_exception_stack_execute_on_a_max_cpu() {
+    let Some((qemu, linker)) = tools() else { return };
+    let dir = scratch("contexts-pan");
+    let image = build(&dir, &example(), &linker);
+    let (output, status) = boot(&qemu, &image, "virt,gic-version=3", "max");
+    let _ = std::fs::remove_dir_all(dir);
+    assert_eq!(status, 0, "{output}");
+    check_success(&output);
+    assert!(output.contains("pan: protected/open/protected window ok"), "{output}");
 }

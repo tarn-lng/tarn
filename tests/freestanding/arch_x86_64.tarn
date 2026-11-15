@@ -57,3 +57,19 @@ fn main() {
         arch_x86_64.hlt()
     }
 }
+
+#[export("contexts")]
+fn contexts() {
+    unsafe {
+        arch_x86_64.context_init(FROM, 0x20000, ffi.callback(on_stack), 41)
+        arch_x86_64.context_init(TO, 0x10000, ffi.callback(on_stack), 42)
+        arch_x86_64.context_switch(FROM, ffi.to_const(TO))
+        arch_x86_64.stac()
+        arch_x86_64.clac()
+        arch_x86_64.switch_stack(0x10000, ffi.callback(on_stack), 42)
+    }
+}
+
+#[section(".context_from")]
+static mut FROM arch_x86_64.Context
+static mut TO arch_x86_64.Context

@@ -500,6 +500,7 @@ fn timer(frame *mut arch_aarch64.ExceptionFrame) {
         arch_aarch64.write_cntv_tval_el0(arch_aarch64.read_cntfrq_el0() / 100)
         if peek(ffi.address(TICKS)) < 10 { arch_aarch64.write_cntv_ctl_el0(1) }
         arch_aarch64.write_icc_eoir1_el1(irq)
+        schedule_tick()
     }
 }
 fn start_timer() {
@@ -550,13 +551,199 @@ fn kmain(dtb u64) {
     if peek(ffi.address(SYNC)) != 11 { panic("brk handler did not return") }
     println("brk: returned")
     mmu_demo()
+    pan_demo()
     call_on_stack_demo()
+    cooperative_demo()
     heap_reuse()
     start_timer()
     for peek(ffi.address(TICKS)) < 10 { unsafe { arch_aarch64.wfi() } }
     unsafe { arch_aarch64.irq_disable() }
     println("10 timer interrupts")
     println("ticks ok")
+    preemptive_demo()
     println("tarn arm64: done")
-    exit(EXIT_OK)
+    overflow_demo()
+}
+
+// ---- Stackful cooperative and timer-preempted tasks (ADR 0109) ----
+#[align(16)]
+static mut TASK_STACK_A [32768]u8
+#[align(16)]
+static mut TASK_STACK_B [32768]u8
+static mut ROOT_CONTEXT arch_aarch64.Context
+static mut TASK_A arch_aarch64.Context
+static mut TASK_B arch_aarch64.Context
+static mut CURRENT_TASK u64
+static mut PREEMPTING u64
+static mut PREEMPTIONS u64
+static mut RAN_A u64
+static mut RAN_B u64
+
+fn task_context(id u64) *mut arch_aarch64.Context {
+    if id == 1 { return TASK_A }
+    return TASK_B
+}
+fn task_yield() {
+    id := peek(ffi.address(CURRENT_TASK))
+    next := 3 - id
+    poke(ffi.address(CURRENT_TASK), next)
+    unsafe { arch_aarch64.context_switch(task_context(id), ffi.to_const(task_context(next))) }
+}
+fn cooperative_task(id u64) {
+    var turn: u64 = 0
+    for turn < 3 {
+        print_text("coop: task ")
+        print_number(id)
+        print_text(" turn ")
+        print_number(turn)
+        newline()
+        turn = turn + 1
+        if id == 2 && turn == 3 {
+            unsafe { arch_aarch64.switch_stack(u64(ffi.address(SIDE_STACK) + 16384), ffi.callback(one_way_entry), 77) }
+            panic("finished cooperative task resumed")
+        }
+        task_yield()
+    }
+    panic("finished cooperative task resumed")
+}
+fn preempted_task(id u64) {
+    // No yield: only the timer handler can transfer control to the other task.
+    if id == 1 { poke(ffi.address(RAN_A), 1) } else { poke(ffi.address(RAN_B), 1) }
+    unsafe { arch_aarch64.irq_enable() }
+    for true {
+        if id == 1 { poke(ffi.address(RAN_A), peek(ffi.address(RAN_A)) | 2) } else { poke(ffi.address(RAN_B), peek(ffi.address(RAN_B)) | 2) }
+    }
+}
+fn initialize_tasks(preempt bool) {
+    var entry: *u8 = ffi.callback(cooperative_task)
+    if preempt { entry = ffi.callback(preempted_task) }
+    unsafe {
+        arch_aarch64.context_init(TASK_A, u64(ffi.address(TASK_STACK_A) + 32768), entry, 1)
+        arch_aarch64.context_init(TASK_B, u64(ffi.address(TASK_STACK_B) + 32768), entry, 2)
+    }
+    poke(ffi.address(CURRENT_TASK), 1)
+}
+fn cooperative_demo() {
+    initialize_tasks(false)
+    unsafe { arch_aarch64.context_switch(ROOT_CONTEXT, ffi.to_const(TASK_A)) }
+    println("coop: contexts restored")
+}
+fn schedule_tick() {
+    if peek(ffi.address(PREEMPTING)) == 0 { return }
+    id := peek(ffi.address(CURRENT_TASK))
+    print_text("preempt: task ")
+    print_number(id)
+    newline()
+    count := peek(ffi.address(PREEMPTIONS)) + 1
+    poke(ffi.address(PREEMPTIONS), count)
+    if count == 6 {
+        poke(ffi.address(PREEMPTING), 0)
+        unsafe { arch_aarch64.context_switch(task_context(id), ffi.to_const(ROOT_CONTEXT)) }
+    } else { task_yield() }
+}
+fn preemptive_demo() {
+    initialize_tasks(true)
+    poke(ffi.address(PREEMPTING), 1)
+    poke(ffi.address(TICKS), 0)
+    unsafe {
+        arch_aarch64.write_cntv_tval_el0(arch_aarch64.read_cntfrq_el0() / 100)
+        arch_aarch64.write_cntv_ctl_el0(1)
+    }
+    unsafe { arch_aarch64.context_switch(ROOT_CONTEXT, ffi.to_const(TASK_A)) }
+    unsafe { arch_aarch64.irq_disable() }
+    unsafe { arch_aarch64.write_cntv_ctl_el0(0) }
+    if peek(ffi.address(RAN_A)) != 3 || peek(ffi.address(RAN_B)) != 3 { panic("preemption did not run both tasks") }
+    println("preempt: timer switched both busy tasks")
+}
+
+fn pan_demo() {
+    unsafe {
+        if ((arch_aarch64.read_id_aa64mmfr1_el1() >> 20) & 15) == 0 {
+            println("pan: unavailable")
+            return
+        }
+        arch_aarch64.pan_enable()
+        if (arch_aarch64.read_pan() & (1 << 22)) == 0 { panic("PAN set failed") }
+        arch_aarch64.pan_disable()
+        if arch_aarch64.read_pan() != 0 { panic("PAN clear failed") }
+        arch_aarch64.pan_enable()
+        println("pan: protected/open/protected window ok")
+    }
+}
+#[align(4096)]
+static mut OVERFLOW_L2 [512]u64
+#[align(4096)]
+static mut OVERFLOW_L3 [512]u64
+#[align(4096)]
+static mut OVERFLOW_STACK [16384]u8
+static mut EXCEPTION_TOP u64
+static mut OVERFLOW_DEPTH u64
+
+// Deliberately consumes a real frame on every recursive call. The volatile
+// slot and post-call read forbid tail recursion and dead frame elimination.
+fn overflow_recurse(depth u64) {
+    var words: [64]u64 = [64]u64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+    p: *mut u64 := ffi.from_address(ffi.address(ffi.of_mut(&mut words)))
+    unsafe { ffi.write_volatile(p, depth) }
+    poke(ffi.address(OVERFLOW_DEPTH), depth)
+    overflow_recurse(depth + 1)
+    unsafe { print_number(ffi.read_volatile(p)) }
+}
+fn overflow_entry(arg u64) {
+    unsafe {
+        arch_aarch64.write_spsel(0)
+        if arch_aarch64.read_spsel() != 0 { panic("task did not enter SP_EL0") }
+        if arch_aarch64.read_sp() < 0x80001000 { panic("bad task SP") }
+    }
+    unsafe { arch_aarch64.svc() }
+    println("sp_el0: exception returned on task stack")
+    overflow_recurse(arg)
+}
+#[interrupt(0)]
+fn overflow_exception(frame *mut arch_aarch64.ExceptionFrame) {
+    unsafe {
+        far := arch_aarch64.read_far_el1()
+        sp := arch_aarch64.read_sp()
+        top := peek(ffi.address(EXCEPTION_TOP))
+        if arch_aarch64.read_spsel() != 1 || sp > top || sp + 65536 < top { panic("fault not on exception stack") }
+        if (arch_aarch64.read_esr_el1() >> 26) == 21 {
+            saved_sp := arch_aarch64.frame_sp(frame)
+            if saved_sp < 0x80001000 || saved_sp >= 0x80005000 { panic("SP_EL0 exception saved wrong stack") }
+            arch_aarch64.set_frame_sp(frame, saved_sp)
+            return
+        }
+        if (arch_aarch64.read_esr_el1() >> 26) != 37 || far < 0x80000000 || far >= 0x80001000 { panic("fault did not hit stack guard") }
+        if arch_aarch64.frame_sp(frame) >= 0x80005000 || peek(ffi.address(OVERFLOW_DEPTH)) < 2 { panic("no real recursive overflow") }
+        println("stack overflow: recursive task hit guard page")
+        println("stack overflow: reported on separate SP_EL1 exception stack")
+        exit(EXIT_OK)
+    }
+}
+fn overflow_demo() {
+    poke(ffi.address(L1) + 16, u64(ffi.address(OVERFLOW_L2)) | 3)
+    poke(ffi.address(OVERFLOW_L2), u64(ffi.address(OVERFLOW_L3)) | 3)
+    var i: usize = 0
+    for i < 4 {
+        poke(ffi.address(OVERFLOW_L3) + (i + 1) * 8, u64(ffi.address(OVERFLOW_STACK) + i * 4096) | 0x707)
+        i = i + 1
+    }
+    unsafe {
+        arch_aarch64.dsb_ishst()
+        arch_aarch64.tlbi_vmalle1is()
+        arch_aarch64.dsb_ish()
+        arch_aarch64.isb()
+        poke(ffi.address(EXCEPTION_TOP), arch_aarch64.read_sp())
+        arch_aarch64.switch_stack_el0(0x80005000, ffi.callback(overflow_entry), 1)
+    }
+}
+
+static mut ABANDONED_CONTEXT arch_aarch64.Context
+fn one_way_entry(arg u64) {
+    var marker: u64 = arg
+    here := ffi.address(ffi.of(&marker))
+    base := ffi.address(SIDE_STACK)
+    if arg != 77 || here < base || here >= base + 16384 { panic("switch_stack: bad stack or argument") }
+    println("switch_stack: entered new stack without return")
+    unsafe { arch_aarch64.context_switch(ABANDONED_CONTEXT, ffi.to_const(ROOT_CONTEXT)) }
+    panic("abandoned stack resumed")
 }

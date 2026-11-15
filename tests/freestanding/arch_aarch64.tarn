@@ -89,3 +89,24 @@ fn main() {
         arch_aarch64.call_on_stack(sp0, ffi.callback(on_stack), 1)
     }
 }
+
+#[export("contexts")]
+fn contexts() {
+    unsafe {
+        arch_aarch64.context_init(FROM, 0x20000, ffi.callback(on_stack), 41)
+        arch_aarch64.context_init(TO, 0x10000, ffi.callback(on_stack), 42)
+        arch_aarch64.context_switch(FROM, ffi.to_const(TO))
+        sp := arch_aarch64.read_sp()
+        sel := arch_aarch64.read_spsel()
+        arch_aarch64.write_spsel(sel)
+        pan := arch_aarch64.read_pan()
+        arch_aarch64.pan_enable()
+        arch_aarch64.pan_disable()
+        if sel == 0 { arch_aarch64.switch_stack_el0(sp + pan, ffi.callback(on_stack), 42) }
+        arch_aarch64.switch_stack(0x10000, ffi.callback(on_stack), 42)
+    }
+}
+
+#[section(".context_from")]
+static mut FROM arch_aarch64.Context
+static mut TO arch_aarch64.Context

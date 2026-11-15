@@ -296,7 +296,7 @@ extern "intrinsic" fn _read_par_el1() u64
 pub unsafe fn read_sp_el0() u64 { return _read_sp_el0() }
 extern "intrinsic" fn _read_sp_el0() u64
 
-/// Write `SP_EL0` (`msr sp_el0, x0`). EL1. Takes effect immediately for EL0 and for EL1 code running with SPSel = 0.
+/// Write `SP_EL0` (`msr sp_el0, x0`). EL1. Requires SPSel = 1; accessing this register with SPSel = 0 is undefined.
 pub unsafe fn write_sp_el0(value u64) { _write_sp_el0(value) }
 extern "intrinsic" fn _write_sp_el0(value u64)
 
@@ -307,8 +307,9 @@ extern "intrinsic" fn _write_sp_el0(value u64)
 /// `blr`s `entry` with `x0 = arg`, then restores sp, x29 and x30 and returns.
 /// Requires: `stack_top` is one past the end of at least a few KiB of writable
 /// normal memory (the stack grows down; nothing at or above it is touched) and
-/// `entry` returns normally. Exceptions taken while on the new stack use the
-/// new stack (`SP_ELx`); it must stay mapped.
+/// `entry` returns normally. With SPSel=1, exceptions use this same stack;
+/// with SPSel=0, exceptions use SP_EL1, which the caller must provision.
+/// Both execution and exception stacks must stay mapped.
 pub unsafe fn call_on_stack(stack_top u64, entry *u8, arg u64) { _call_on_stack(stack_top, entry, arg) }
 extern "intrinsic" fn _call_on_stack(stack_top u64, entry *u8, arg u64)
 
@@ -328,7 +329,7 @@ extern "intrinsic" fn _call_on_stack(stack_top u64, entry *u8, arg u64)
 
 /// The register state an `#[interrupt]` handler receives a pointer to: x0..x30,
 /// then ELR_EL1, SPSR_EL1 and the stack pointer at the time of the exception
-/// (informational; not restored). 272 bytes. The 32 SIMD registers are saved
+/// (restored to SP_EL0 for EL0t/EL1t). 272 bytes. The 32 SIMD registers are saved
 /// right after it and restored too. The handler may change `x`, `elr` and
 /// `spsr`: they are written back before `eret`.
 pub struct ExceptionFrame {
@@ -360,7 +361,7 @@ pub unsafe fn set_frame_x(frame *mut ExceptionFrame, index usize, value u64) {
     set_frame_word(frame, index, value)
 }
 /// The stack pointer of the interrupted code (`SP_EL0` or `SP_EL1`, according to its SPSR.M and SPSel).
-/// The trampoline records it; changing it is not supported (the slot is not restored).
+/// Restored to SP_EL0 when SPSR.M selects EL0t/EL1t; EL1h uses the original exception stack.
 pub unsafe fn frame_sp(frame *ExceptionFrame) u64 { return frame_word(frame, 33) }
 /// Saved ELR_EL1: where `eret` resumes.
 pub unsafe fn frame_elr(frame *ExceptionFrame) u64 { return frame_word(frame, 31) }
@@ -420,3 +421,71 @@ extern "intrinsic" fn _read_icc_eoir1_el1() u64
 /// Write GICv3 icc_eoir1_el1; requires EL1 and enabled system-register interface.
 pub unsafe fn write_icc_eoir1_el1(value u64) { _write_icc_eoir1_el1(value) }
 extern "intrinsic" fn _write_icc_eoir1_el1(value u64)
+
+// ---- Stackful execution contexts (ADR 0109) ----
+/// One-way transfer to entry(arg) on a writable, 16-byte aligned stack.
+/// The entry must never return; returning traps. The old stack is abandoned.
+pub unsafe fn switch_stack(stack_top u64, entry *u8, arg u64) never {
+    _switch_stack(stack_top, entry, arg)
+    for true {}
+}
+extern "intrinsic" fn _switch_stack(stack_top u64, entry *u8, arg u64)
+
+/// Suspend this C ABI call and resume another. Both contexts and stacks must
+/// remain live and exclusively owned; mask interrupts around scheduler state.
+/// Address spaces, TLS, interrupt masks and extended FP state belong to the caller.
+pub unsafe fn context_switch(from *mut Context, to *Context) { _context_switch(from, to) }
+extern "intrinsic" fn _context_switch(from *mut Context, to *Context)
+
+/// AAPCS64 x19..x30, SP, low halves of v8..v15 and initial argument.
+pub struct Context {
+    x[12]u64
+    sp u64
+    d[8]u64
+    arg u64
+}
+/// Initialize a dormant context. Entry is ffi.callback(fn(arg u64)) and must
+/// never return. Stack memory must be writable, mapped and large enough.
+pub unsafe fn context_init(context *mut Context, stack_top u64, entry *u8, arg u64) {
+    unsafe {
+        base: *mut u64 := ffi.from_address(ffi.address(context))
+        var i: usize = 0
+        for i < 22 {
+            ffi.write(ffi.offset_mut(base, i), 0)
+            i = i + 1
+        }
+        ffi.write(ffi.offset_mut(base, 11), u64(ffi.address(entry)))
+        ffi.write(ffi.offset_mut(base, 12), stack_top & 0xfffffffffffffff0)
+        ffi.write(ffi.offset_mut(base, 21), arg)
+    }
+}
+/// Current active stack pointer (EL0 or EL1).
+pub unsafe fn read_sp() u64 { return _read_sp() }
+extern "intrinsic" fn _read_sp() u64
+/// Select SP_EL0 (0) or SP_EL1 (1). Both must address the SAME live frame
+/// when called from ordinary Tarn code; prefer switch_stack_el0 for different stacks.
+pub unsafe fn write_spsel(value u64) { _write_spsel(value) }
+extern "intrinsic" fn _write_spsel(value u64)
+pub unsafe fn read_spsel() u64 { return _read_spsel() }
+extern "intrinsic" fn _read_spsel() u64
+/// PAN bit in position 22; requires ID_AA64MMFR1_EL1.PAN != 0 and EL1+.
+pub unsafe fn read_pan() u64 { return _read_pan() }
+extern "intrinsic" fn _read_pan() u64
+/// Close/open user-memory access. Requires FEAT_PAN.
+pub unsafe fn pan_enable() { _pan_enable() }
+extern "intrinsic" fn _pan_enable()
+pub unsafe fn pan_disable() { _pan_disable() }
+extern "intrinsic" fn _pan_disable()
+
+/// One-way entry on SP_EL0; preserves the current SP_EL1 as exception stack.
+/// Must run at EL1 with SPSel=1, IRQs masked and vector slots 0/1 installed.
+/// Entry never returns; stack and exception stack must remain mapped.
+pub unsafe fn switch_stack_el0(stack_top u64, entry *u8, arg u64) never {
+    _switch_stack_el0(stack_top, entry, arg)
+    for true {}
+}
+extern "intrinsic" fn _switch_stack_el0(stack_top u64, entry *u8, arg u64)
+
+/// Change the stack restored to SP_EL0 on return to EL0t/EL1t. Requires a live
+/// handler frame and valid mapped stack; does not redirect an EL1h return.
+pub unsafe fn set_frame_sp(frame *mut ExceptionFrame, sp u64) { set_frame_word(frame, 33, sp) }

@@ -1,6 +1,6 @@
 # Systems readiness plan (from the Cairn OS proving ground)
 
-Status: in progress; L1 complete, remaining items planned. Source: friction recorded while building Cairn phase 0
+Status: in progress; L1 complete, A1–A3 complete, remaining items planned. Source: friction recorded while building Cairn phase 0
 (`../cairn/docs/phase-0-progress.md`), after patches T1–T6 (ADRs 0102–0107).
 
 ## Rule
@@ -34,9 +34,9 @@ special case or escape hatch. Items that are only workarounds are rejected.
 
 | # | Capability | Need |
 |---|---|---|
-| A1 | aarch64 `SPSel` write and current `sp` read | Exceptions on a separate stack → real stack-overflow reports on aarch64 |
-| A2 | aarch64 `msr pan`, x86 `stac`/`clac` | Kernel/user memory separation (PAN, SMAP) for phase 2 |
-| A3 | One-way `switch_stack` (no return) next to `call_on_stack` | Context switch and task entry (phase 1) |
+| A1 ✓ | aarch64 `SPSel` write and current `sp` read | Exceptions on a separate stack → real stack-overflow reports on aarch64 |
+| A2 ✓ | aarch64 `msr pan`, x86 `stac`/`clac` | Kernel/user memory separation (PAN, SMAP) for phase 2 |
+| A3 ✓ | One-way `switch_stack` (no return) next to `call_on_stack` | Context switch and task entry (phase 1) |
 
 ## Rejected (shortcuts, not language value)
 
@@ -47,7 +47,7 @@ special case or escape hatch. Items that are only workarounds are rejected.
 
 1. L1 **done** ([ADR 0108](adr/0108-must-consume-types.md); [pinned Cairn follow-up](must-consume-report.md)) — the flagship: turns the OS's resource discipline into a language guarantee.
 2. C1 (path/workspace dependencies) — unblocks clean modular builds.
-3. A1–A3 — required by Cairn phases 1–2.
+3. A1–A3 **done** ([ADR 0109](adr/0109-execution-contexts-and-user-access.md)) — guarded exception stacks, PAN/SMAP windows and cooperative/preemptive C ABI contexts; Cairn integration described in [the follow-up](execution-contexts-report.md).
 4. L2, L3, L5, L6 — broad ergonomics.
 5. L4, L7, C2, C3 — smaller completions.
 

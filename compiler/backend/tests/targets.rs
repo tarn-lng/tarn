@@ -735,10 +735,10 @@ fn trampolines_disassemble_to_the_documented_sequence() {
         let Some(disassembly) = disassembly_of(&bytes, target, intel, "") else { eprintln!("objdump unavailable; skipping {target}"); continue };
         for (name, error_code) in variants {
             let symbol = symbol_named(&elf, name);
-            let expected = tarn_backend::interrupt_listing(arch, error_code);
+            let expected: Vec<_> = tarn_backend::interrupt_listing(arch, error_code).into_iter().map(|l| if l.starts_with("tbnz ") { l.rsplit_once(", ").unwrap().0.to_string() } else { l }).collect();
             let actual = disassembly.get(&symbol.name).unwrap_or_else(|| panic!("{target}: {} not disassembled: {:?}", symbol.name, disassembly.keys().collect::<Vec<_>>()));
             // The call or branch to the adapter prints its address; compare the mnemonic.
-            let actual: Vec<String> = actual.iter().take(expected.len()).map(|l| if l.starts_with("call ") || l.starts_with("bl ") { l.split(' ').next().unwrap().to_string() } else { l.clone() }).collect();
+            let actual: Vec<String> = actual.iter().take(expected.len()).map(|l| if l.starts_with("call ") || l.starts_with("bl ") { l.split(' ').next().unwrap().to_string() } else if l.starts_with("tbnz ") { l.rsplit_once(", ").unwrap().0.to_string() } else { l.clone() }).collect();
             assert_eq!(actual, expected, "{target}: {}", symbol.name);
         }
     }
@@ -915,4 +915,33 @@ fn raw_projections_emit_on_both_freestanding_targets() {
         let (undefined, _) = symbols(&bytes, &format!("raw-projection-{target}"));
         assert!(undefined.iter().all(|s| tarn_backend::FREESTANDING_CONTRACT.contains(&s.as_str())), "{undefined:?}");
     }
+}
+
+#[test]
+fn context_storage_matches_the_documented_c_abi_size() {
+    for (target, module, size) in [("x86_64-none", "arch_x86_64", 72), ("aarch64-none", "arch_aarch64", 176)] {
+        let bytes = freestanding(&format!("../../tests/freestanding/{module}.tarn"), target).unwrap();
+        let elf = Elf::parse(&bytes);
+        let context = elf.section(".context_from");
+        assert_eq!(context.size, size, "{target}");
+        assert_eq!(context.align, 8, "{target}");
+    }
+}
+
+#[test]
+fn execution_context_and_user_access_apis_require_unsafe() {
+    let dir = std::env::temp_dir().join(format!("tarn-context-safety-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tarn");
+    for (module, calls) in [
+        ("arch_x86_64", vec!["stac()", "clac()", "switch_stack(0, ffi.null(), 0)", "context_switch(CONTEXT, ffi.to_const(CONTEXT))", "context_init(CONTEXT, 0, ffi.null(), 0)"]),
+        ("arch_aarch64", vec!["pan_enable()", "pan_disable()", "read_pan()", "read_spsel()", "write_spsel(0)", "read_sp()", "switch_stack(0, ffi.null(), 0)", "switch_stack_el0(0, ffi.null(), 0)", "context_switch(CONTEXT, ffi.to_const(CONTEXT))", "context_init(CONTEXT, 0, ffi.null(), 0)"]),
+    ] {
+        for call in calls {
+            std::fs::write(&main, format!("import \"{module}\"\nimport \"ffi\"\nstatic mut CONTEXT {module}.Context\nfn main() {{ {module}.{call} }}\n")).unwrap();
+            let checked = tarn_driver::check(&main).unwrap();
+            assert!(checked.diagnostics.iter().any(|d| d.code == "E3071"), "{module}.{call}: {:?}", checked.diagnostics);
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

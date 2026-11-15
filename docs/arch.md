@@ -37,15 +37,17 @@ Rules
 - They are allowed on hosted targets of the same architecture too, which
   is how unprivileged ones (`pause`, `rdtsc`, `cntvct_el0`, barriers) are tested.
 - `int3` uses native CLIF `debugtrap`. Other x86_64 operations except `rdtsc`,
-  `rdmsr`, `wrmsr`, `xgetbv`, `xsetbv`, `cpuid` and `call_on_stack`, and every
-  aarch64 operation except `semihost_exit` and `call_on_stack`, replace direct
+  `rdmsr`, `wrmsr`, `xgetbv`, `xsetbv`, `cpuid`, `call_on_stack`, `switch_stack`
+  and `context_switch`, and every aarch64 operation except `semihost_exit`,
+  `call_on_stack`, `switch_stack`, `switch_stack_el0` and `context_switch`, replace direct
   ABI calls with instruction bytes after register allocation (ADR 0104).
   Hot loops of byte port I/O, `invlpg`, and CR3 moves have no intrinsic calls.
   Short sequences use NOP padding to retain all code offsets. The allocator
   still sees ordinary ABI calls, so it may preserve live values in a frame
   or spill them; this does not promise a frameless caller or spill-free code.
-- The longer sequences (listed above) still call frameless, register-only local
-  stubs. Cranelift 0.125.3 offers neither inline bytes nor a preserve-all call
+- The longer sequences (listed above) still call local stubs; stack and
+  context operations deliberately change stack/register state. Cranelift
+  0.125.3 offers neither inline bytes nor a preserve-all call
   convention. Template definitions remain even for inlined call sites because
   every declared local function must be defined. None are exported.
 - Calls and `debugtrap` constrain the compiler's memory analysis, but CPU
@@ -153,3 +155,56 @@ machine encoding, and removes only the replaced relocation. It never scans
 arbitrary instruction bytes or changes offsets. Disassembly tests check the
 actual hot loops on both `*-none` targets and x86_64 Mach-O, as well as the
 remaining calls. See ADR 0104 for measurements and limits.
+
+## Execution contexts and separate exception stacks (ADR 0109)
+
+Both modules provide unsafe `switch_stack(stack_top u64, entry *u8, arg u64)
+never`, `context_init(context *mut Context, stack_top u64, entry *u8, arg u64)`
+and `context_switch(from *mut Context, to *Context)`. Entries come from
+`ffi.callback(fn(arg u64))` and must never return. A one-way switch abandons the
+old stack, aligns the new stack down to 16 and traps if entry returns.
+
+`Context` is a private-field, non-Copy C-layout record. x86_64 saves rbx, rbp,
+r12–r15, rsp and rip (72 bytes including initial argument); aarch64 saves
+x19–x30, sp and d8–d15 (176 bytes including initial argument). Initialize a
+new task with `context_init`; zeroed storage can receive a suspended context.
+The caller owns live, exclusive stacks/context storage, interrupt masking,
+TLS, address spaces and FP environment. Resume contexts at the same privilege
+level and stack bank: `context_switch` does not change aarch64 SPSel. This is
+a C ABI continuation switch.
+
+For preemption, each task may suspend its timer handler using `context_switch`
+after acknowledging the IRQ. Its own stack retains the handler and full
+trampoline save area until it resumes and returns through `iretq`/`eret`.
+The example kernels demonstrate this with alternating busy tasks. Do not suspend
+multiple handlers on one shared exception stack; a shared-stack scheduler must
+copy and restore complete exception state. Editing only x86 hardware RIP/RSP
+would lose interrupted registers. See [the ADR](adr/0109-execution-contexts-and-user-access.md)
+for the complete trampoline contract and limits.
+
+aarch64 also exposes `read_sp() u64`, `read_spsel() u64`,
+`write_spsel(value u64)` (0 or 1) and
+`switch_stack_el0(stack_top u64, entry *u8, arg u64) never`. For overflow-safe
+EL1 tasks, install vector slots 0/1, keep SP_EL1 mapped as an exception stack,
+mask IRQs, and use `switch_stack_el0` to enter a guarded SP_EL0 stack. Hardware
+selects SP_EL1 before executing the exception vector. Directly changing SPSel
+inside ordinary Tarn code requires both banks to identify the same live frame;
+use the one-way helper when the banks differ. `read_sp` samples the current
+compiler frame. Reading/writing the SP_EL0 register itself requires SPSel=1.
+The trampoline now records the interrupted SP_EL0 for EL0t/EL1t, and restores
+it on return. `set_frame_sp(frame *mut ExceptionFrame, sp u64)` changes that
+return stack; the SP slot remains informational for EL1h exceptions.
+
+## PAN and SMAP access windows
+
+On aarch64 with FEAT_PAN (`ID_AA64MMFR1_EL1.PAN != 0`), unsafe `pan_enable()` /
+`pan_disable()` issue `msr pan, #1` / `#0`; `read_pan() u64` returns bit 22.
+Keep PAN set outside validated user-memory copies and configure SCTLR_EL1.SPAN
+and exception handling consistently. On x86 with CPUID.(7,0).EBX[20], enable
+CR4.SMAP[21]; unsafe `stac()` opens access with RFLAGS.AC, and `clac()` closes it.
+Validate ranges and permissions first, close access on fault recovery, and
+mask interrupts for the window or close/restore access in exception handling.
+x86 interrupt entry preserves AC: the baseline trampoline does not insert
+`clac`, which would fault on CPUs without SMAP. These controls do not validate
+pointers or supply speculation barriers. Both examples exercise the windows
+under QEMU `-cpu max` and skip unsupported features on baseline CPUs.

@@ -30,7 +30,7 @@
 //! aarch64: the handler gets a pointer to a 272-byte frame
 //! `{ x: [31]u64, elr u64, spsr u64, sp u64 }`; the 32 SIMD registers follow
 //! it (512 bytes). The frame is restored on return, so a handler can edit
-//! `x`, `elr` and `spsr` (`sp` is informational).
+//! `x`, `elr` and `spsr`; t-mode returns also restore `sp` to SP_EL0.
 
 use crate::Arch;
 
@@ -167,6 +167,10 @@ fn aarch64() -> Trampoline {
     out.push(sysreg("spsr_el1", false, 1));
     out.push(pair(false, false, 0, 1, 248));
     out.push((0x91000000 | frame << 10 | SP << 5 | 2, format!("add x2, sp, #{frame:#x}")));
+    // SPSR.M[0] distinguishes EL1h (SP_EL1) from EL1t/EL0t (SP_EL0).
+    // Exception entry already selected SP_EL1, so read SP_EL0 explicitly.
+    out.push((0x37000041, "tbnz w1, #0x0, 0x8".into()));
+    out.push(sysreg("sp_el0", false, 2));
     out.push(single(false, 2, 264));
     for n in 0..16u32 {
         out.push(pair(false, true, n * 2, n * 2 + 1, 272 + n * 32));
@@ -177,6 +181,9 @@ fn aarch64() -> Trampoline {
     out.push(pair(true, false, 0, 1, 248));
     out.push(sysreg("elr_el1", true, 0));
     out.push(sysreg("spsr_el1", true, 1));
+    out.push((0x37000061, "tbnz w1, #0x0, 0xc".into()));
+    out.push(single(true, 2, 264));
+    out.push(sysreg("sp_el0", true, 2));
     for n in 0..16u32 {
         out.push(pair(true, true, n * 2, n * 2 + 1, 272 + n * 32));
     }

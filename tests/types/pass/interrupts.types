@@ -150,3 +150,21 @@
 271:5 limit: u64
 272:5 base: u64
 273:9 index: usize
+288:28 stack_top: u64
+288:43 entry: *u8
+288:54 arg: u64
+292:37 stack_top: u64
+292:52 entry: *u8
+292:63 arg: u64
+297:30 from: *mut Context
+297:49 to: *Context
+298:39 from: *mut Context
+298:58 to: *Context
+314:28 context: *mut Context
+314:50 stack_top: u64
+314:65 entry: *u8
+314:76 arg: u64
+315:5 top: u64
+316:5 base: *mut u64
+318:13 i: usize
+323:9 sentinel: *mut u64

@@ -281,3 +281,54 @@ pub unsafe fn idt_load(idt *u8, entries usize) {
     }
     unsafe { lidt(ffi.of(&descriptor[0])) }
 }
+
+// ---- Stackful execution contexts (ADR 0109) ----
+/// One-way transfer to entry(arg) on a writable, 16-byte aligned stack.
+/// The entry must never return; returning traps. The old stack is abandoned.
+pub unsafe fn switch_stack(stack_top u64, entry *u8, arg u64) never {
+    _switch_stack(stack_top, entry, arg)
+    for true {}
+}
+extern "intrinsic" fn _switch_stack(stack_top u64, entry *u8, arg u64)
+
+/// Suspend this C ABI call and resume another. Both contexts and stacks must
+/// remain live and exclusively owned; mask interrupts around scheduler state.
+/// Address spaces, TLS, interrupt masks and extended FP state belong to the caller.
+pub unsafe fn context_switch(from *mut Context, to *Context) { _context_switch(from, to) }
+extern "intrinsic" fn _context_switch(from *mut Context, to *Context)
+
+/// System V callee-saved state, resume PC/SP and initial argument.
+pub struct Context {
+    rbx u64
+    rbp u64
+    r12 u64
+    r13 u64
+    r14 u64
+    r15 u64
+    rsp u64
+    rip u64
+    arg u64
+}
+/// Initialize a dormant context. Entry is ffi.callback(fn(arg u64)) and must
+/// never return. Writes a null return sentinel below stack_top; stack must be writable.
+pub unsafe fn context_init(context *mut Context, stack_top u64, entry *u8, arg u64) {
+    top := (stack_top & 0xfffffffffffffff0) - 8
+    base: *mut u64 := ffi.from_address(ffi.address(context))
+    unsafe {
+        var i: usize = 0
+        for i < 9 {
+            ffi.write(ffi.offset_mut(base, i), 0)
+            i = i + 1
+        }
+        sentinel: *mut u64 := ffi.from_address(usize(top))
+        ffi.write(sentinel, 0)
+        ffi.write(ffi.offset_mut(base, 6), top)
+        ffi.write(ffi.offset_mut(base, 7), u64(ffi.address(entry)))
+        ffi.write(ffi.offset_mut(base, 8), arg)
+    }
+}
+/// Open/close a user-memory access window; requires CPUID.7:EBX.SMAP and ring 0.
+pub unsafe fn stac() { _stac() }
+extern "intrinsic" fn _stac()
+pub unsafe fn clac() { _clac() }
+extern "intrinsic" fn _clac()

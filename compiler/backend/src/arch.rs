@@ -3,9 +3,10 @@
 //! other short sequences in ABI call slots. Longer sequences remain tiny
 //! hand-assembled Local functions. Only templates a program uses are emitted;
 //! even inlined templates must be defined because Cranelift requires it.
-//! No template touches memory other than its operand,
-//! the stack, or any register outside the caller-saved set of the C ABI
-//! (x86_64: rax, rcx, rdx, rsi; aarch64: x0).
+//! Ordinary instruction templates touch memory only through their operand,
+//! or the stack, and modify only caller-saved registers of the C ABI
+//! (x86_64: rax, rcx, rdx, rsi; aarch64: x0). ADR 0109 context
+//! templates explicitly save/restore C ABI callee-saved state and replace SP.
 //!
 //! Each entry lists the bytes and the assembly they encode; the
 //! `cpu_stubs_disassemble_to_their_documented_assembly` integration test
@@ -97,12 +98,12 @@ pub fn operations(arch: Arch) -> Vec<String> {
         Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "hlt", "pause", "int3", "rdtsc",
             "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt",
             "ltr", "str", "cpuid", "ud2", "xgetbv", "xsetbv", "wbinvd", "clflush", "invpcid", "swapgs",
-            "rdfsbase", "wrfsbase", "rdgsbase", "wrgsbase", "read_rflags", "call_on_stack"]
+            "rdfsbase", "wrfsbase", "rdgsbase", "wrgsbase", "read_rflags", "call_on_stack", "stac", "clac", "switch_stack", "context_switch"]
             .iter().map(|s| s.to_string()).collect(),
         Arch::Aarch64 => {
             let mut v: Vec<String> = ["wfi", "wfe", "isb", "dsb_sy", "dmb_sy", "irq_enable", "irq_disable", "svc", "brk", "semihost_exit"].iter().map(|s| s.to_string()).collect();
             for (name, ..) in A64_SYS { v.push(name.to_string()); }
-            v.push("call_on_stack".into());
+            for name in ["call_on_stack", "switch_stack", "context_switch", "read_sp", "switch_stack_el0", "write_spsel", "pan_enable", "pan_disable"] { v.push(name.into()); }
             for (name, ..) in SYSREGS { v.push(format!("read_{name}")); }
             for (name, _, writable) in SYSREGS.iter().map(|(n, e, w)| (n, e, w)) { if *writable { v.push(format!("write_{name}")); } }
             v
@@ -136,6 +137,27 @@ fn x86_64(op: &str) -> Option<Stub> {
         // unlike mov this also clobbers it, but fits the five-byte call slot.
         "out16" => stub(&[I16, I16], None, &[0x89, 0xfa, 0x96, 0x66, 0xef, 0xc3], &["mov edx, edi", "xchg eax, esi", "out dx, ax", "ret"]),
         "out32" => stub(&[I16, I32], None, &[0x89, 0xfa, 0x89, 0xf0, 0xef, 0xc3], &["mov edx, edi", "mov eax, esi", "out dx, eax", "ret"]),
+        "stac" => stub(&[], None, &[0xf, 0x1, 0xcb, 0xc3], &["stac", "ret"]),
+        "clac" => stub(&[], None, &[0xf, 0x1, 0xca, 0xc3], &["clac", "ret"]),
+        "switch_stack" => stub(&[I64, I64, I64], None, &[0x48, 0x89, 0xfc, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x89, 0xd7, 0xff, 0xd6, 0xf, 0xb, 0xc3], &["mov rsp, rdi", "and rsp, -0x10", "mov rdi, rdx", "call rsi", "ud2", "ret"]),
+        "context_switch" => stub(&[I64, I64], None,
+            &[0x48, 0x89, 0x1f, 0x48, 0x89, 0x6f, 0x8, 0x4c,
+              0x89, 0x67, 0x10, 0x4c, 0x89, 0x6f, 0x18, 0x4c,
+              0x89, 0x77, 0x20, 0x4c, 0x89, 0x7f, 0x28, 0x48,
+              0x8d, 0x44, 0x24, 0x8, 0x48, 0x89, 0x47, 0x30,
+              0x48, 0x8b, 0x4, 0x24, 0x48, 0x89, 0x47, 0x38,
+              0x48, 0x8b, 0x1e, 0x48, 0x8b, 0x6e, 0x8, 0x4c,
+              0x8b, 0x66, 0x10, 0x4c, 0x8b, 0x6e, 0x18, 0x4c,
+              0x8b, 0x76, 0x20, 0x4c, 0x8b, 0x7e, 0x28, 0x48,
+              0x8b, 0x66, 0x30, 0x48, 0x8b, 0x46, 0x38, 0x48,
+              0x8b, 0x7e, 0x40, 0xff, 0xe0, 0xc3],
+            &["mov qword ptr [rdi], rbx", "mov qword ptr [rdi + 0x8], rbp", "mov qword ptr [rdi + 0x10], r12",
+              "mov qword ptr [rdi + 0x18], r13", "mov qword ptr [rdi + 0x20], r14", "mov qword ptr [rdi + 0x28], r15",
+              "lea rax, [rsp + 0x8]", "mov qword ptr [rdi + 0x30], rax", "mov rax, qword ptr [rsp]",
+              "mov qword ptr [rdi + 0x38], rax", "mov rbx, qword ptr [rsi]", "mov rbp, qword ptr [rsi + 0x8]",
+              "mov r12, qword ptr [rsi + 0x10]", "mov r13, qword ptr [rsi + 0x18]", "mov r14, qword ptr [rsi + 0x20]",
+              "mov r15, qword ptr [rsi + 0x28]", "mov rsp, qword ptr [rsi + 0x30]", "mov rax, qword ptr [rsi + 0x38]",
+              "mov rdi, qword ptr [rsi + 0x40]", "jmp rax", "ret"]),
         "cli" => stub(&[], None, &[0xfa, 0xc3], &["cli", "ret"]),
         "sti" => stub(&[], None, &[0xfb, 0xc3], &["sti", "ret"]),
         "hlt" => stub(&[], None, &[0xf4, 0xc3], &["hlt", "ret"]),
@@ -198,6 +220,8 @@ fn x86_64(op: &str) -> Option<Stub> {
 /// CRm << 8 | op2 << 5` (x0 is both the argument and the result register).
 pub(crate) const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
     ("daif", (3, 3, 4, 2, 1), true),
+    ("spsel", (3, 0, 4, 2, 0), false),
+    ("pan", (3, 0, 4, 2, 3), false),
     ("vbar_el1", (3, 0, 12, 0, 0), true),
     ("ttbr0_el1", (3, 0, 2, 0, 0), true),
     ("ttbr1_el1", (3, 0, 2, 0, 1), true),
@@ -275,6 +299,26 @@ fn aarch64(op: &str) -> Option<Stub> {
         return Some(Stub { params: if *operand { vec![I64] } else { vec![] }, ret: None, code: words(&[*word, RET]), asm: vec![asm.to_string(), "ret".into()] });
     }
     match op {
+        "switch_stack_el0" => return Some(stub(&[I64, I64, I64], None, &words(&[0xd50040bf, 0x927cec03, 0x9100007f, 0xaa0203e0, 0xd63f0020, 0xd4200000, 0xd65f03c0]), &["msr spsel, #0x0", "and x3, x0, #0xfffffffffffffff0", "mov sp, x3", "mov x0, x2", "blr x1", "brk #0", "ret"])),
+        "read_sp" => return Some(stub(&[], Some(I64), &words(&[0x910003e0, 0xd65f03c0]), &["mov x0, sp", "ret"])),
+        "write_spsel" => return Some(stub(&[I64], None, &words(&[0xd5184200, 0xd65f03c0]), &["msr spsel, x0", "ret"])),
+        "pan_enable" => return Some(stub(&[], None, &words(&[0xd500419f, 0xd65f03c0]), &["msr pan, #0x1", "ret"])),
+        "pan_disable" => return Some(stub(&[], None, &words(&[0xd500409f, 0xd65f03c0]), &["msr pan, #0x0", "ret"])),
+        "switch_stack" => return Some(stub(&[I64, I64, I64], None, &words(&[0x927cec03, 0x9100007f, 0xaa0203e0, 0xd63f0020, 0xd4200000, 0xd65f03c0]), &["and x3, x0, #0xfffffffffffffff0", "mov sp, x3", "mov x0, x2", "blr x1", "brk #0", "ret"])),
+        "context_switch" => return Some(stub(&[I64, I64], None,
+            &words(&[0xa9005013, 0xa9015815, 0xa9026017, 0xa9036819, 0xa904701b, 0xa905781d, 0x910003e2, 0xf9003002,
+              0x6d06a408, 0x6d07ac0a, 0x6d08b40c, 0x6d09bc0e, 0xa9405033, 0xa9415835, 0xa9426037, 0xa9436839,
+              0xa944703b, 0xa945783d, 0xf9403022, 0x9100005f, 0x6d46a428, 0x6d47ac2a, 0x6d48b42c, 0x6d49bc2e,
+              0xf9405420, 0xd65f03c0]),
+            &["stp x19, x20, [x0]", "stp x21, x22, [x0, #0x10]", "stp x23, x24, [x0, #0x20]",
+              "stp x25, x26, [x0, #0x30]", "stp x27, x28, [x0, #0x40]", "stp x29, x30, [x0, #0x50]",
+              "mov x2, sp", "str x2, [x0, #0x60]", "stp d8, d9, [x0, #0x68]",
+              "stp d10, d11, [x0, #0x78]", "stp d12, d13, [x0, #0x88]", "stp d14, d15, [x0, #0x98]",
+              "ldp x19, x20, [x1]", "ldp x21, x22, [x1, #0x10]", "ldp x23, x24, [x1, #0x20]",
+              "ldp x25, x26, [x1, #0x30]", "ldp x27, x28, [x1, #0x40]", "ldp x29, x30, [x1, #0x50]",
+              "ldr x2, [x1, #0x60]", "mov sp, x2", "ldp d8, d9, [x1, #0x68]",
+              "ldp d10, d11, [x1, #0x78]", "ldp d12, d13, [x1, #0x88]", "ldp d14, d15, [x1, #0x98]",
+              "ldr x0, [x1, #0xa8]", "ret"])),
         // call_on_stack(stack_top x0, entry x1, arg x2): see ADR 0107. x29 is callee-saved
         // and carries the old sp; x30 is saved on the old stack.
         "call_on_stack" => return Some(Stub { params: vec![I64, I64, I64], ret: None,

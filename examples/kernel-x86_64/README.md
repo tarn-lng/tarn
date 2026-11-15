@@ -84,3 +84,8 @@ maps only the first GiB.
 The IDT installer reads trampoline addresses from the link-initialized static
 `HANDLERS` table (`ffi.callback`, ADR 0102). Only the split gate fields are
 encoded at runtime; no runtime callback construction populates the table.
+
+ADR 0109 adds two cooperative tasks, one-way stack entry and timer preemption
+of two busy tasks (six alternating lines in each mode). Task-local exception
+stacks retain suspended trampolines; see `docs/arch.md` for the contract.
+Use QEMU `-cpu max` to also execute the SMAP `stac`/`clac` window checks.

@@ -257,7 +257,8 @@ fn breakpoint(frame *mut arch_x86_64.InterruptFrame) {
 #[interrupt]
 fn timer(frame *mut arch_x86_64.InterruptFrame) {
     poke(ffi.address(TICKS), peek(ffi.address(TICKS)) + 1)
-    unsafe { arch_x86_64.out8(PIC1, 0x20) }  // end of interrupt
+    unsafe { arch_x86_64.out8(PIC1, 0x20) }  // EOI before suspending this handler
+    schedule_tick()
 }
 
 fn crash(name &string, frame *mut arch_x86_64.InterruptFrame, code u64) {
@@ -530,8 +531,10 @@ fn kmain(info u64) {
     }
     println("int3: breakpoint handled")
     cpuid_demo()
+    smap_demo()
     install_tss()
     call_on_stack_demo()
+    cooperative_demo()
 
     init_pic()
     init_pit()
@@ -543,5 +546,117 @@ fn kmain(info u64) {
     print_number(peek(ffi.address(TICKS)))
     println(" timer interrupts")
     println("ticks ok")
+    preemptive_demo()
     double_fault_demo()
+}
+
+// ---- Stackful cooperative and timer-preempted tasks (ADR 0109) ----
+#[align(16)]
+static mut TASK_STACK_A [32768]u8
+#[align(16)]
+static mut TASK_STACK_B [32768]u8
+static mut ROOT_CONTEXT arch_x86_64.Context
+static mut TASK_A arch_x86_64.Context
+static mut TASK_B arch_x86_64.Context
+static mut CURRENT_TASK u64
+static mut PREEMPTING u64
+static mut PREEMPTIONS u64
+static mut RAN_A u64
+static mut RAN_B u64
+
+fn task_context(id u64) *mut arch_x86_64.Context {
+    if id == 1 { return TASK_A }
+    return TASK_B
+}
+fn task_yield() {
+    id := peek(ffi.address(CURRENT_TASK))
+    next := 3 - id
+    poke(ffi.address(CURRENT_TASK), next)
+    unsafe { arch_x86_64.context_switch(task_context(id), ffi.to_const(task_context(next))) }
+}
+fn cooperative_task(id u64) {
+    var turn: u64 = 0
+    for turn < 3 {
+        print_text("coop: task ")
+        print_number(id)
+        print_text(" turn ")
+        print_number(turn)
+        newline()
+        turn = turn + 1
+        if id == 2 && turn == 3 {
+            unsafe { arch_x86_64.switch_stack(u64(ffi.address(SIDE_STACK) + 16384), ffi.callback(one_way_entry), 77) }
+            panic("finished cooperative task resumed")
+        }
+        task_yield()
+    }
+    panic("finished cooperative task resumed")
+}
+fn preempted_task(id u64) {
+    // No yield: only the timer handler can transfer control to the other task.
+    if id == 1 { poke(ffi.address(RAN_A), 1) } else { poke(ffi.address(RAN_B), 1) }
+    unsafe { arch_x86_64.sti() }
+    for true {
+        if id == 1 { poke(ffi.address(RAN_A), peek(ffi.address(RAN_A)) | 2) } else { poke(ffi.address(RAN_B), peek(ffi.address(RAN_B)) | 2) }
+    }
+}
+fn initialize_tasks(preempt bool) {
+    var entry: *u8 = ffi.callback(cooperative_task)
+    if preempt { entry = ffi.callback(preempted_task) }
+    unsafe {
+        arch_x86_64.context_init(TASK_A, u64(ffi.address(TASK_STACK_A) + 32768), entry, 1)
+        arch_x86_64.context_init(TASK_B, u64(ffi.address(TASK_STACK_B) + 32768), entry, 2)
+    }
+    poke(ffi.address(CURRENT_TASK), 1)
+}
+fn cooperative_demo() {
+    initialize_tasks(false)
+    unsafe { arch_x86_64.context_switch(ROOT_CONTEXT, ffi.to_const(TASK_A)) }
+    println("coop: contexts restored")
+}
+fn schedule_tick() {
+    if peek(ffi.address(PREEMPTING)) == 0 { return }
+    id := peek(ffi.address(CURRENT_TASK))
+    print_text("preempt: task ")
+    print_number(id)
+    newline()
+    count := peek(ffi.address(PREEMPTIONS)) + 1
+    poke(ffi.address(PREEMPTIONS), count)
+    if count == 6 {
+        poke(ffi.address(PREEMPTING), 0)
+        unsafe { arch_x86_64.context_switch(task_context(id), ffi.to_const(ROOT_CONTEXT)) }
+    } else { task_yield() }
+}
+fn preemptive_demo() {
+    initialize_tasks(true)
+    poke(ffi.address(PREEMPTING), 1)
+    unsafe { arch_x86_64.context_switch(ROOT_CONTEXT, ffi.to_const(TASK_A)) }
+    unsafe { arch_x86_64.cli() }
+    if peek(ffi.address(RAN_A)) != 3 || peek(ffi.address(RAN_B)) != 3 { panic("preemption did not run both tasks") }
+    println("preempt: timer switched both busy tasks")
+}
+
+fn smap_demo() {
+    unsafe {
+        features := arch_x86_64.cpuid(7, 0)
+        if (features.ebx & (1 << 20)) == 0 { println("smap: unavailable")
+            return
+        }
+        arch_x86_64.write_cr4(arch_x86_64.read_cr4() | (1 << 21))
+        arch_x86_64.stac()
+        if (arch_x86_64.read_rflags() & (1 << 18)) == 0 { panic("stac failed") }
+        arch_x86_64.clac()
+        if (arch_x86_64.read_rflags() & (1 << 18)) != 0 { panic("clac failed") }
+        println("smap: stac/clac window ok")
+    }
+}
+
+static mut ABANDONED_CONTEXT arch_x86_64.Context
+fn one_way_entry(arg u64) {
+    var marker: u64 = arg
+    here := ffi.address(ffi.of(&marker))
+    base := ffi.address(SIDE_STACK)
+    if arg != 77 || here < base || here >= base + 16384 { panic("switch_stack: bad stack or argument") }
+    println("switch_stack: entered new stack without return")
+    unsafe { arch_x86_64.context_switch(ABANDONED_CONTEXT, ffi.to_const(ROOT_CONTEXT)) }
+    panic("abandoned stack resumed")
 }
