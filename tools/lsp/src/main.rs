@@ -210,7 +210,7 @@ impl Server {
             }
             let result = match method {
                 "initialize" => {
-                    json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":false}},"hoverProvider":true,"definitionProvider":true,"documentFormattingProvider":true},"serverInfo":{"name":"tarn-lsp","version":env!("CARGO_PKG_VERSION")}})
+                    json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":false}},"hoverProvider":true,"definitionProvider":true,"documentFormattingProvider":true},"serverInfo":{"name":"tarn-lsp","version":concat!(env!("CARGO_PKG_VERSION"), " (", env!("TARN_BUILD_ID"), ")")}})
                 }
                 "shutdown" => {
                     self.shutdown = true;
@@ -286,7 +286,7 @@ fn main() -> io::Result<()> {
             tarn_driver::with_compiler_stack(serve)
         }
         Some("--version" | "-V") => {
-            println!("tarn-lsp {}", env!("CARGO_PKG_VERSION"));
+            println!("tarn-lsp {} ({})", env!("CARGO_PKG_VERSION"), env!("TARN_BUILD_ID"));
             Ok(())
         }
         Some("--help" | "-h") => {

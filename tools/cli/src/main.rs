@@ -128,7 +128,7 @@ fn run() -> ExitCode {
             else { process::install_handlers(); testing::run(std::path::Path::new(&args[1]), &options).0 }
         },
         Some("version" | "--version" | "-V") => {
-            println!("tarn {}", env!("CARGO_PKG_VERSION"));
+            println!("tarn {} ({})", env!("CARGO_PKG_VERSION"), env!("TARN_BUILD_ID"));
             ExitCode::SUCCESS
         }
         Some("help" | "--help" | "-h") | None => {

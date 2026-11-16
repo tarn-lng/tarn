@@ -1422,3 +1422,17 @@ laptop with 8 logical CPUs; saturation has forced reboots):
   must not run heavy commands simultaneously (two agents at 7 CPUs each would
   saturate the machine).
 - Prefer targeted tests while developing; run full suites before committing.
+
+## Versioning (mandatory)
+
+- Every patch that changes the compiler, standard library, runtime, CLI or LSP
+  bumps the workspace patch version (`Cargo.toml`, `[workspace.package]
+  version`) in the same commit: 0.5.3, 0.5.4, … (the `kernel/freestanding` line
+  started at 0.5.3; 0.5.1 and 0.5.2 belong to their release branches). Never a
+  new minor (stay on 0.5.x).
+- `tarn --version` and `tarn-lsp --version` (and the LSP serverInfo) print the
+  version plus branch, commit and commit date (`tools/*/build.rs`), so binaries
+  with the same number can still be told apart.
+- After a version bump, rebuild and reinstall BOTH binaries (`tarn` and
+  `tarn-lsp`), so editors never run a stale language server.
+- Documentation-only commits do not bump the version.
