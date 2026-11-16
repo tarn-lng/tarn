@@ -1,8 +1,8 @@
 # Resource limits (project rule): builds and tests must never saturate the
-# developer machine (8 logical CPUs). Keep at most 2 compiler jobs and 2 test
-# threads; run heavy commands with `nice -n 10`.
+# developer machine (8 logical CPUs). Use at most 7 (one CPU always free) for
+# compiler jobs and test threads; run heavy commands with `nice -n 10`.
 [build]
-jobs = 2
+jobs = 7
 
 [env]
-RUST_TEST_THREADS = "2"
+RUST_TEST_THREADS = "7"

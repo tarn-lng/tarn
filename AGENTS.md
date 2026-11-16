@@ -1411,13 +1411,14 @@ A small coherent language is better than a large language made of prematurely co
 ## Resource limits (mandatory)
 
 Builds, tests and emulators must never saturate the developer machine (a
-laptop; saturation has forced reboots):
-- At most 2 parallel compiler jobs and 2 test threads (`.cargo/config.toml`
-  enforces `jobs = 2` and `RUST_TEST_THREADS = 2` in Tarn).
-- Run heavy commands with `nice -n 10` (Cairn tools renice themselves).
-- One QEMU instance at a time, 1 vCPU, no more than 512 MiB unless a test needs
-  more; no parallel test suites.
+laptop with 8 logical CPUs; saturation has forced reboots):
+- Use at most 7 logical CPUs, always leaving one free: at most 7 parallel
+  compiler jobs and 7 test threads (`.cargo/config.toml` in Tarn enforces
+  `jobs = 7` and `RUST_TEST_THREADS = 7`), and at most 6 concurrent QEMU
+  instances (1 vCPU each) when a harness runs cases in parallel.
+- Run heavy commands with `nice -n 10` (Cairn tools renice themselves), so the
+  desktop always stays responsive.
 - Only one agent builds or runs tests at any time; agents working in parallel
-  must not run heavy commands simultaneously.
-- Prefer targeted tests (`--test name`, a single case) and run full suites only
-  before committing.
+  must not run heavy commands simultaneously (two agents at 7 CPUs each would
+  saturate the machine).
+- Prefer targeted tests while developing; run full suites before committing.
