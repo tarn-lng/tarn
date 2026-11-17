@@ -110,3 +110,14 @@ fn contexts() {
 #[section(".context_from")]
 static mut FROM arch_aarch64.Context
 static mut TO arch_aarch64.Context
+
+#[export("rng_calls")]
+fn rng_calls() u64 {
+    unsafe {
+        if !arch_aarch64.has_rng() { return 0 }
+        a := arch_aarch64.rndr()
+        b := arch_aarch64.rndrrs()
+        if a.success && b.success { return a.value ^ b.value }
+        return 0
+    }
+}

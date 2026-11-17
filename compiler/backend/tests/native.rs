@@ -240,11 +240,11 @@ fn native_line_deletions_never_panic_or_emit_invalid_code() {
     }
     sources.sort();
     let jobs: Vec<(usize, usize)> = sources.iter().enumerate().flat_map(|(f, (_, s))| (0..s.lines().count()).map(move |i| (f, i))).collect();
-    // Independent mutants run on all cores; each worker owns its entry
+    // Independent mutants run on at most seven cores; each worker owns its entry
     // directory because local imports resolve beside the entry file.
     let next = std::sync::atomic::AtomicUsize::new(0);
     let runs = std::sync::atomic::AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(7));
     std::thread::scope(|scope| {
         for worker in 0..workers {
             let (dir, sources, jobs, next, runs) = (&dir, &sources, &jobs, &next, &runs);

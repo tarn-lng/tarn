@@ -201,3 +201,49 @@ fn contexts_pan_and_exception_stack_execute_on_a_max_cpu() {
     check_success(&output);
     assert!(output.contains("pan: protected/open/protected window ok"), "{output}");
 }
+
+#[test]
+fn rng_words_and_nzcv_success_execute_with_feature_checks() {
+    let Some((qemu, linker)) = tools() else { return };
+    for (cpu, present) in [("max", true), ("cortex-a72", false)] {
+        let dir = scratch("rng");
+        let probe = format!(r#"
+static mut RNG_WORD u64
+fn rng_probe() {{
+    unsafe {{
+        feature := (arch_aarch64.read_id_aa64isar0_el1() >> 60) == 1
+        if feature != {present} || arch_aarch64.has_rng() != feature {{ fault() }}
+        if !feature {{
+            println("rng: unavailable; unsupported instructions skipped")
+            return
+        }}
+        var random_ok = false
+        var seed_ok = false
+        var combined: u64 = 0
+        var i: u64 = 0
+        for i < 64 {{
+            a := arch_aarch64.rndr()
+            b := arch_aarch64.rndrrs()
+            if a.success {{ random_ok = true
+                combined = combined ^ a.value }}
+            if b.success {{ seed_ok = true
+                combined = combined ^ b.value }}
+            i = i + 1
+        }}
+        if !random_ok || !seed_ok {{ fault() }}
+        ffi.write_volatile(RNG_WORD, combined)
+        if ffi.read_volatile(ffi.to_const(RNG_WORD)) != combined {{ fault() }}
+        println("rng: full words and NZCV success captured")
+    }}
+}}
+"#);
+        let source = example().replacen("    heap_reuse()\n", "    rng_probe()\n    heap_reuse()\n", 1) + &probe;
+        let image = build(&dir, &source, &linker);
+        let (output, status) = boot(&qemu, &image, "virt,gic-version=3", cpu);
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(status, 0, "{cpu}: {output}");
+        let marker = if present { "rng: full words and NZCV success captured" }
+            else { "rng: unavailable; unsupported instructions skipped" };
+        assert!(output.contains(marker), "{cpu}: {output}");
+    }
+}

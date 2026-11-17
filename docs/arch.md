@@ -37,9 +37,9 @@ Rules
 - They are allowed on hosted targets of the same architecture too, which
   is how unprivileged ones (`pause`, `rdtsc`, `cntvct_el0`, barriers) are tested.
 - `int3` uses native CLIF `debugtrap`. Other x86_64 operations except `rdtsc`,
-  `rdmsr`, `wrmsr`, `xgetbv`, `xsetbv`, `cpuid`, `call_on_stack`, `switch_stack`
+  `rdmsr`, `wrmsr`, `xgetbv`, `xsetbv`, `cpuid`, `rdrand64`, `rdseed64`, `call_on_stack`, `switch_stack`
   and `context_switch`, and every aarch64 operation except `semihost_exit`,
-  `call_on_stack`, `switch_stack`, `switch_stack_el0` and `context_switch`, replace direct
+  `rndr`, `rndrrs`, `call_on_stack`, `switch_stack`, `switch_stack_el0` and `context_switch`, replace direct
   ABI calls with instruction bytes after register allocation (ADR 0104).
   Hot loops of byte port I/O, `invlpg`, and CR3 moves have no intrinsic calls.
   Short sequences use NOP padding to retain all code offsets. The allocator
@@ -71,6 +71,8 @@ Rules
 | `lgdt(descriptor *u8)`, `lidt(descriptor *u8)` | load GDTR / IDTR from a 10-byte (u16 limit, u64 base) descriptor |
 | `ltr(selector u16)`, `str() u16` | `ltr di`, `str eax` (task register; GDT must hold an available 64-bit TSS at `selector`) |
 | `cpuid(leaf u32, subleaf u32) CpuidResult` | `cpuid`; `CpuidResult { pub eax, ebx, ecx, edx u32 }`; the stub preserves `rbx` |
+| `rdrand64() RandomResult`, `rdseed64() RandomResult` | 64-bit `rdrand` / `rdseed`, with CF captured in the same stub |
+| `has_rdrand() bool`, `has_rdseed() bool` | CPUID feature checks, including maximum-leaf checks |
 | `ud2()` | `ud2` (#UD) |
 | `xgetbv(xcr u32) u64`, `xsetbv(xcr u32, value u64)` | `xgetbv`, `xsetbv` (edx:eax combined) |
 | `wbinvd()`, `clflush(address u64)` | `wbinvd`, `clflush [address]` |
@@ -102,6 +104,8 @@ before the wait; it does not establish the same no-lost-wakeup condition.
 | `irq_enable()`, `irq_disable()` | `msr daifclr, #2`, `msr daifset, #2` |
 | `svc()`, `brk()` | `svc #0`, `brk #0` (needs a vector table; `brk` leaves ELR on itself) |
 | `semihost_exit(status)` | semihosting `SYS_EXIT` (`hlt #0xf000`); QEMU needs `-semihosting` |
+| `rndr() RandomResult`, `rndrrs() RandomResult` | `mrs` RNG register, with NZCV success captured in the same stub |
+| `has_rng() bool` | ID_AA64ISAR0_EL1.RNDR[63:60] feature check; requires access to the ID register |
 | `read_<reg>() u64` | `mrs x0, <reg>` |
 | `write_<reg>(value u64)` | `msr <reg>, x0` |
 
@@ -119,10 +123,23 @@ Registers (a whitelist, so a typo is a compile error, not a trap): `daif`,
 `esr_el1`, `far_el1`, `elr_el1`, `spsr_el1`, `cntv_ctl_el0`, `cntv_tval_el0`,
 `icc_sre_el1`, `icc_pmr_el1`, `icc_igrpen1_el1`, `icc_eoir1_el1` (GICv3 CPU interface; hardware reads of `icc_eoir1_el1` trap)
 (read and write); `sp_el0` (read and write, ADR 0107); `currentel`, `cntfrq_el0`, `cntvct_el0`, `icc_iar1_el1`,
-`par_el1`, `id_aa64mmfr0_el1`, `id_aa64mmfr1_el1`, `id_aa64pfr0_el1`, `ctr_el0`, `dczid_el0`, `midr_el1`,
+`par_el1`, `id_aa64mmfr0_el1`, `id_aa64mmfr1_el1`, `id_aa64pfr0_el1`, `id_aa64isar0_el1`, `ctr_el0`, `dczid_el0`, `midr_el1`,
 `mpidr_el1` (read only). A
 system-register write takes effect only after a context-synchronization
 event: call `isb()` where it matters.
+
+### Hardware random-number results (ADR 0112)
+
+Both modules define a copyable `RandomResult` with public `value u64` and
+`success bool` fields. Check the feature helper before executing an RNG
+instruction, then use the word only when `success` is true. Zero is a valid
+successful word; the API never uses a word value as an error sentinel.
+RDRAND/RDSEED success is CF = 1; RNDR/RNDRRS success is NZCV = 0000 (Z = 0).
+The flag is captured before the wrapper can change it. These APIs perform
+one attempt, with no retry, fallback, entropy credit or readiness policy.
+Their unsafe preconditions include CPU support and permission to execute in
+the current privilege/virtualization context; an advertised feature alone
+does not override a hypervisor's trapping configuration.
 
 ## Interrupts and exceptions
 

@@ -82,99 +82,105 @@
 29:31 value: u32
 30:30 port: u16
 30:40 value: u32
-73:25 value: u64
-74:34 value: u64
-77:25 value: u64
-78:34 value: u64
-81:25 value: u64
-82:34 value: u64
-85:22 address: u64
-86:31 address: u64
-89:21 msr: u32
-90:30 msr: u32
-93:21 msr: u32
-93:30 value: u64
-94:30 msr: u32
-94:39 value: u64
-98:20 descriptor: *u8
-99:29 descriptor: *u8
-102:20 descriptor: *u8
-103:29 descriptor: *u8
-109:19 selector: u16
-110:28 selector: u16
-126:21 leaf: u32
-126:31 subleaf: u32
-127:9 out: [4]u32
-131:30 leaf: u32
-131:40 subleaf: u32
-131:53 out: *mut u32
-138:22 xcr: u32
-139:31 xcr: u32
-142:22 xcr: u32
-142:31 value: u64
-143:31 xcr: u32
-143:40 value: u64
-150:23 address: u64
-151:32 address: u64
-156:23 kind: u64
-156:33 descriptor: *u8
-157:32 kind: u64
-157:42 descriptor: *u8
-168:24 value: u64
-169:33 value: u64
-176:24 value: u64
-177:33 value: u64
-196:29 stack_top: u64
-196:44 entry: *u8
-196:55 arg: u64
-197:38 stack_top: u64
-197:53 entry: *u8
-197:64 arg: u64
-223:15 frame: *InterruptFrame
-223:38 index: usize
-224:5 base: *u64
-228:25 frame: *InterruptFrame
-230:24 frame: *InterruptFrame
-232:28 frame: *InterruptFrame
-234:25 frame: *InterruptFrame
-236:24 frame: *InterruptFrame
-238:29 frame: *mut InterruptFrame
-238:56 rip: u64
-239:5 base: *mut u64
-248:28 idt: *mut u8
-248:41 vector: usize
-248:55 handler: *u8
-248:68 selector: u16
-248:82 ist: u8
-248:90 gate: u8
-249:5 address: u64
-250:5 entry: *mut u8
-251:5 low: *mut u16
-252:5 sel: *mut u16
-253:5 mid: *mut u16
-254:5 high: *mut u32
-255:5 reserved: *mut u32
-269:24 idt: *u8
-269:33 entries: usize
-270:9 descriptor: [10]u8
-271:5 limit: u64
-272:5 base: u64
-273:9 index: usize
-288:28 stack_top: u64
-288:43 entry: *u8
-288:54 arg: u64
-292:37 stack_top: u64
-292:52 entry: *u8
-292:63 arg: u64
-297:30 from: *mut Context
-297:49 to: *Context
-298:39 from: *mut Context
-298:58 to: *Context
-314:28 context: *mut Context
-314:50 stack_top: u64
-314:65 entry: *u8
-314:76 arg: u64
-315:5 top: u64
-316:5 base: *mut u64
-318:13 i: usize
-323:9 sentinel: *mut u64
+79:25 value: u64
+80:34 value: u64
+83:25 value: u64
+84:34 value: u64
+87:25 value: u64
+88:34 value: u64
+91:22 address: u64
+92:31 address: u64
+95:21 msr: u32
+96:30 msr: u32
+99:21 msr: u32
+99:30 value: u64
+100:30 msr: u32
+100:39 value: u64
+104:20 descriptor: *u8
+105:29 descriptor: *u8
+108:20 descriptor: *u8
+109:29 descriptor: *u8
+115:19 selector: u16
+116:28 selector: u16
+132:21 leaf: u32
+132:31 subleaf: u32
+133:9 out: [4]u32
+137:30 leaf: u32
+137:40 subleaf: u32
+137:53 out: *mut u32
+164:9 value: u64
+165:9 success: bool
+169:33 out: *mut u64
+174:9 value: u64
+175:9 success: bool
+179:33 out: *mut u64
+186:22 xcr: u32
+187:31 xcr: u32
+190:22 xcr: u32
+190:31 value: u64
+191:31 xcr: u32
+191:40 value: u64
+198:23 address: u64
+199:32 address: u64
+204:23 kind: u64
+204:33 descriptor: *u8
+205:32 kind: u64
+205:42 descriptor: *u8
+216:24 value: u64
+217:33 value: u64
+224:24 value: u64
+225:33 value: u64
+244:29 stack_top: u64
+244:44 entry: *u8
+244:55 arg: u64
+245:38 stack_top: u64
+245:53 entry: *u8
+245:64 arg: u64
+271:15 frame: *InterruptFrame
+271:38 index: usize
+272:5 base: *u64
+276:25 frame: *InterruptFrame
+278:24 frame: *InterruptFrame
+280:28 frame: *InterruptFrame
+282:25 frame: *InterruptFrame
+284:24 frame: *InterruptFrame
+286:29 frame: *mut InterruptFrame
+286:56 rip: u64
+287:5 base: *mut u64
+296:28 idt: *mut u8
+296:41 vector: usize
+296:55 handler: *u8
+296:68 selector: u16
+296:82 ist: u8
+296:90 gate: u8
+297:5 address: u64
+298:5 entry: *mut u8
+299:5 low: *mut u16
+300:5 sel: *mut u16
+301:5 mid: *mut u16
+302:5 high: *mut u32
+303:5 reserved: *mut u32
+317:24 idt: *u8
+317:33 entries: usize
+318:9 descriptor: [10]u8
+319:5 limit: u64
+320:5 base: u64
+321:9 index: usize
+336:28 stack_top: u64
+336:43 entry: *u8
+336:54 arg: u64
+340:37 stack_top: u64
+340:52 entry: *u8
+340:63 arg: u64
+345:30 from: *mut Context
+345:49 to: *Context
+346:39 from: *mut Context
+346:58 to: *Context
+362:28 context: *mut Context
+362:50 stack_top: u64
+362:65 entry: *u8
+362:76 arg: u64
+363:5 top: u64
+364:5 base: *mut u64
+366:13 i: usize
+371:9 sentinel: *mut u64

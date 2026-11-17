@@ -81,9 +81,9 @@ unverified area and is labelled as such.
   `replace_owned`, or a callee into a slot that the checker believed empty was
   silently dropped, i.e. the exact frame/task leak that `#[must_consume]` and
   ADR 0110 exist to prevent, in the owner-table pattern Cairn phase 1A uses.
-* Reproducer (accepted before the fix):
+* Reproducer (accepted before the fix; now rejected with E4007):
 
-  ```tarn
+  ```tarn error=E4007
   #[must_consume]
   struct Task { id u64 }
   fn main() {

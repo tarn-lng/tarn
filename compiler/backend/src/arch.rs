@@ -5,7 +5,7 @@
 //! even inlined templates must be defined because Cranelift requires it.
 //! Ordinary instruction templates touch memory only through their operand,
 //! or the stack, and modify only caller-saved registers of the C ABI
-//! (x86_64: rax, rcx, rdx, rsi; aarch64: x0). ADR 0109 context
+//! (x86_64: rax, rcx, rdx, rsi; aarch64: x0 and x1 for RNG). ADR 0109 context
 //! templates explicitly save/restore C ABI callee-saved state and replace SP.
 //!
 //! Each entry lists the bytes and the assembly they encode; the
@@ -97,13 +97,13 @@ pub fn operations(arch: Arch) -> Vec<String> {
     let names: Vec<String> = match arch {
         Arch::X86_64 => ["in8", "in16", "in32", "out8", "out16", "out32", "cli", "sti", "sti_hlt", "hlt", "pause", "int3", "rdtsc",
             "read_cr0", "read_cr2", "read_cr3", "read_cr4", "write_cr0", "write_cr3", "write_cr4", "invlpg", "rdmsr", "wrmsr", "lgdt", "lidt",
-            "ltr", "str", "cpuid", "ud2", "xgetbv", "xsetbv", "wbinvd", "clflush", "invpcid", "swapgs",
+            "ltr", "str", "cpuid", "rdrand64", "rdseed64", "ud2", "xgetbv", "xsetbv", "wbinvd", "clflush", "invpcid", "swapgs",
             "rdfsbase", "wrfsbase", "rdgsbase", "wrgsbase", "read_rflags", "call_on_stack", "stac", "clac", "switch_stack", "context_switch"]
             .iter().map(|s| s.to_string()).collect(),
         Arch::Aarch64 => {
             let mut v: Vec<String> = ["wfi", "wfe", "isb", "dsb_sy", "dmb_sy", "irq_enable", "irq_disable", "svc", "brk", "semihost_exit"].iter().map(|s| s.to_string()).collect();
             for (name, ..) in A64_SYS { v.push(name.to_string()); }
-            for name in ["call_on_stack", "switch_stack", "context_switch", "read_sp", "switch_stack_el0", "write_spsel", "pan_enable", "pan_disable"] { v.push(name.into()); }
+            for name in ["rndr", "rndrrs", "call_on_stack", "switch_stack", "context_switch", "read_sp", "switch_stack_el0", "write_spsel", "pan_enable", "pan_disable"] { v.push(name.into()); }
             for (name, ..) in SYSREGS { v.push(format!("read_{name}")); }
             for (name, _, writable) in SYSREGS.iter().map(|(n, e, w)| (n, e, w)) { if *writable { v.push(format!("write_{name}")); } }
             v
@@ -206,6 +206,12 @@ fn x86_64(op: &str) -> Option<Stub> {
             &[0x53, 0x89, 0xf8, 0x89, 0xf1, 0x48, 0x89, 0xd6, 0x0f, 0xa2, 0x89, 0x06, 0x89, 0x5e, 0x04, 0x89, 0x4e, 0x08, 0x89, 0x56, 0x0c, 0x5b, 0xc3],
             &["push rbx", "mov eax, edi", "mov ecx, esi", "mov rsi, rdx", "cpuid", "mov dword ptr [rsi], eax", "mov dword ptr [rsi + 0x4], ebx",
               "mov dword ptr [rsi + 0x8], ecx", "mov dword ptr [rsi + 0xc], edx", "pop rbx", "ret"]),
+        // RNG output pointer in rdi, success in al. MOV preserves CF; the
+        // word and flag are captured together before any wrapper can alter flags.
+        "rdrand64" => stub(&[I64], Some(I8), &[0x48, 0x0f, 0xc7, 0xf0, 0x48, 0x89, 0x07, 0x0f, 0x92, 0xc0, 0xc3],
+            &["rdrand rax", "mov qword ptr [rdi], rax", "setb al", "ret"]),
+        "rdseed64" => stub(&[I64], Some(I8), &[0x48, 0x0f, 0xc7, 0xf8, 0x48, 0x89, 0x07, 0x0f, 0x92, 0xc0, 0xc3],
+            &["rdseed rax", "mov qword ptr [rdi], rax", "setb al", "ret"]),
         // call_on_stack(stack_top rdi, entry rsi, arg rdx): see ADR 0107. rbp is callee-saved
         // and survives the call, so it carries the old rsp.
         "call_on_stack" => stub(&[I64, I64, I64], None,
@@ -220,6 +226,7 @@ fn x86_64(op: &str) -> Option<Stub> {
 /// `0xd5100000 | enc`, with `enc = (op0 - 2) << 19 | op1 << 16 | CRn << 12 |
 /// CRm << 8 | op2 << 5` (x0 is both the argument and the result register).
 pub(crate) const SYSREGS: &[(&str, (u32, u32, u32, u32, u32), bool)] = &[
+    ("id_aa64isar0_el1", (3, 0, 0, 6, 0), false),
     ("daif", (3, 3, 4, 2, 1), true),
     ("spsel", (3, 0, 4, 2, 0), false),
     ("pan", (3, 0, 4, 2, 3), false),
@@ -293,13 +300,19 @@ fn words(w: &[u32]) -> Vec<u8> {
 }
 
 fn aarch64(op: &str) -> Option<Stub> {
-    use types::I64;
+    use types::{I8, I64};
     const RET: u32 = 0xd65f03c0;
     let fixed = |word: u32, asm: &str| Some(Stub { params: vec![], ret: None, code: words(&[word, RET]), asm: vec![asm.into(), "ret".into()] });
     if let Some((_, word, asm, operand)) = A64_SYS.iter().find(|(n, ..)| *n == op) {
         return Some(Stub { params: if *operand { vec![I64] } else { vec![] }, ret: None, code: words(&[*word, RET]), asm: vec![asm.to_string(), "ret".into()] });
     }
     match op {
+        // Output pointer in x0. MRS sets NZCV; STR preserves it, so CSET NE
+        // records success (Z = 0) without intervening compiler instructions.
+        "rndr" => return Some(stub(&[I64], Some(I8), &words(&[0xd53b2401, 0xf9000001, 0x1a9f07e0, RET]),
+            &["mrs x1, rndr", "str x1, [x0]", "cset w0, ne", "ret"])),
+        "rndrrs" => return Some(stub(&[I64], Some(I8), &words(&[0xd53b2421, 0xf9000001, 0x1a9f07e0, RET]),
+            &["mrs x1, rndrrs", "str x1, [x0]", "cset w0, ne", "ret"])),
         "switch_stack_el0" => return Some(stub(&[I64, I64, I64], None, &words(&[0xd50040bf, 0x927cec03, 0x9100007f, 0xaa0203e0, 0xd63f0020, 0xd4200000, 0xd65f03c0]), &["msr spsel, #0x0", "and x3, x0, #0xfffffffffffffff0", "mov sp, x3", "mov x0, x2", "blr x1", "brk #0", "ret"])),
         "read_sp" => return Some(stub(&[], Some(I64), &words(&[0x910003e0, 0xd65f03c0]), &["mov x0, sp", "ret"])),
         "write_spsel" => return Some(stub(&[I64], None, &words(&[0xd5184200, 0xd65f03c0]), &["msr spsel, x0", "ret"])),

@@ -634,7 +634,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tarn"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "serde_json",
  "tarn_ast",
@@ -652,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "tarn-lsp"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "serde_json",
  "tarn_diagnostics",
@@ -665,14 +665,14 @@ dependencies = [
 
 [[package]]
 name = "tarn_ast"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_diagnostics",
 ]
 
 [[package]]
 name = "tarn_backend"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -688,11 +688,11 @@ dependencies = [
 
 [[package]]
 name = "tarn_diagnostics"
-version = "0.5.3"
+version = "0.5.4"
 
 [[package]]
 name = "tarn_driver"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "tarn_fmt"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "tarn_ir"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",
@@ -725,14 +725,14 @@ dependencies = [
 
 [[package]]
 name = "tarn_lexer"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_diagnostics",
 ]
 
 [[package]]
 name = "tarn_ownership"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "tarn_packages"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "semver",
  "serde_json",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "tarn_parser"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "tarn_resolve"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "tarn_types"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "tarn_ast",
  "tarn_diagnostics",

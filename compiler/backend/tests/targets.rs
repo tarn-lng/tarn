@@ -378,6 +378,24 @@ fn hosted_build_runs_an_unprivileged_cpu_intrinsic() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "cpu intrinsics ok");
 }
 
+#[test]
+fn rng_instructions_and_feature_queries_require_unsafe() {
+    let dir = std::env::temp_dir().join(format!("tarn-rng-safety-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tarn");
+    for (module, calls) in [
+        ("arch_x86_64", vec!["rdrand64", "rdseed64", "has_rdrand", "has_rdseed"]),
+        ("arch_aarch64", vec!["rndr", "rndrrs", "has_rng", "read_id_aa64isar0_el1"]),
+    ] {
+        for call in calls {
+            std::fs::write(&main, format!("import \"{module}\"\nfn main() {{ {module}.{call}() }}\n")).unwrap();
+            let checked = tarn_driver::check(&main).unwrap();
+            assert!(checked.diagnostics.iter().any(|d| d.code == "E3071"), "{module}.{call}: {:?}", checked.diagnostics);
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 // ---------------------------------------------------------------- ADR 0101, P6
 
 /// A just-enough ELF64 little-endian reader: section headers, symbols and

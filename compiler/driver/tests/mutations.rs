@@ -34,7 +34,7 @@ fn mutant(src: &str, skip: usize) -> String {
     [&lines[..skip], &lines[skip + 1..]].concat().join("\n")
 }
 
-/// Mutants are independent, so they are checked on all cores; each worker
+/// Mutants are independent, so they are checked on at most seven cores; each worker
 /// writes its own file. Assertions are the same as a sequential loop.
 #[test]
 fn line_deletions_never_panic() {
@@ -43,7 +43,7 @@ fn line_deletions_never_panic() {
     let sources: Vec<(PathBuf, String)> = corpus().into_iter().map(|p| { let s = std::fs::read_to_string(&p).unwrap(); (p, s) }).collect();
     let jobs: Vec<(usize, usize)> = sources.iter().enumerate().flat_map(|(f, (_, s))| (0..s.lines().count()).map(move |i| (f, i))).collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(7));
     std::thread::scope(|scope| {
         for worker in 0..workers {
             let (dir, sources, jobs, next) = (&dir, &sources, &jobs, &next);

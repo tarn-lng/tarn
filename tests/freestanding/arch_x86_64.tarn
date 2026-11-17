@@ -74,3 +74,14 @@ fn contexts() {
 #[section(".context_from")]
 static mut FROM arch_x86_64.Context
 static mut TO arch_x86_64.Context
+
+#[export("rng_calls")]
+fn rng_calls() u64 {
+    unsafe {
+        if !arch_x86_64.has_rdrand() || !arch_x86_64.has_rdseed() { return 0 }
+        a := arch_x86_64.rdrand64()
+        b := arch_x86_64.rdseed64()
+        if a.success && b.success { return a.value ^ b.value }
+        return 0
+    }
+}

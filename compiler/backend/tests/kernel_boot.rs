@@ -306,3 +306,48 @@ fn contexts_and_smap_execute_on_a_max_cpu() {
     check_task_switching(&output);
     assert!(output.contains("smap: stac/clac window ok"), "{output}");
 }
+
+#[test]
+fn rng_words_and_cf_success_execute_with_feature_checks() {
+    let Some((qemu, linker)) = tools() else { return };
+    for (cpu, present) in [("max", true), ("qemu64", false)] {
+        let dir = scratch("rng");
+        let probe = format!(r#"
+static mut RNG_WORD u64
+fn rng_probe() {{
+    unsafe {{
+        if arch_x86_64.has_rdrand() != {present} || arch_x86_64.has_rdseed() != {present} {{ fault() }}
+        if !arch_x86_64.has_rdrand() || !arch_x86_64.has_rdseed() {{
+            println("rng: unavailable; unsupported instructions skipped")
+            return
+        }}
+        var random_ok = false
+        var seed_ok = false
+        var combined: u64 = 0
+        var i: u64 = 0
+        for i < 64 {{
+            a := arch_x86_64.rdrand64()
+            b := arch_x86_64.rdseed64()
+            if a.success {{ random_ok = true
+                combined = combined ^ a.value }}
+            if b.success {{ seed_ok = true
+                combined = combined ^ b.value }}
+            i = i + 1
+        }}
+        if !random_ok || !seed_ok {{ fault() }}
+        ffi.write_volatile(RNG_WORD, combined)
+        if ffi.read_volatile(ffi.to_const(RNG_WORD)) != combined {{ fault() }}
+        println("rng: full words and CF success captured")
+    }}
+}}
+"#);
+        let source = example().replacen("    heap_reuse()\n", "    rng_probe()\n    heap_reuse()\n", 1) + &probe;
+        let elf = build(&dir, &source, &linker);
+        let (output, status) = boot_with_cpu(&qemu, &elf, "64", cpu);
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(status, EXIT_OK, "{cpu}: {output}");
+        let marker = if present { "rng: full words and CF success captured" }
+            else { "rng: unavailable; unsupported instructions skipped" };
+        assert!(output.contains(marker), "{cpu}: {output}");
+    }
+}

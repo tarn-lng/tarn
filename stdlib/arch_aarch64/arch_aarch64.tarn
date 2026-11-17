@@ -6,6 +6,38 @@
 // the caller's `unsafe` responsibility. A system-register write takes effect
 // only after a context-synchronization event: call `isb()` when it matters.
 import "ffi"
+
+/// One hardware RNG attempt. Discard value unless success is true (ADR 0112).
+pub copy struct RandomResult {
+    pub value u64
+    pub success bool
+}
+
+/// Read ID_AA64ISAR0_EL1. Needs EL1 or an OS that permits the ID-register read.
+pub unsafe fn read_id_aa64isar0_el1() u64 { return _read_id_aa64isar0_el1() }
+extern "intrinsic" fn _read_id_aa64isar0_el1() u64
+
+/// FEAT_RNG: ID_AA64ISAR0_EL1.RNDR[63:60] = 1. Requires access to the ID register.
+pub unsafe fn has_rng() bool { unsafe { return (read_id_aa64isar0_el1() >> 60) == 1 } }
+
+/// One RNDR attempt. Requires FEAT_RNG and an execution context that permits
+/// the read. Captures NZCV success (Z = 0) in the same stub; no implicit retry.
+pub unsafe fn rndr() RandomResult {
+    var value: u64 = 0
+    var success = false
+    unsafe { success = _rndr(ffi.of_mut(&mut value)) }
+    return RandomResult{value: value, success: success}
+}
+extern "intrinsic" fn _rndr(out *mut u64) bool
+
+/// One RNDRRS reseeding attempt. Same feature/context and success contract as RNDR.
+pub unsafe fn rndrrs() RandomResult {
+    var value: u64 = 0
+    var success = false
+    unsafe { success = _rndrrs(ffi.of_mut(&mut value)) }
+    return RandomResult{value: value, success: success}
+}
+extern "intrinsic" fn _rndrrs(out *mut u64) bool
 /// Wait for interrupt (`wfi`).
 pub unsafe fn wfi() { _wfi() }
 extern "intrinsic" fn _wfi()

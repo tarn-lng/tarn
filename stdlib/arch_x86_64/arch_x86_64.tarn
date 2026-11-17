@@ -136,6 +136,48 @@ pub unsafe fn cpuid(leaf u32, subleaf u32) CpuidResult {
 }
 extern "intrinsic" fn _cpuid(leaf u32, subleaf u32, out *mut u32)
 
+/// One hardware RNG attempt. Discard value unless success is true (ADR 0112).
+pub copy struct RandomResult {
+    pub value u64
+    pub success bool
+}
+
+/// CPUID.01H:ECX[30], after checking the maximum basic leaf. Unprivileged.
+pub unsafe fn has_rdrand() bool {
+    unsafe {
+        if cpuid(0, 0).eax < 1 { return false }
+        return (cpuid(1, 0).ecx & 0x40000000) != 0
+    }
+}
+
+/// CPUID.07H.0:EBX[18], after checking the maximum basic leaf. Unprivileged.
+pub unsafe fn has_rdseed() bool {
+    unsafe {
+        if cpuid(0, 0).eax < 7 { return false }
+        return (cpuid(7, 0).ebx & 0x40000) != 0
+    }
+}
+
+/// One 64-bit RDRAND attempt, with CF captured in the same stub. Requires
+/// has_rdrand() and an execution context that permits it; no implicit retry.
+pub unsafe fn rdrand64() RandomResult {
+    var value: u64 = 0
+    var success = false
+    unsafe { success = _rdrand64(ffi.of_mut(&mut value)) }
+    return RandomResult{value: value, success: success}
+}
+extern "intrinsic" fn _rdrand64(out *mut u64) bool
+
+/// One 64-bit RDSEED attempt, with CF captured in the same stub. Requires
+/// has_rdseed() and an execution context that permits it; no implicit retry.
+pub unsafe fn rdseed64() RandomResult {
+    var value: u64 = 0
+    var success = false
+    unsafe { success = _rdseed64(ffi.of_mut(&mut value)) }
+    return RandomResult{value: value, success: success}
+}
+extern "intrinsic" fn _rdseed64(out *mut u64) bool
+
 /// Raise an invalid-opcode exception, vector 6 (`ud2`). Unprivileged.
 pub unsafe fn ud2() { _ud2() }
 extern "intrinsic" fn _ud2()
