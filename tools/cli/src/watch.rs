@@ -312,7 +312,8 @@ pub fn test(entry: &Path, options: &super::testing::Options) -> ExitCode {
     let mut changed = BTreeSet::from([entry.to_path_buf()]);
     loop {
         header(&changed, "testing");
-        super::testing::run_with_sources(entry, options, |paths, failed| {
+        // A failed run is reported, but watch stays alive for the next edit.
+        let _ = super::testing::run_with_sources(entry, options, |paths, failed| {
             refresh(&mut sources, paths.to_vec(), entry, failed);
         });
         let _ = std::io::stdout().flush();

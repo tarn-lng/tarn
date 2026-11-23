@@ -13,7 +13,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use tarn_ir::{self as ir, post_drop as post, *};
 use tarn_types::{FloatTy, IntTy, Ty, Typed};
 
@@ -1068,30 +1068,363 @@ struct Cx<'a, 'b> {
     blocks: Vec<cl::Block>,
     sret: Option<cl::Value>,
 }
+fn mark_place_reads(p: &Place, live: &mut BTreeSet<usize>) {
+    live.insert(p.local.0 as usize);
+    for pr in &p.proj {
+        if let Proj::Index(i) = pr {
+            live.insert(i.0 as usize);
+        }
+    }
+}
+
+fn mark_operand_reads(o: &Operand, live: &mut BTreeSet<usize>) {
+    if let Operand::Copy(p) | Operand::Move(p) = o {
+        mark_place_reads(p, live);
+    }
+}
+
+fn mark_rvalue_reads(rv: &Rvalue, live: &mut BTreeSet<usize>) {
+    match rv {
+        Rvalue::Use(o) | Rvalue::Unary(_, o) | Rvalue::Cast(o, _) | Rvalue::Coerce(_, o, _) => mark_operand_reads(o, live),
+        Rvalue::Binary(_, a, b) => {
+            mark_operand_reads(a, live);
+            mark_operand_reads(b, live);
+        }
+        Rvalue::Aggregate(kind, os) => {
+            os.iter().for_each(|o| mark_operand_reads(o, live));
+            if let Aggregate::Closure(_, Some(p)) = kind {
+                mark_place_reads(p, live);
+            }
+        }
+        Rvalue::Ref(_, p) | Rvalue::Discriminant(p) | Rvalue::Len(p) => mark_place_reads(p, live),
+        Rvalue::SliceRef { base, start, end, .. } => {
+            mark_place_reads(base, live);
+            start.iter().chain(end.iter()).for_each(|o| mark_operand_reads(o, live));
+        }
+    }
+}
+
+fn mark_drop_reads(d: &post::Drop, live: &mut BTreeSet<usize>) {
+    match d {
+        post::Drop::Value(p)
+        | post::Drop::Fields { place: p, .. }
+        | post::Drop::Variants { place: p, .. }
+        | post::Drop::Remaining { place: p, .. } => mark_place_reads(p, live),
+        post::Drop::RemainingVec { place, cursor } => {
+            mark_place_reads(place, live);
+            live.insert(cursor.0 as usize);
+        }
+        post::Drop::Guard(_, d) => mark_drop_reads(d, live),
+    }
+}
+
+struct StackInterference {
+    shareable: Vec<bool>,
+    edges: Vec<BTreeSet<usize>>,
+}
+
+fn add_clique(live: &BTreeSet<usize>, interferes: &mut StackInterference) {
+    for &i in live {
+        if !interferes.shareable[i] { continue; }
+        for &j in live.range((std::ops::Bound::Excluded(i), std::ops::Bound::Unbounded)) {
+            if !interferes.shareable[j] { continue; }
+            interferes.edges[i].insert(j);
+            interferes.edges[j].insert(i);
+        }
+    }
+}
+
+fn interfere_with_live(x: usize, live: &BTreeSet<usize>, interferes: &mut StackInterference) {
+    if !interferes.shareable[x] { return; }
+    for &j in live {
+        if interferes.shareable[j] && j != x {
+            interferes.edges[x].insert(j);
+            interferes.edges[j].insert(x);
+        }
+    }
+}
+
+fn liveness_term_step(term: &Terminator, live: &mut BTreeSet<usize>, mut interferes: Option<&mut StackInterference>) {
+    if let Some(ref mut intf) = interferes {
+        add_clique(live, intf);
+    }
+    match term {
+        Terminator::Call { callee, args, dest, .. } => {
+            let d = dest.local.0 as usize;
+            if let Some(ref mut intf) = interferes {
+                interfere_with_live(d, live, intf);
+            }
+            if dest.proj.is_empty() {
+                live.remove(&d);
+            } else {
+                mark_place_reads(dest, live);
+            }
+            args.iter().for_each(|a| mark_operand_reads(a, live));
+            if let Callee::Value(o) = callee {
+                mark_operand_reads(o, live);
+            }
+            if let Some(ref mut intf) = interferes {
+                // Output place may be written via sret while call args are read.
+                interfere_with_live(d, live, intf);
+                add_clique(live, intf);
+            }
+        }
+        Terminator::Switch { discr, .. } => {
+            mark_operand_reads(discr, live);
+            if let Some(ref mut intf) = interferes {
+                add_clique(live, intf);
+            }
+        }
+        Terminator::Return => {
+            live.insert(RETURN.0 as usize);
+        }
+        _ => {}
+    }
+}
+
+fn liveness_op_step(op: &post::Op, f: &post::Function, live: &mut BTreeSet<usize>, mut interferes: Option<&mut StackInterference>) {
+    match op {
+        post::Op::Plain(StatementKind::Assign(dest, rv)) => {
+            let d = dest.local.0 as usize;
+            if let Some(ref mut intf) = interferes {
+                interfere_with_live(d, live, intf);
+            }
+            if dest.proj.is_empty() {
+                live.remove(&d);
+            } else {
+                mark_place_reads(dest, live);
+            }
+            mark_rvalue_reads(rv, live);
+            if let Some(ref mut intf) = interferes {
+                // `dest` may be written in-place (e.g. build_aggregate) while `rv` is read.
+                interfere_with_live(d, live, intf);
+                add_clique(live, intf);
+            }
+        }
+        post::Op::Plain(StatementKind::StorageLive(l)) => {
+            live.remove(&(l.0 as usize));
+        }
+        // Never trust StorageDead alone to kill liveness if any downstream op still reads/drops.
+        post::Op::Plain(StatementKind::StorageDead(_)) | post::Op::Set(..) => {}
+        post::Op::Plain(StatementKind::Drop(p)) => {
+            mark_place_reads(p, live);
+            if let Some(ref mut intf) = interferes {
+                add_clique(live, intf);
+            }
+        }
+        post::Op::ClearElement(id, i) => {
+            live.insert(i.0 as usize);
+            if let Some(post::FlagKind::Elements(p, _)) = f.flags.get(id.0 as usize) {
+                mark_place_reads(p, live);
+            }
+            if let Some(ref mut intf) = interferes {
+                add_clique(live, intf);
+            }
+        }
+        post::Op::Destroy(d) => {
+            mark_drop_reads(d, live);
+            if let Some(ref mut intf) = interferes {
+                add_clique(live, intf);
+            }
+        }
+    }
+}
+
+/// Deterministic stack-slot packing for synchronous non-pinned locals (ADR 0113).
+/// Returns `(physical_slot_specs, local_to_physical_slot)`.
+fn pack_stack_slots(
+    f: &post::Function,
+    addressed: &[bool],
+    stack_layouts: &[Option<(u32, u32)>],
+) -> (Vec<(u32, u32)>, Vec<Option<usize>>) {
+    let n = f.decl.locals.len();
+    let nb = f.blocks.len();
+    let mut pinned = vec![false; n];
+    if n > 0 {
+        pinned[RETURN.0 as usize] = true;
+    }
+    for p in f.decl.params() {
+        pinned[p.0 as usize] = true;
+    }
+    for (i, &addr) in addressed.iter().enumerate() {
+        if addr {
+            pinned[i] = true;
+        }
+    }
+    for flag in &f.flags {
+        if let post::FlagKind::Elements(p, _) = flag {
+            pinned[p.local.0 as usize] = true;
+        }
+    }
+
+    let successors: Vec<Vec<usize>> = f.blocks.iter()
+        .map(|b| b.term.successors().iter().map(|s| s.0 as usize).collect()).collect();
+    let mut predecessors = vec![Vec::new(); nb];
+    for (b, next) in successors.iter().enumerate() {
+        for &s in next { predecessors[s].push(b); }
+    }
+    // Iterative DFS also covers unreachable components without using the host stack.
+    let mut visited = vec![false; nb];
+    let mut postorder = Vec::with_capacity(nb);
+    for root in 0..nb {
+        if visited[root] { continue; }
+        visited[root] = true;
+        let mut dfs = vec![(root, 0usize)];
+        while let Some((b, i)) = dfs.pop() {
+            if i < successors[b].len() {
+                dfs.push((b, i + 1));
+                let s = successors[b][i];
+                if !visited[s] {
+                    visited[s] = true;
+                    dfs.push((s, 0));
+                }
+            } else { postorder.push(b); }
+        }
+    }
+    let mut rank = vec![0; nb];
+    for (i, &b) in postorder.iter().rev().enumerate() { rank[b] = i; }
+    let mut live_in = vec![BTreeSet::new(); nb];
+    // Backward analysis visits reverse-RPO (postorder); only changed predecessors
+    // are revisited, with deterministic ordering and sparse per-block local sets.
+    let mut work: BTreeSet<_> = (0..nb).map(|b| (std::cmp::Reverse(rank[b]), b)).collect();
+    while let Some((_, b)) = work.pop_first() {
+        let mut live = BTreeSet::new();
+        for &s in &successors[b] { live.extend(live_in[s].iter().copied()); }
+        liveness_term_step(&f.blocks[b].term, &mut live, None);
+        for st in f.blocks[b].stmts.iter().rev() {
+            liveness_op_step(&st.op, f, &mut live, None);
+        }
+        if live != live_in[b] {
+            live_in[b] = live;
+            for &p in &predecessors[b] { work.insert((std::cmp::Reverse(rank[p]), p)); }
+        }
+    }
+
+    let mut interferes = StackInterference {
+        shareable: (0..n).map(|i| !pinned[i] && stack_layouts[i].is_some()).collect(),
+        edges: vec![BTreeSet::new(); n],
+    };
+    for b in 0..nb {
+        add_clique(&live_in[b], &mut interferes);
+        let mut live = BTreeSet::new();
+        for &s in &successors[b] { live.extend(live_in[s].iter().copied()); }
+        liveness_term_step(&f.blocks[b].term, &mut live, Some(&mut interferes));
+        for st in f.blocks[b].stmts.iter().rev() {
+            liveness_op_step(&st.op, f, &mut live, Some(&mut interferes));
+        }
+    }
+
+    let mut phys_specs: Vec<(u32, u32)> = Vec::new();
+    let mut phys_members: Vec<Vec<usize>> = Vec::new();
+    let mut local_to_phys = vec![None; n];
+
+    // 1. Pinned locals each receive an exclusive physical slot.
+    for (i, lyt) in stack_layouts.iter().enumerate() {
+        if pinned[i]
+            && let Some((sz, al)) = *lyt
+        {
+            let idx = phys_specs.len();
+            phys_specs.push((sz, al));
+            phys_members.push(vec![i]);
+            local_to_phys[i] = Some(idx);
+        }
+    }
+    let first_shared = phys_specs.len();
+
+    // 2. Non-pinned locals are packed deterministically (largest size/align first).
+    let mut unpinned: Vec<(u32, u32, usize)> = stack_layouts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, lyt)| {
+            if !pinned[i] {
+                lyt.map(|(sz, al)| (sz, al, i))
+            } else {
+                None
+            }
+        })
+        .collect();
+    unpinned.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
+
+    for (sz, al, i) in unpinned {
+        let mut chosen = None;
+        for s_idx in first_shared..phys_specs.len() {
+            if !phys_members[s_idx].iter().any(|m| interferes.edges[i].contains(m)) {
+                chosen = Some(s_idx);
+                break;
+            }
+        }
+        if let Some(s_idx) = chosen {
+            phys_specs[s_idx].0 = phys_specs[s_idx].0.max(sz);
+            phys_specs[s_idx].1 = phys_specs[s_idx].1.max(al);
+            phys_members[s_idx].push(i);
+            local_to_phys[i] = Some(s_idx);
+        } else {
+            let idx = phys_specs.len();
+            phys_specs.push((sz, al));
+            phys_members.push(vec![i]);
+            local_to_phys[i] = Some(idx);
+        }
+    }
+
+    (phys_specs, local_to_phys)
+}
+
 impl Cx<'_, '_> {
     fn function(&mut self) -> Result<()> {
-        let mut addressed = HashSet::new();
+        let n_locals = self.f.decl.locals.len();
+        let mut addressed_vec = vec![false; n_locals];
         for block in &self.f.blocks {
             for s in &block.stmts {
-                if let post::Op::Plain(StatementKind::Assign(_, Rvalue::Ref(_, p))) = &s.op {
-                    if !matches!(p.proj.first(), Some(Proj::Deref)) {
-                        addressed.insert(p.local);
+                match &s.op {
+                    post::Op::Plain(StatementKind::Assign(
+                        _,
+                        Rvalue::Ref(_, p) | Rvalue::SliceRef { base: p, .. },
+                    )) if !matches!(p.proj.first(), Some(Proj::Deref)) => {
+                        addressed_vec[p.local.0 as usize] = true;
                     }
+                    post::Op::Plain(StatementKind::Assign(
+                        _,
+                        Rvalue::Aggregate(Aggregate::Closure(_, Some(p)), _),
+                    )) if !matches!(p.proj.first(), Some(Proj::Deref)) => {
+                        addressed_vec[p.local.0 as usize] = true;
+                    }
+                    _ => {}
                 }
             }
         }
         let placement = if frame(&self.f.decl).is_some() { Some(frame_layout(self.t, self.p, self.f)?) } else { None };
         self.environments = placement.as_ref().map(|p| p.environments.clone()).unwrap_or_default();
+        let mut stack_layouts: Vec<Option<(u32, u32)>> = vec![None; n_locals];
+        let mut scalar_vars: Vec<Option<cl::Type>> = vec![None; n_locals];
+        let mut frame_offsets: Vec<Option<u32>> = vec![None; n_locals];
         for (i, l) in self.f.decl.locals.iter().enumerate() {
             let lyt = layout::layout(self.t, &l.ty)?;
-            let slot = if let Some(offset) = placement.as_ref().and_then(|p| p.locals.get(&LocalId(i as u32))) {
-                if lyt.size == 0 { Slot::Empty } else { Slot::Frame(*offset) }
-            } else if lyt.size == 0 {
-                Slot::Empty
-            } else if let Some(ty) = scalar(&l.ty).filter(|_| !addressed.contains(&LocalId(i as u32))) {
+            if let Some(offset) = placement.as_ref().and_then(|p| p.locals.get(&LocalId(i as u32))) {
+                if lyt.size > 0 {
+                    frame_offsets[i] = Some(*offset);
+                }
+            } else if lyt.size > 0 {
+                if let Some(ty) = scalar(&l.ty).filter(|_| !addressed_vec[i]) {
+                    scalar_vars[i] = Some(ty);
+                } else {
+                    stack_layouts[i] = Some((lyt.size, lyt.align));
+                }
+            }
+        }
+        let (phys_specs, local_to_phys) = pack_stack_slots(self.f, &addressed_vec, &stack_layouts);
+        let phys_slots: Vec<cl::StackSlot> = phys_specs
+            .into_iter()
+            .map(|(sz, al)| self.stack(sz, al))
+            .collect();
+        for i in 0..n_locals {
+            let slot = if let Some(offset) = frame_offsets[i] {
+                Slot::Frame(offset)
+            } else if let Some(ty) = scalar_vars[i] {
                 Slot::Ssa(self.b.declare_var(ty))
+            } else if let Some(phys_idx) = local_to_phys[i] {
+                Slot::Stack(phys_slots[phys_idx])
             } else {
-                Slot::Stack(self.stack(lyt.size, lyt.align))
+                Slot::Empty
             };
             self.locals.push(slot);
         }
