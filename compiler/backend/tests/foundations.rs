@@ -125,6 +125,7 @@ fn console_broken_pipe_spares_other_threads_and_restores_the_stream() {
 #include <stdint.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 extern int64_t tarn_console_write(int32_t, const uint8_t *, uint64_t);
 static void *idle(void *unused) { (void)unused; for (;;) pause(); }
 int main(void) {
@@ -139,7 +140,8 @@ int main(void) {
 #ifdef __APPLE__
     if (fcntl(1, F_GETNOSIGPIPE) != 0) return 6;
 #endif
-    usleep(50000);
+    struct timespec delay = { .tv_sec = 0, .tv_nsec = 50000000 };
+    while (nanosleep(&delay, &delay) != 0) { if (errno != EINTR) return 7; }
     _exit(0);
 }
 "#).unwrap();

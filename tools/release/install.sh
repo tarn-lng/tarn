@@ -63,7 +63,8 @@ tar -tvzf "$TEMP/$ASSET" | awk 'substr($1,1,1)!="-" {bad=1} END {exit bad}' || {
 mkdir "$TEMP/extracted"
 tar -xzf "$TEMP/$ASSET" --no-same-owner --no-same-permissions -C "$TEMP/extracted"
 chmod 755 "$TEMP/extracted/tarn" "$TEMP/extracted/tarn-lsp"
-[ "$("$TEMP/extracted/tarn" version)" = "tarn $VERSION" ] || { echo 'Compiler version mismatch' >&2; exit 1; }
+COMPILER_VERSION=$("$TEMP/extracted/tarn" version)
+[ "$(printf '%s\n' "$COMPILER_VERSION" | awk '{print $1 " " $2}')" = "tarn $VERSION" ] || { echo 'Compiler version mismatch' >&2; exit 1; }
 (cd "$TEMP/extracted"; sha256sum tarn tarn-lsp > .tarn-release)
 mv -f "$TEMP/extracted/tarn" "$PREFIX/tarn"
 mv -f "$TEMP/extracted/tarn-lsp" "$PREFIX/tarn-lsp"

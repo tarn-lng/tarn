@@ -12,6 +12,9 @@ with glibc 2.35 or newer. ARM64 artifacts begin with
 Native application compilation additionally requires `cc` and libc development
 headers. Particular APIs may require native libraries, e.g. OpenSSL or libdbus.
 The standard library and runtime are embedded in the compiler.
+Version output may include a parenthesized build identity after the package
+version. Packaging and installation compare the tool name and package version
+while preserving that identity in the installed binaries.
 
 Download the installer, inspect it, then run it:
 

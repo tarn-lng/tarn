@@ -7,7 +7,7 @@ import sys
 image, version = sys.argv[1:]
 script = r'''
 set -eu
-test "$(tarn version)" = "tarn $1"
+test "$(tarn version | cut -d ' ' -f 1-2)" = "tarn $1"
 command -v cc
 command -v curl
 test -s /etc/ssl/certs/ca-certificates.crt

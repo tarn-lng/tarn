@@ -34,7 +34,7 @@ test ! -e "$TEMP/bin/tarn"
 # Without --version the installer resolves the newest release.
 tools/release/install.sh --prefix "$TEMP/bin" > "$TEMP/latest.log"
 grep -q "Installing Tarn $VERSION (newest release)" "$TEMP/latest.log"
-"$TEMP/bin/tarn" version | grep -qx "tarn $VERSION"
+"$TEMP/bin/tarn" version | awk '{print $1 " " $2}' | grep -qx "tarn $VERSION"
 tools/release/install.sh --prefix "$TEMP/bin" --uninstall
 printf 'unmanaged' > "$TEMP/bin/tarn"
 if tools/release/install.sh --version "$VERSION" --prefix "$TEMP/bin"; then echo 'Unmanaged binary overwritten' >&2; exit 1; fi
