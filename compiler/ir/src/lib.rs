@@ -16,6 +16,7 @@
 //! `(*r)[i]`) are first-class because borrow checking reasons about them.
 
 pub mod async_frame;
+mod const_branch;
 mod instantiation;
 pub mod layout;
 mod limits;
@@ -31,6 +32,7 @@ pub use limits::check_value_limits;
 pub use lower::{lower_program, lower_program_located};
 pub use ranges::prove_arithmetic;
 pub use loop_peel::optimize_scalar_loops;
+pub use const_branch::simplify_constant_branches;
 pub use pretty::{print_function, print_program, print_program_annotated};
 pub use verify::verify;
 
