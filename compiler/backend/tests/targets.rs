@@ -341,10 +341,12 @@ fn normalize_immediates(instruction: &str) -> String {
     let mut normalized = parts.next().unwrap_or_default().to_string();
     for operand in parts {
         normalized.push('#');
-        if let Some(hex) = operand.strip_prefix("0x") {
+        let (sign, magnitude) = operand.strip_prefix('-').map_or(("", operand), |rest| ("-", rest));
+        if let Some(hex) = magnitude.strip_prefix("0x") {
             let digits = hex.chars().take_while(|c| c.is_ascii_hexdigit()).count();
             if digits > 0 {
                 let value = u64::from_str_radix(&hex[..digits], 16).unwrap();
+                normalized.push_str(sign);
                 normalized.push_str(&value.to_string());
                 normalized.push_str(&hex[digits..]);
                 continue;
@@ -359,6 +361,7 @@ fn normalize_immediates(instruction: &str) -> String {
 fn immediate_normalization_preserves_operands_and_instruction_order() {
     assert_eq!(normalize_immediates("stp x2, x3, [sp, #0x10]"), "stp x2, x3, [sp, #16]");
     assert_eq!(normalize_immediates("svc #0x0"), "svc #0");
+    assert_eq!(normalize_immediates("stp x29, x30, [sp, #-0x10]!"), "stp x29, x30, [sp, #-16]!");
     assert_eq!(normalize_immediates("tbnz w1, #0x0, #0x10"), "tbnz w1, #0, #16");
     assert_eq!(normalize_immediates("sub sp, sp, #784"), "sub sp, sp, #784");
 }
