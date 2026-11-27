@@ -335,6 +335,34 @@ fn volatile_scalar_widths_and_bitcasts_emit_and_run() {
     assert!(output.status.success(), "{output:?}");
 }
 
+// GNU and LLVM objdump print AArch64 immediates in different bases.
+fn normalize_immediates(instruction: &str) -> String {
+    let mut parts = instruction.split('#');
+    let mut normalized = parts.next().unwrap_or_default().to_string();
+    for operand in parts {
+        normalized.push('#');
+        if let Some(hex) = operand.strip_prefix("0x") {
+            let digits = hex.chars().take_while(|c| c.is_ascii_hexdigit()).count();
+            if digits > 0 {
+                let value = u64::from_str_radix(&hex[..digits], 16).unwrap();
+                normalized.push_str(&value.to_string());
+                normalized.push_str(&hex[digits..]);
+                continue;
+            }
+        }
+        normalized.push_str(operand);
+    }
+    normalized
+}
+
+#[test]
+fn immediate_normalization_preserves_operands_and_instruction_order() {
+    assert_eq!(normalize_immediates("stp x2, x3, [sp, #0x10]"), "stp x2, x3, [sp, #16]");
+    assert_eq!(normalize_immediates("svc #0x0"), "svc #0");
+    assert_eq!(normalize_immediates("tbnz w1, #0x0, #0x10"), "tbnz w1, #0, #16");
+    assert_eq!(normalize_immediates("sub sp, sp, #784"), "sub sp, sp, #784");
+}
+
 #[test]
 fn cpu_stubs_disassemble_to_their_documented_assembly() {
     for (target, program, arch, intel) in [("x86_64-none", "arch_x86_64", Arch::X86_64, true), ("aarch64-none", "arch_aarch64", Arch::Aarch64, false)] {
@@ -351,7 +379,7 @@ fn cpu_stubs_disassemble_to_their_documented_assembly() {
             // Disassemblers differ in knowing the GICv3 register names; compare the encodings.
             let generic = |i: &String| [("icc_sre_el1", "s3_0_c12_c12_5"), ("icc_pmr_el1", "s3_0_c4_c6_0"), ("icc_igrpen1_el1", "s3_0_c12_c12_7"), ("icc_iar1_el1", "s3_0_c12_c12_0"), ("icc_eoir1_el1", "s3_0_c12_c12_1")]
                 .iter().fold(i.clone(), |i, (name, encoding)| i.replace(name, encoding));
-            let (actual, expected): (Vec<_>, Vec<_>) = (actual.iter().map(generic).collect(), asm.iter().map(generic).collect());
+            let (actual, expected): (Vec<_>, Vec<_>) = (actual.iter().map(generic).map(|i| normalize_immediates(&i)).collect(), asm.iter().map(generic).map(|i| normalize_immediates(&i)).collect());
             assert_eq!(&actual[..expected.len().min(actual.len())], expected.as_slice(), "{target}: {symbol}");
             checked += 1;
         }
@@ -757,6 +785,8 @@ fn trampolines_disassemble_to_the_documented_sequence() {
             let actual = disassembly.get(&symbol.name).unwrap_or_else(|| panic!("{target}: {} not disassembled: {:?}", symbol.name, disassembly.keys().collect::<Vec<_>>()));
             // The call or branch to the adapter prints its address; compare the mnemonic.
             let actual: Vec<String> = actual.iter().take(expected.len()).map(|l| if l.starts_with("call ") || l.starts_with("bl ") { l.split(' ').next().unwrap().to_string() } else if l.starts_with("tbnz ") { l.rsplit_once(", ").unwrap().0.to_string() } else { l.clone() }).collect();
+            let actual: Vec<_> = actual.iter().map(|i| normalize_immediates(i)).collect();
+            let expected: Vec<_> = expected.iter().map(|i| normalize_immediates(i)).collect();
             assert_eq!(actual, expected, "{target}: {}", symbol.name);
         }
     }
